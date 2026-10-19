@@ -21,8 +21,20 @@ The full history of the changes is in the git log of this repository.
 - Settings folder `~/Library/Kinu Tune/` (macOS), logs `~/Library/Logs/Kinu Tune/`, models
   `~/Library/Application Support/Keinoaza/Kinu Tune/models/`.
 - New icon and logo images.
-- The online update check of PitchNet is disabled.
 - Version number set to 0.1.0.
+
+### Privacy
+- The online update check of PitchNet is disabled.
+- ONNX Runtime telemetry is turned off as far as the documented API allows:
+  official ONNX Runtime builds for Windows pass usage events to Windows
+  TraceLogging by default, so every ONNX Runtime environment (FCPE and RMVPE
+  pitch detectors, GAME, vocoder) calls `DisableTelemetryEvents()` right after it
+  is created. Two limits of the official ONNX Runtime binary remain: the one
+  start-up event that ONNX Runtime writes while creating its first
+  environment (the ONNX Runtime version and build type) comes before this
+  call, and ONNX Runtime turns its events back on when a Windows
+  event-tracing session enables them again later (until Kinu Tune next
+  creates an environment). ONNX Runtime has no telemetry on other platforms.
 
 ### Cubase VariAudio-style editing
 - Notes drawn as rectangular segments with the pitch name on hover; the
@@ -118,6 +130,8 @@ Modified files (changed by Keinoaza on or after 2026-10-19):
 - `Resources/lang/en.json`, `es.json`, `ja.json`, `ko.json`, `zh.json`, `zh-TW.json`
 - `Source/Main.cpp`
 - `Source/Audio/AudioEngine.h/.cpp`, `Source/Audio/ResampledLoopAudition.h/.cpp`
+- `Source/Audio/FCPEPitchDetector.cpp`, `Source/Audio/GAMEDetector.cpp`,
+  `Source/Audio/RMVPEPitchDetector.cpp`, `Source/Audio/Vocoder.cpp`
 - `Source/Models/Note.h`, `Source/Models/Project.h`
 - `Source/Plugin/ARADocumentController.h/.cpp`, `Source/Plugin/PluginEditor.cpp`,
   `Source/Plugin/PluginProcessor.h/.cpp`

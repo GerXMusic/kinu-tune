@@ -80,6 +80,13 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 - モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
 - RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を上記の `models` フォルダーに置くと使えます
 
+### 通信とテレメトリー
+
+- Kinu Tune 自体はインターネットに接続しません。PitchNet にあった起動時の更新確認は止めてあります
+- AI モデルを動かす部品 ONNX Runtime(Microsoft 製)の Windows 版は、そのままだと使用状況の記録(テレメトリー)を Windows の記録の仕組み(TraceLogging)に渡します。Kinu Tune は ONNX Runtime を準備するたびに、これを止めています
+- ただし、ONNX Runtime 側の作りのため、次の2つは残ります。1つ目は、最初の準備の途中で1回だけ書かれる起動の記録(ONNX Runtime の版番号など)で、止める処理より先に出ます。2つ目は、Windows のイベント記録の仕組みがあとから ONNX Runtime の記録を有効にし直した場合で、そのとき ONNX Runtime は記録を再開します(Kinu Tune が次に ONNX Runtime を準備する時に、また止めます)
+- ONNX Runtime の説明では、Windows が集めた記録は、利用者の同意に基づいて Microsoft に送られることがあるとされています。macOS 版の ONNX Runtime にはテレメトリーがありません
+
 ### 自分でビルドする
 
 下の [Build](#build) を見てください。`fcpe.onnx`・`cent_table.bin`・`mel_filterbank.bin`・`pc_nsf_hifigan.onnx` はリポジトリの `Resources/models` に入っています。macOS 用の `pc_nsf_hifigan.mlmodelc` はリポジトリに無いので、配布版 zip の `models` フォルダーから `Resources/models` に置いてください。GAME のモデルは構成時に自動でダウンロードされます。
@@ -132,6 +139,13 @@ Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 | PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
 The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder above.
+
+### Network and telemetry
+
+- Kinu Tune itself does not connect to the internet. PitchNet's update check at launch is disabled.
+- ONNX Runtime (by Microsoft, runs the AI models) passes usage telemetry to Windows TraceLogging by default in its official Windows builds. Kinu Tune turns this off every time it sets up ONNX Runtime.
+- Two limits of the official ONNX Runtime binary remain. One start-up event that ONNX Runtime writes while it is first set up (the ONNX Runtime version and build type) comes before the call that turns telemetry off. And if a Windows event-tracing session later enables ONNX Runtime's events again, ONNX Runtime resumes them (Kinu Tune turns them off again the next time it sets up ONNX Runtime).
+- ONNX Runtime's privacy notice says that Windows may send the collected events to Microsoft based on user consent. ONNX Runtime has no telemetry on macOS.
 
 ### Build
 

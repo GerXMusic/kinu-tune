@@ -67,6 +67,9 @@ Vocoder::Vocoder()
   {
     onnxEnv =
         std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "PitchNet");
+    // Official Windows builds of ONNX Runtime send usage telemetry by
+    // default; opt out (no-op on other platforms).
+    onnxEnv->DisableTelemetryEvents();
     allocator = std::make_unique<Ort::AllocatorWithDefaultOptions>();
     log("ONNX Runtime initialized successfully");
   }

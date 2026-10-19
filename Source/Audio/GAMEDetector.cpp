@@ -246,6 +246,9 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
 
         onnxEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING,
                                              "GAMEDetector");
+        // Official Windows builds of ONNX Runtime send usage telemetry by
+        // default; opt out (no-op on other platforms).
+        onnxEnv->DisableTelemetryEvents();
         auto heavyOpts = createSessionOptions(provider, deviceId);
         auto cpuHeavyOpts = createSessionOptions(GPUProvider::CPU, 0);
 

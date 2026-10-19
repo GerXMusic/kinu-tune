@@ -216,6 +216,9 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
     // Initialize ONNX Runtime
     onnxEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING,
                                          "FCPEPitchDetector");
+    // Official Windows builds of ONNX Runtime send usage telemetry by
+    // default; opt out (no-op on other platforms).
+    onnxEnv->DisableTelemetryEvents();
 
     Ort::SessionOptions sessionOptions;
     sessionOptions.SetGraphOptimizationLevel(
