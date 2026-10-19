@@ -88,9 +88,11 @@ SOFTWARE.
 
 ONNX Runtime 1.19.2
 Copyright (c) Microsoft Corporation
-The ONNX Runtime library bundled in the plugin (libonnxruntime.1.19.2.dylib)
-contains further third-party components (protobuf, abseil, re2, flatbuffers,
-Eigen, onnx and others). Their notices: licenses/onnxruntime-ThirdPartyNotices.txt
+The ONNX Runtime library bundled in the plugin (libonnxruntime.1.19.2.dylib on
+macOS, onnxruntime.dll on Windows) contains further third-party components
+(protobuf, abseil, re2, flatbuffers, Eigen, onnx and others). Their notices:
+licenses/onnxruntime-ThirdPartyNotices.txt
+Source: https://github.com/microsoft/onnxruntime/tree/v1.19.2
 
 MIT License
 
@@ -159,10 +161,13 @@ International license (https://creativecommons.org/licenses/by-nc-sa/4.0/).
 Official release (other versions and future updates are available there):
 https://github.com/openvpi/vocoders/releases/tag/pc-nsf-hifigan-44.1k-hop512-128bin-2025.02
 Changes: the weights are not fine-tuned. They are redistributed in converted
-file formats: ONNX (pc_nsf_hifigan.onnx) and a compiled Core ML model for macOS
-(pc_nsf_hifigan.mlmodelc), both as included in the PitchNet 0.7.2
-distributions. The Core ML model stores the weights in 16-bit floating point
-(Float16), so its weight values are rounded from the original 32-bit values.
+file formats: ONNX (pc_nsf_hifigan.onnx, as included in the PitchNet source
+repository and identical to the file in HachiTune's "Resources/models"
+release, https://github.com/mdkrain/HachiTune/releases/tag/Resources/models)
+and a compiled Core ML model for macOS (pc_nsf_hifigan.mlmodelc, as included
+in the PitchNet 0.7.2 macOS installer). The Core ML model stores the weights in
+16-bit floating point (Float16), so its weight values are rounded from the
+original 32-bit values.
 
 The complete notice from the official release follows (also provided as
 licenses/PC-NSF-HiFiGAN-NOTICE.txt):
@@ -340,6 +345,12 @@ AAX SDK (not built into or shipped with Kinu Tune releases)
 Copyright (c) 2024 Avid Technology Inc.
 The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
 applicable, GPLv3. See https://developer.avid.com/aax for its terms.
+
+Fonts in the source tree (Resources/fonts; not embedded in the plugin binary
+and not included in the Kinu Tune release zips): Montserrat, Noto Sans CJK JP
+and Sarasa Gothic, each under the SIL Open Font License 1.1. License texts:
+Resources/fonts/Montserrat-OFL.txt, Resources/fonts/NotoSansCJK-OFL.txt,
+Resources/fonts/Sarasa-OFL.txt
 
 Bundled fonts and machine-learning model files retain their respective
 upstream licenses and attribution requirements. Their licenses must be

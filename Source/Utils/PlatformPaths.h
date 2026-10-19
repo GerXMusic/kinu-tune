@@ -12,14 +12,15 @@
  *   - Config: ~/Library/Kinu Tune/
  *
  * Windows:
- *   - Models: %PROGRAMDATA%/<company>/<app>/models/
+ *   - Models: %APPDATA%/Keinoaza/Kinu Tune/models/, then
+ *             %PROGRAMDATA%/Keinoaza/Kinu Tune/models/
  *   - Logs: %APPDATA%/Kinu Tune/Logs/
  *   - Config: %APPDATA%/Kinu Tune/
  *
  * Linux:
  *   - Models: <exe_dir>/models/
- *   - Logs: ~/.config/PitchNet/logs/
- *   - Config: ~/.config/PitchNet/
+ *   - Logs: ~/.config/Kinu Tune/logs/
+ *   - Config: ~/.config/Kinu Tune/
  */
 namespace PlatformPaths
 {

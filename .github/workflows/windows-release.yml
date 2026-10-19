@@ -18,6 +18,9 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+
 jobs:
   windows-x64:
     runs-on: windows-latest
@@ -28,13 +31,14 @@ jobs:
         with:
           ref: ${{ inputs.ref || inputs.tag }}
           submodules: recursive
+          persist-credentials: false
 
       - name: Fetch the model files from the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern "*-models.zip" --dir models-dl
+          gh release download "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --pattern "*-models.zip" --dir models-dl
           Expand-Archive -Path (Get-ChildItem models-dl/*.zip | Select-Object -First 1).FullName -DestinationPath models-dl/x
           New-Item -ItemType Directory -Force -Path Resources/models | Out-Null
           Copy-Item -Path models-dl/x/models/* -Destination Resources/models -Recurse -Force
@@ -52,7 +56,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $version = "${{ inputs.tag }}".TrimStart('v')
+          $version = "$env:RELEASE_TAG".TrimStart('v')
           $name = "Kinu-Tune-$version-Windows-x64"
           New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
           Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3" "$name/"
@@ -71,7 +75,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.tag }}" "$env:ZIP_NAME.zip" --repo "${{ github.repository }}" --clobber
+        run: gh release upload "$env:RELEASE_TAG" "$env:ZIP_NAME.zip" --repo "$env:GITHUB_REPOSITORY" --clobber
 
       - name: Keep the test build as a workflow artifact
         if: ${{ inputs.ref != '' }}
