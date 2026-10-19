@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and attach to (e.g. v0.1.0-beta)"
+        description: "Release tag to build and attach to (e.g. v0.1.0)"
         required: true
       ref:
         description: "Test build: build this branch or commit instead of the tag and keep the zip as a workflow artifact (the release is not changed)"

@@ -53,7 +53,7 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
    ```
 
-5. Cubase を起動し直します。スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます
+5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
 
 Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
@@ -119,13 +119,13 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
    ```
 
-5. Restart your host and rescan plugins.
+5. Restart your DAW and rescan plugins.
 
 Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 
 1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
 2. Copy the `models` folder into `%APPDATA%\Keinoaza\Kinu Tune\` (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
-3. Restart your host and rescan plugins.
+3. Restart your DAW and rescan plugins.
 
 ### Model files
 
