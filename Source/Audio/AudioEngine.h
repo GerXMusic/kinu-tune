@@ -48,6 +48,7 @@ public:
                          int sampleRate, bool seamless = true);
   void endAuditionLoop();
   bool isAuditioning() const { return auditionActive.load(); }
+  bool isAuditionSeamless() const { return auditionSeamless.load(); }
 
   bool isPlaying() const { return playing; }
   double getPosition() const; // Returns position in seconds

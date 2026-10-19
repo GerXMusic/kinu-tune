@@ -13,14 +13,15 @@
   - 新しく歌った音程にする(ピッチの描き込み): `NotePitch::setSungPitch`
 - 元に戻す動作(`Source/Undo/`)は、基準の値を省略できない作りにしてある。新しい動作を足す時も、前後の基準を必ず受け取る
 - 破ると: テスト `SourceGuard_pitch-writes` が、直接書き換えている行を示して落ちる。基準の扱いの誤りは `VariAudioInspectorTests` が拾う
+- この検査は1行ずつ読むので、メンバー関数ポインタ経由の呼び出しや、呼び出しを複数行に分けた書き方は見逃す。そういう書き方をしない
 
 ## 2. 再生以外で音を出す処理は AuditionOutput だけを通す
 
 - ドラッグ中の試聴・鍵盤の試聴・範囲の試聴は、出口が1つ(プラグインではホストの試聴経路、単体アプリでは AudioEngine の試聴ループ)。`Source/UI/Main/AuditionOutput.h` の `startHostPreview` / `playLoop` / `stopLoop` / `stopHostPreview` だけで鳴らす・止める
-- 鳴らし始める時は、出口を前の持ち主から取り上げる(`claim`。前の持ち主には `setOnTakenOver` で登録した処理が呼ばれる)。再生・一時停止・停止は、先に `yieldToTransport` を呼ぶ
-- 新しい種類の試聴を足す時は、`AuditionOutput::Source` に種類を足し、取り上げられた時の処理を MainComponent の構築時に登録する
+- 鳴らし始める時は、出口を前の持ち主から取り上げる(`claim`。前の持ち主には `setOnTakenOver` で登録した処理が呼ばれる)。新しい持ち主もループを鳴らすなら前のループは置き換わり、そうでなければ(範囲の試聴)前のループは止める。再生・一時停止・停止は、先に `yieldToTransport` を呼ぶ
+- 新しい種類の試聴を足す時は、`AuditionOutput::Source` の `Count` より前に種類を足し、ループを鳴らす種類なら `playsLoop` にも足す。取り上げられた時の処理を MainComponent の構築時に登録する
 - ホストへの4つのコールバック(試聴範囲の開始・停止、ループの再生・停止)は AuditionOutput の中にしか無い。MainComponent から直接は呼べない
-- 破ると: テスト `SourceGuard_audition-output` が、AudioEngine の試聴ループを直接呼んでいる行を示して落ちる。受け渡しの誤りは `AuditionOutputTests` と `AuditionHandoffTests` が拾う
+- 破ると: テスト `SourceGuard_audition-output` が、AuditionOutput と AudioEngine 以外から試聴ループを直接呼んでいる行を示して落ちる(1行ずつ読む検査なので、§1 と同じ書き方の制限がある)。受け渡しの誤りは `AuditionOutputTests`(単体アプリの経路を含む)と `AuditionHandoffTests`(本物の MainComponent)が拾う
 
 ## 3. プロジェクトは持たずに毎回問い合わせる
 
@@ -35,7 +36,7 @@
 ## 5. キーとスケールの読み方
 
 - ハモリとエディタースケールのキーは `Project::getPreferredScaleMode()` / `getScaleRootNote()` で読む。`getScaleMode()` はドラッグの吸着の設定で、クロマチックを返すことがある
-- キーを変える入口は、左のインスペクタのエディタースケールだけ
+- ユーザーがキーを変える入口は、左のインスペクタのエディタースケールだけ(`ParameterPanel` は未設定のルートを整える時にだけ書き込む)
 
 ## 6. インスペクタの表示の読み直し
 

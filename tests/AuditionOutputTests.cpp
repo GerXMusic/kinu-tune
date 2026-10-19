@@ -59,7 +59,8 @@ int main()
     buffer.clear();
     Project project;
 
-    // Claiming takes the output from its owner, whose sound is replaced.
+    // Claiming takes the output from its owner. A loop replaces a loop; a
+    // source that does not play a loop (the region preview) stops it.
     {
         AuditionOutput output;
         Recorder log;
@@ -73,10 +74,14 @@ int main()
         output.claim(Source::PianoKey);
         CHECK(output.owner() == Source::PianoKey);
         CHECK(log.calls.size() == 1 && log.has("drag:replaced"));
-        output.claim(Source::RegionPreview);
-        CHECK(log.has("key:replaced"));
         output.claim(Source::DraggedSegment);
-        CHECK(log.has("region:replaced"));
+        CHECK(log.has("key:replaced"));
+        output.claim(Source::RegionPreview);
+        CHECK(log.has("drag:stop"));
+        output.claim(Source::PianoKey);
+        CHECK(log.has("region:stop"));
+        output.claim(Source::RegionPreview);
+        CHECK(log.has("key:stop"));
     }
 
     // Transport commands silence the dragged segment and the piano key; the
@@ -158,6 +163,20 @@ int main()
         CHECK(log.has("host:loop stop"));
         output.stopHostPreview();
         CHECK(log.has("host:preview stop"));
+    }
+
+    // Standalone: the loop goes to the AudioEngine, seamless for the key tone
+    // and repeated from the start for the dragged segment.
+    {
+        AudioEngine engine;
+        AuditionOutput output;
+        output.setEngine([&engine] { return &engine; }, [] { return false; });
+        CHECK(output.playLoop(Source::PianoKey, buffer, 44100.0, false));
+        CHECK(engine.isAuditioning() && engine.isAuditionSeamless());
+        CHECK(output.playLoop(Source::DraggedSegment, buffer, 44100.0, true));
+        CHECK(engine.isAuditioning() && !engine.isAuditionSeamless());
+        output.stopLoop();
+        CHECK(!engine.isAuditioning());
     }
 
     // Standalone without an engine: nothing sounds and nothing crashes.

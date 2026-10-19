@@ -189,11 +189,11 @@ int main()
             CHECK(count("loop stop") == 1 && !a.keyActive() && a.owner() == Source::None);
         });
 
-    run("a region preview replaces the drag", [](MainComponentTestAccess &a, std::vector<Note> &n)
+    run("a region preview stops the drag's loop", [](MainComponentTestAccess &a, std::vector<Note> &n)
         {
             a.drag(n[0], 0.3f);
             a.region(200, 290);
-            CHECK(count("loop stop") == 0 && !a.dragActive());
+            CHECK(count("loop stop") == 1 && !a.dragActive());
             CHECK(count("preview 200-290") == 1 && a.regionActive());
             CHECK(a.owner() == Source::RegionPreview);
             a.stop();
@@ -208,6 +208,44 @@ int main()
             CHECK(count("preview 100-140") == 1 && count("loop whole") == 1);
             CHECK(a.owner() == Source::DraggedSegment);
             a.mouseUp();
+        });
+
+    run("a region preview stops a held piano key", [](MainComponentTestAccess &a, std::vector<Note> &)
+        {
+            a.key(69);
+            a.region(200, 290);
+            CHECK(calls.size() >= 4 && calls[2] == "loop stop" && calls[3] == "preview 200-290");
+            CHECK(!a.keyActive() && a.owner() == Source::RegionPreview);
+            a.keyUp(); // nothing left to stop
+            CHECK(count("loop stop") == 1);
+        });
+
+    run("a piano key ends a region preview", [](MainComponentTestAccess &a, std::vector<Note> &)
+        {
+            a.region(200, 290);
+            a.key(69);
+            CHECK(calls.size() >= 3 && calls[1] == "preview stop" && calls[2] == "preview 0-1");
+            CHECK(!a.regionActive() && a.keyActive());
+            a.keyUp();
+        });
+
+    run("play stops a held piano key", [](MainComponentTestAccess &a, std::vector<Note> &)
+        {
+            a.key(69);
+            a.play();
+            CHECK(count("loop stop") == 1 && !a.keyActive());
+        });
+
+    run("a drag replaces a piano key; its key up does not stop the drag",
+        [](MainComponentTestAccess &a, std::vector<Note> &n)
+        {
+            a.key(69);
+            a.drag(n[0], 0.3f);
+            CHECK(!a.keyActive() && a.dragActive() && count("loop stop") == 0);
+            a.keyUp();
+            CHECK(count("loop stop") == 0 && a.dragActive());
+            a.mouseUp();
+            CHECK(count("loop stop") == 1);
         });
 
     run("switching the audition off mid-drag stops it", [](MainComponentTestAccess &a, std::vector<Note> &n)

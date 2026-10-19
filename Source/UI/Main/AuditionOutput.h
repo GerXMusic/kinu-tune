@@ -15,8 +15,10 @@
 // loop in the standalone app. Starting a source here takes the output from the
 // source that had it, so a new kind of audition cannot leave the previous one
 // sounding. The host callbacks live only here (MainComponent forwards its
-// setters), and the AuditionOutputGuard test fails when code outside this file
-// calls the engine's audition loop directly.
+// setters), and the SourceGuard_audition-output test fails when code outside
+// this file and AudioEngine calls the engine's audition loop directly.
+// A new kind of audition: add it to Source (before Count) and register what
+// it does when taken over in MainComponent's constructor.
 class AuditionOutput
 {
 public:
@@ -25,17 +27,20 @@ public:
         None,
         DraggedSegment,
         PianoKey,
-        RegionPreview
+        RegionPreview,
+        Count // not a source; keep it last
     };
 
-    // Called on a source when another one takes the output (stopSound false:
-    // the new sound replaces it) or when a transport command does (stopSound
-    // true: silence it).
+    // Called on a source when another one or a transport command takes the
+    // output. stopSound false: the new source plays its own loop over the same
+    // output, which replaces this one's sound. stopSound true: silence it (a
+    // transport command, or a new source that does not play a loop).
     using TakenOver = std::function<void(bool stopSound)>;
 
     void setOnTakenOver(Source source, TakenOver handler)
     {
-        handlers[index(source)] = std::move(handler);
+        if (index(source) < sourceCount)
+            handlers[index(source)] = std::move(handler);
     }
 
     // Plug-in backends (set by the plug-in editor through MainComponent).
@@ -64,15 +69,16 @@ public:
 
     Source owner() const { return current; }
 
-    // A source is about to sound: the output is taken from its current owner,
-    // whose own sound is replaced rather than stopped.
+    // A source is about to sound: the output is taken from its current owner.
+    // Its loop is replaced when the new source plays a loop too, and stopped
+    // otherwise.
     void claim(Source source)
     {
         if (source == current)
             return;
         const Source previous = current;
         current = source;
-        notify(previous, false);
+        notify(previous, !(playsLoop(previous) && playsLoop(source)));
     }
 
     // Play, pause and stop: the user's transport choice wins over the dragged
@@ -148,20 +154,27 @@ public:
     }
 
 private:
+    static constexpr size_t sourceCount = static_cast<size_t>(Source::Count);
     static size_t index(Source source) { return static_cast<size_t>(source); }
+    // The dragged segment and the piano key loop a buffer over the output;
+    // the region preview plays the timeline through the host preview path.
+    static bool playsLoop(Source source)
+    {
+        return source == Source::DraggedSegment || source == Source::PianoKey;
+    }
 
     bool pluginMode() const { return isPluginMode && isPluginMode(); }
 
     void notify(Source source, bool stopSound)
     {
-        if (source == Source::None)
+        if (source == Source::None || source == Source::Count)
             return;
         if (auto &handler = handlers[index(source)])
             handler(stopSound);
     }
 
     Source current = Source::None;
-    std::array<TakenOver, 4> handlers;
+    std::array<TakenOver, sourceCount> handlers;
     std::function<void(const Project &, int, int)> startHostPreviewRange;
     std::function<void()> stopHostPreviewRange;
     std::function<void(const juce::AudioBuffer<float> &, double, bool)> playHostLoop;

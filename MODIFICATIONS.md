@@ -91,8 +91,10 @@ The full history of the changes is in the git log of this repository.
   sound through one owner (Source/UI/Main/AuditionOutput.h), which holds the
   host preview and audition callbacks. A source that starts takes the output
   from the previous one; play, pause and stop silence the dragged segment and
-  the piano key. A piano key or a drag now also finishes a running region
-  preview, and a transport command now also stops a held piano key.
+  the piano key. Behaviour changes where two sources used to fight over the
+  output: a piano key or a drag now finishes a running region preview, a
+  region preview now stops a sounding drag or key loop, and a transport
+  command now also stops a held piano key.
 
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano

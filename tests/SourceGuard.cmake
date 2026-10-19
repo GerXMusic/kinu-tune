@@ -14,6 +14,9 @@
 # audition-output:  the engine's audition loop is sounded only through
 #                   Source/UI/Main/AuditionOutput.h, so a new kind of audition
 #                   takes the output over from the previous one.
+#
+# The check reads one line at a time. A call through a member pointer, or one
+# split across lines, is not caught; dev-rules.md asks not to write them.
 
 if(NOT SOURCE_DIR OR NOT RULE)
     message(FATAL_ERROR "SourceGuard: pass -DSOURCE_DIR=<repo>/Source -DRULE=<rule>")
@@ -25,8 +28,10 @@ if(RULE STREQUAL "pitch-writes")
     set(pattern "(setMidiNote|setLastNonMacroMidiNote|setMidiNoteFromPitchCorrection)[ \t]*\\(")
     set(hint "Use NotePitch::applyEdit / restore / applyCorrection / setCorrectionSource / setSungPitch instead (see Source/Utils/NotePitch.h).")
 elseif(RULE STREQUAL "audition-output")
-    set(scan_dir "${SOURCE_DIR}/UI")
-    set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h")
+    set(scan_dir "${SOURCE_DIR}")
+    set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h"
+                "${SOURCE_DIR}/Audio/AudioEngine.h"
+                "${SOURCE_DIR}/Audio/AudioEngine.cpp")
     set(pattern "(beginAuditionLoop|endAuditionLoop)[ \t]*\\(")
     set(hint "Use AuditionOutput::playLoop / stopLoop instead (see Source/UI/Main/AuditionOutput.h).")
 else()
@@ -41,8 +46,9 @@ foreach(file IN LISTS files)
     endif()
     file(STRINGS "${file}" lines REGEX "${pattern}")
     foreach(line IN LISTS lines)
-        # Mentions in comments are fine.
-        string(REGEX REPLACE "//.*$" "" code "${line}")
+        # Mentions in string literals and comments are fine.
+        string(REGEX REPLACE "\"([^\"\\\\]|\\\\.)*\"" "\"\"" code "${line}")
+        string(REGEX REPLACE "//.*$" "" code "${code}")
         if(code MATCHES "${pattern}")
             file(RELATIVE_PATH rel "${SOURCE_DIR}" "${file}")
             string(STRIP "${line}" shown)

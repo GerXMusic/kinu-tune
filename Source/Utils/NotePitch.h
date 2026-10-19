@@ -9,9 +9,11 @@
 
 // The only place that writes a note's pitch (Note::midiNote) and its Correct
 // Pitch reference (Note::lastNonMacroMidiNote, "the sung pitch"). Every pitch
-// write in the editor is one of the operations below; the PitchWriteGuard test
-// fails when code outside Note.h and this file calls the raw setters, so a new
-// feature cannot forget the reference rule.
+// write in the editor is one of the operations below; the
+// SourceGuard_pitch-writes test fails when code outside Note.h and this file
+// calls the raw setters, so a new feature cannot forget the reference rule.
+// (The check reads one line at a time: calls through a member pointer or split
+// across lines are not caught, so do not write them.)
 namespace NotePitch
 {
 // The reference after an edit other than Correct Pitch (drag, arrow keys,

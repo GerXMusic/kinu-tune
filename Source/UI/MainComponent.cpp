@@ -598,7 +598,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
                                     return;
                                   if (stopSound)
                                     safeThis->finishPianoKeyAudition();
-                                  else // the new sound replaced the tone
+                                  else // the new loop replaced the tone
                                     safeThis->pianoKeyAuditionActive = false;
                                 });
   auditionOutput.setOnTakenOver(AuditionOutput::Source::RegionPreview,
