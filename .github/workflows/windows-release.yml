@@ -36,8 +36,11 @@ jobs:
           Copy-Item -Path models-dl/x/models/* -Destination Resources/models -Recurse -Force
           Get-ChildItem -Recurse Resources/models | Select-Object FullName, Length
 
+      # Use the runner's default Visual Studio generator (as upstream PitchNet
+      # does) and the CPU build of ONNX Runtime; DirectML is the Windows
+      # default in CMakeLists.txt, so turn it off explicitly.
       - name: Configure
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DPITCHNET_DEV_BUILD=OFF -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
+        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_DEV_BUILD=OFF -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
