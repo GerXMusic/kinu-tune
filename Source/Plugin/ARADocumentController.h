@@ -109,6 +109,20 @@ struct AraPreviewState {
   std::shared_ptr<juce::AudioBuffer<float>> auditionBuffer;
   std::atomic<double> editorRendererSampleRate{0.0};
   std::atomic<bool> auditionActive{false};
+  // Diagnostics for the drag audition, written on the audio thread and read
+  // when the audition stops: blocks this document actually filled with
+  // audition audio, and blocks a renderer skipped because it does not own
+  // the edited region.
+  std::atomic<std::uint32_t> auditionBlocksWritten{0};
+  std::atomic<std::uint32_t> auditionBlocksSkippedNotOwner{0};
+  // Editor renderer that owns the previewed region, resolved on the model
+  // thread from the hosts' assignments: playback regions (REAPER, Studio
+  // One) or region sequences, i.e. tracks. nullptr = nobody is assigned, any
+  // renderer may claim (legacy behaviour).
+  std::atomic<PitchNetEditorRenderer *> previewOwnerRenderer{nullptr};
+  // false: repeat the audition buffer from its start with a hard wrap (drag
+  // feedback over a whole segment); true: seamless sustain loop.
+  std::atomic<bool> auditionSeamless{true};
 };
 
 /**
@@ -307,6 +321,11 @@ private:
   std::shared_ptr<juce::AudioBuffer<float>> previousPreviewBuffer;
   juce::Range<juce::int64> previewLoopRange;
   juce::int64 previewLoopPosition = 0;
+  // Seamless sustain loop (tail crossfaded into head) or a plain repeat of
+  // the whole buffer (drag feedback).
+  bool previewLoopSeamless = true;
+  // The handed-off buffer keeps the loop mode it was playing with.
+  bool previousPreviewLoopSeamless = true;
   juce::int64 previousPreviewLoopPosition = 0;
   int previewTransitionRemaining = 0;
   int previewTransitionTotal = 0;
@@ -424,7 +443,8 @@ public:
   void startPreviewRange(double previewStartInModificationSeconds,
                          double previewEndInModificationSeconds);
   void startPreviewAudio(const juce::AudioBuffer<float> &buffer,
-                         double sampleRate);
+                         double sampleRate,
+                         bool wholeSegment = false);
   void stopPreview();
   AraPreviewState &getPreviewState() { return previewState; }
   const AraPreviewState &getPreviewState() const { return previewState; }

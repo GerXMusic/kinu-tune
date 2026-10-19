@@ -16,7 +16,6 @@ ToolbarComponent::ToolbarComponent()
     playButton.setImage(loadImage(BinaryData::play_png, BinaryData::play_pngSize));
     stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
-    quantizeButton.setImage(loadImage(BinaryData::quantize_png, BinaryData::quantize_pngSize));
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
@@ -42,8 +41,6 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(pitchDrawingModeButton);
     addAndMakeVisible(timingModeButton);
     addAndMakeVisible(followButton);
-    addAndMakeVisible(scaleSelectionButton);
-    addAndMakeVisible(quantizeButton);
     addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
@@ -60,40 +57,12 @@ ToolbarComponent::ToolbarComponent()
     pitchDrawingModeButton.addListener(this);
     timingModeButton.addListener(this);
     followButton.addListener(this);
-    quantizeButton.addListener(this);
     auditionButton.addListener(this);
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
     leftPanelButton.addListener(this);
     trackViewButton.addListener(this);
-
-    scaleSelectionButton.onScaleRootChanged = [this](int rootNote)
-    {
-        if (onScaleRootChanged)
-            onScaleRootChanged(rootNote);
-    };
-    scaleSelectionButton.onScaleModeChanged = [this](ScaleMode mode)
-    {
-        if (onScaleModeChanged)
-            onScaleModeChanged(mode);
-    };
-    scaleSelectionButton.onScaleRootPreviewChanged =
-        [this](std::optional<int> rootNote)
-    {
-        if (onScaleRootPreviewChanged)
-            onScaleRootPreviewChanged(rootNote);
-    };
-    scaleSelectionButton.onScaleModePreviewChanged =
-        [this](std::optional<ScaleMode> mode)
-    {
-        if (onScaleModePreviewChanged)
-            onScaleModePreviewChanged(mode);
-    };
-    scaleSelectionButton.onPreferredWidthChanged = [this]
-    {
-        resized();
-    };
 
     // Tooltips and the zoom caption all come from the string table; they are
     // set here and re-set whenever the language changes.
@@ -212,8 +181,7 @@ void ToolbarComponent::resized()
         rightButtonSize, rightButtonSize);
 
     // Everything left of the side-panel button sits 5px further right: the
-    // buttons below are laid out from this edge, and the scale selector
-    // follows the quantize button.
+    // buttons below are laid out from this edge.
     rightSection.setRight(rightSection.getRight() + 5);
 
     // Clip / Track toggle, next to the side-panel button (ARA only). Takes no
@@ -240,18 +208,6 @@ void ToolbarComponent::resized()
     auditionButton.setBounds(auditionBtnArea.getRight() - rightButtonSize - 4,
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
-
-    auto quantizeBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
-    quantizeButton.setBounds(quantizeBtnArea.getRight() - rightButtonSize - 8,
-                             capsuleY + (capsuleH - rightButtonSize) / 2,
-                             rightButtonSize, rightButtonSize);
-
-    const int scaleButtonWidth = scaleSelectionButton.getPreferredWidth();
-    constexpr int scaleQuantizeGap = 11;
-    scaleSelectionButton.setBounds(
-        quantizeButton.getX() - scaleQuantizeGap - scaleButtonWidth,
-        capsuleY + (capsuleH - 26) / 2,
-        scaleButtonWidth, 26);
 
     // Keep the edit tools centered in the toolbar.
     const int editToolGap = 6;
@@ -370,7 +326,6 @@ void ToolbarComponent::refreshLocalisedText()
     pitchDrawingModeButton.setTooltip(TR("tooltip.pitch_drawing_tool"));
     timingModeButton.setTooltip(TR("tooltip.timing_tool"));
     followButton.setTooltip(TR("tooltip.auto_scroll"));
-    quantizeButton.setTooltip(TR("tooltip.quantize_macro"));
     auditionButton.setTooltip(TR("tooltip.live_audition"));
     recordButton.setTooltip(TR("tooltip.capture"));
     playButton.setTooltip(TR("toolbar.play"));
@@ -452,11 +407,6 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onToggleAudition)
             onToggleAudition(auditionButton.getToggleState());
     }
-    else if (button == &quantizeButton)
-    {
-        if (onCorrectPitchCenter)
-            onCorrectPitchCenter();
-    }
     else if (button == &undoButton && onUndo)
         onUndo();
     else if (button == &redoButton && onRedo)
@@ -530,11 +480,6 @@ void ToolbarComponent::setToolGroupEnabled(bool enabled)
     splitModeButton.setEnabled(enabled);
     pitchDrawingModeButton.setEnabled(enabled);
     timingModeButton.setEnabled(enabled);
-}
-
-void ToolbarComponent::setProject(Project* project)
-{
-    scaleSelectionButton.setProject(project);
 }
 
 void ToolbarComponent::setCurrentTime(double time)
@@ -612,7 +557,6 @@ void ToolbarComponent::setTrackViewAvailable(bool available)
 
 void ToolbarComponent::setTrackViewMode(bool track)
 {
-    scaleSelectionButton.setProjectKeyScope(track);
     trackViewButton.setToggleState(track, juce::dontSendNotification);
     refreshTrackViewTooltip();
 }

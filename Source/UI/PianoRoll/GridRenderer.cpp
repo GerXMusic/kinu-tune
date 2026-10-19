@@ -136,14 +136,23 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
           coordMapper->projectToTimeline(visibleStartX / pixelsPerSecond);
       const double visibleEndTime =
           coordMapper->projectToTimeline(visibleEndX / pixelsPerSecond);
+      // Zoomed far out the grid would melt into a grey wash: fall back to
+      // beats, then bars, then every 2nd/4th/... bar.
+      constexpr double kMinLineSpacingPx = 4.0;
+      double step = params.gridSeconds;
+      if (step * pixelsPerSecond < kMinLineSpacingPx)
+        step = params.beatSeconds;
+      if (step * pixelsPerSecond < kMinLineSpacingPx)
+        step = params.barSeconds;
+      while (step * pixelsPerSecond < kMinLineSpacingPx)
+        step *= 2.0;
       const int firstGrid = std::max(
-          0,
-          static_cast<int>(std::floor(visibleStartTime / params.gridSeconds)) - 1);
+          0, static_cast<int>(std::floor(visibleStartTime / step)) - 1);
 
       for (int i = firstGrid;; ++i)
       {
-        const double time = static_cast<double>(i) * params.gridSeconds;
-        if (time > visibleEndTime + params.gridSeconds)
+        const double time = static_cast<double>(i) * step;
+        if (time > visibleEndTime + step)
           break;
 
         const float x = static_cast<float>(
@@ -183,8 +192,12 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
       secondsPerTick = 2.0f;
     else if (pixelsPerSecond >= 25.0f)
       secondsPerTick = 5.0f;
-    else
+    else if (pixelsPerSecond >= 10.0f)
       secondsPerTick = 10.0f;
+    else if (pixelsPerSecond >= 4.0f)
+      secondsPerTick = 30.0f;
+    else
+      secondsPerTick = 60.0f;
 
     const float secondsPerLine = secondsPerTick * 2.0f;
     const float pixelsPerLine = secondsPerLine * pixelsPerSecond;

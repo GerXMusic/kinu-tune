@@ -49,6 +49,31 @@ float PitchEditor::getSnappedDragOffset(float rawOffsetSemitones,
   return static_cast<float>(bestOffset);
 }
 
+float PitchEditor::resolveDragOffset(float rawOffsetSemitones,
+                                     float anchorMidiNote,
+                                     DragSnapKind kind) const
+{
+  switch (kind)
+  {
+    case DragSnapKind::Off:
+      return rawOffsetSemitones;
+    case DragSnapKind::Relative:
+      return getSnappedDragOffset(rawOffsetSemitones, anchorMidiNote);
+    case DragSnapKind::Absolute:
+    {
+      const float raw = anchorMidiNote + rawOffsetSemitones;
+      const bool useScale = dragSnapMode == DragSnapMode::Scale && project;
+      const float target =
+          useScale ? ScaleUtils::snapMidiToScale(raw, project->getPreferredScaleMode(),
+                                                 project->getScaleRootNote(),
+                                                 pitchReferenceHz)
+                   : ScaleUtils::snapMidiToSemitone(raw, pitchReferenceHz);
+      return target - anchorMidiNote;
+    }
+  }
+  return rawOffsetSemitones;
+}
+
 Note *PitchEditor::findNoteAt(float x, float y)
 {
   if (!project || !coordMapper)
@@ -301,16 +326,15 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
   isMultiDragging = true;
 }
 
-void PitchEditor::updateMultiNoteDrag(float x, float y, bool invertSnap)
+void PitchEditor::updateMultiNoteDrag(float x, float y, DragSnapKind snapKind)
 {
   if (!isMultiDragging || draggedNotes.empty() || !coordMapper)
     return;
 
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
-  if (snapToSemitoneDragEnabled != invertSnap)
-    deltaSemitones =
-        getSnappedDragOffset(deltaSemitones, multiDragSnapAnchorMidi);
+  deltaSemitones =
+      resolveDragOffset(deltaSemitones, multiDragSnapAnchorMidi, snapKind);
 
   for (auto *note : draggedNotes)
   {
@@ -346,11 +370,20 @@ void PitchEditor::endMultiNoteDrag()
     int expandedStart = std::numeric_limits<int>::max();
     int expandedEnd = std::numeric_limits<int>::min();
 
-    // Bake pitchOffset into midiNote for all notes
+    // Bake pitchOffset into midiNote for all notes, keeping the Correct Pitch
+    // reference (see ScaleUtils::carriedCorrectionSource).
+    std::vector<float> oldSources, newSources;
     for (size_t i = 0; i < draggedNotes.size(); ++i)
     {
       auto *note = draggedNotes[i];
-      note->setMidiNote(originalMidiNotes[i] + newOffset);
+      const float oldSource = note->getLastNonMacroMidiNote();
+      const float newMidi = originalMidiNotes[i] + newOffset;
+      note->setMidiNote(newMidi);
+      note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+          *project, oldSource, note->getOriginalMidiNote(), originalMidiNotes[i], newMidi,
+          project->getPitchReferenceHz()));
+      oldSources.push_back(oldSource);
+      newSources.push_back(note->getLastNonMacroMidiNote());
       note->setPitchOffset(0.0f);
       note->markSynthDirty();
 
@@ -370,6 +403,8 @@ void PitchEditor::endMultiNoteDrag()
     // Create undo action for multi-note drag
     if (undoManager)
     {
+      // The rebuild above may have resized f0; read its size now.
+      f0Size = static_cast<int>(audioData.f0.size());
       std::vector<F0FrameEdit> f0Edits;
       for (size_t i = 0; i < draggedNotes.size(); ++i)
       {
@@ -407,7 +442,8 @@ void PitchEditor::endMultiNoteDrag()
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
               projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
             }
-          });
+          },
+          std::move(oldSources), std::move(newSources));
       undoManager->addAction(std::move(action));
     }
 

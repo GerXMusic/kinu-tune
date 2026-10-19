@@ -87,7 +87,7 @@ public:
 
     g.setColour(juce::Colours::white);
     g.setFont(titleFont);
-    g.drawText("PitchNet", getLocalBounds().reduced(24, 20),
+    g.drawText("Kinu Tune", getLocalBounds().reduced(24, 20),
                juce::Justification::centredTop);
 
     g.setColour(juce::Colour(APP_COLOR_PRIMARY));
@@ -145,9 +145,9 @@ class PitchNetApplication : public juce::JUCEApplication {
 public:
   PitchNetApplication() {}
 
-  const juce::String getApplicationName() override { return "PitchNet"; }
+  const juce::String getApplicationName() override { return "Kinu Tune"; }
 
-  const juce::String getApplicationVersion() override { return "0.7.2"; }
+  const juce::String getApplicationVersion() override { return "0.1.0"; }
 
   bool moreThanOneInstanceAllowed() override { return true; }
 
@@ -169,7 +169,7 @@ public:
     const auto fileToOpen = findFileArgument(unreadablePath);
     if (unreadablePath.isNotEmpty()) {
       LOG("Command line file not found: " + unreadablePath);
-      std::cerr << "PitchNet: file not found: " << unreadablePath << std::endl;
+      std::cerr << "Kinu Tune: file not found: " << unreadablePath << std::endl;
     } else if (fileToOpen != juce::File{}) {
       LOG("Command line file: " + fileToOpen.getFullPathName());
     }

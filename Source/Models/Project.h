@@ -133,12 +133,14 @@ enum class TimelineGridDivision : int
 
 struct MacroParameters
 {
-    ScaleMode scaleMode = ScaleMode::Chromatic;
+    // Defaults follow VariAudio use: the scale is shown and pitch drags snap
+    // (Absolute in the inspector).
+    ScaleMode scaleMode = ScaleMode::Major;
     int projectKeyRoot = 0;
     ScaleMode projectKeyMode = ScaleMode::Major;
     bool projectKeyInitialized = false;
     int pitchReferenceHz = 440;
-    bool snapToSemitones = false;
+    bool snapToSemitones = true;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
     int timelineBeatNumerator = 4;

@@ -10,10 +10,7 @@ SettingsManager::SettingsManager()
 
 juce::File SettingsManager::getSettingsFile()
 {
-  return juce::File::getSpecialLocation(
-             juce::File::userApplicationDataDirectory)
-      .getChildFile("PitchNet")
-      .getChildFile("settings.xml");
+  return PlatformPaths::getConfigDirectory().getChildFile("settings.xml");
 }
 
 juce::File SettingsManager::getConfigFile()

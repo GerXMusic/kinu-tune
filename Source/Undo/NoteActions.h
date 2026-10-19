@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include "UndoableAction.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
@@ -121,13 +123,17 @@ public:
         Right
     };
 
+    // oldSources/newSources: Correct Pitch references before and after.
     TiltResetAction(const std::vector<Note *> &notes,
                     TiltSide side,
                     const std::vector<float> &oldTilts,
                     const std::vector<float> &oldMidiNotes,
-                    std::function<void()> onChanged = nullptr)
+                    std::function<void()> onChanged = nullptr,
+                    std::vector<float> oldSources = {},
+                    std::vector<float> newSources = {})
         : notes(notes), side(side), oldTilts(oldTilts),
-          oldMidiNotes(oldMidiNotes), onChanged(onChanged) {}
+          oldMidiNotes(oldMidiNotes), onChanged(onChanged),
+          oldSources(std::move(oldSources)), newSources(std::move(newSources)) {}
 
     void undo() override
     {
@@ -142,6 +148,8 @@ public:
 
                 if (i < oldMidiNotes.size())
                     notes[i]->setMidiNote(oldMidiNotes[i]);
+                if (i < oldSources.size())
+                    notes[i]->setLastNonMacroMidiNote(oldSources[i]);
 
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
@@ -171,6 +179,8 @@ public:
                     const float baseline = oldMidiNotes[i] - oldTiltMean;
                     notes[i]->setMidiNote(baseline + newTiltMean);
                 }
+                if (i < newSources.size())
+                    notes[i]->setLastNonMacroMidiNote(newSources[i]);
 
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
@@ -191,6 +201,8 @@ private:
     std::vector<float> oldTilts;
     std::vector<float> oldMidiNotes;
     std::function<void()> onChanged;
+    std::vector<float> oldSources;
+    std::vector<float> newSources;
 };
 
 /**
@@ -200,18 +212,24 @@ private:
 class NoteSnapToSemitoneAction : public UndoableAction
 {
 public:
+    // oldSource/newSource: Correct Pitch reference before and after (NaN:
+    // leave it to setMidiNote).
     NoteSnapToSemitoneAction(Note *note,
                              float oldMidi, float oldOffset,
                              float newMidi,
-                             std::function<void(Note *)> onNoteChanged = nullptr)
+                             std::function<void(Note *)> onNoteChanged = nullptr,
+                             float oldSource = NAN, float newSource = NAN)
         : note(note), oldMidi(oldMidi), oldOffset(oldOffset),
-          newMidi(newMidi), onNoteChanged(onNoteChanged) {}
+          newMidi(newMidi), onNoteChanged(onNoteChanged),
+          oldSource(oldSource), newSource(newSource) {}
 
     void undo() override
     {
         if (note)
         {
             note->setMidiNote(oldMidi);
+            if (!std::isnan(oldSource))
+                note->setLastNonMacroMidiNote(oldSource);
             note->setPitchOffset(oldOffset);
             note->markDirty();
             note->markSynthDirty();
@@ -225,6 +243,8 @@ public:
         if (note)
         {
             note->setMidiNote(newMidi);
+            if (!std::isnan(newSource))
+                note->setLastNonMacroMidiNote(newSource);
             note->setPitchOffset(0.0f);
             note->markDirty();
             note->markSynthDirty();
@@ -241,6 +261,8 @@ private:
     float oldOffset;
     float newMidi;
     std::function<void(Note *)> onNoteChanged;
+    float oldSource;
+    float newSource;
 };
 
 /**
@@ -253,12 +275,16 @@ public:
                                   std::vector<float> oldMidis,
                                   std::vector<float> oldOffsets,
                                   std::vector<float> newMidis,
-                                  std::function<void(const std::vector<Note *> &)> onNotesChanged = nullptr)
+                                  std::function<void(const std::vector<Note *> &)> onNotesChanged = nullptr,
+                                  std::vector<float> oldSources = {},
+                                  std::vector<float> newSources = {})
         : notes(notes),
           oldMidis(std::move(oldMidis)),
           oldOffsets(std::move(oldOffsets)),
           newMidis(std::move(newMidis)),
-          onNotesChanged(onNotesChanged) {}
+          onNotesChanged(onNotesChanged),
+          oldSources(std::move(oldSources)),
+          newSources(std::move(newSources)) {}
 
     void undo() override
     {
@@ -268,6 +294,8 @@ public:
             if (!note)
                 continue;
             note->setMidiNote(oldMidis[i]);
+            if (i < oldSources.size())
+                note->setLastNonMacroMidiNote(oldSources[i]);
             note->setPitchOffset(oldOffsets[i]);
             note->markDirty();
             note->markSynthDirty();
@@ -284,6 +312,8 @@ public:
             if (!note)
                 continue;
             note->setMidiNote(newMidis[i]);
+            if (i < newSources.size())
+                note->setLastNonMacroMidiNote(newSources[i]);
             note->setPitchOffset(0.0f);
             note->markDirty();
             note->markSynthDirty();
@@ -300,6 +330,8 @@ private:
     std::vector<float> oldOffsets;
     std::vector<float> newMidis;
     std::function<void(const std::vector<Note *> &)> onNotesChanged;
+    std::vector<float> oldSources;
+    std::vector<float> newSources;
 };
 
 /**

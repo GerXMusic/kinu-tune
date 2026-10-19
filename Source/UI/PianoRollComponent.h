@@ -3,6 +3,8 @@
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
+#include "../Utils/HarmonyUtils.h"
+#include "../Utils/TransformParams.h"
 #include "../Utils/Localization.h"
 #include "../Utils/BasePitchPreview.h"
 #include "../Undo/UndoActions.h"
@@ -61,6 +63,45 @@ public:
 
   PianoRollComponent();
   ~PianoRollComponent() override;
+
+  // Snap for a note drag: Shift = Off, Cmd = Absolute, Alt = Relative,
+  // otherwise the configured mode (VariAudio Pitch Snap Mode).
+  PitchEditor::DragSnapKind resolveDragSnapKind(
+      const juce::ModifierKeys &mods) const;
+  void setAbsoluteDragSnap(bool absolute) { absoluteDragSnap = absolute; }
+  bool getAbsoluteDragSnap() const { return absoluteDragSnap; }
+
+  // True where a drag should pan the view: no segment, control or button,
+  // and outside the waveform band (component coordinates).
+  bool isEmptyCanvasPoint(juce::Point<float> position);
+
+  // Forget hover and smart-control pointers into the note list. Call after
+  // anything that may rebuild the list (undo/redo, merge, split).
+  void dropTransientNotePointers();
+
+  // Adjacent segment that shares a boundary in time and source, or nullptr.
+  Note *findContiguousNeighbour(const Note &note, bool next) const;
+
+  // Inspector sliders (VariAudio section). They act on the selected
+  // segments, or on every segment when nothing is selected; one slider
+  // gesture is one undo step.
+  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume };
+  std::vector<Note *> getInspectorTargets() const;
+  // Value shown for the first target, or nullopt when there are no targets.
+  std::optional<float> getInspectorValue(InspectorParam param) const;
+  void beginInspectorEdit(InspectorParam param);
+  void setInspectorEditValue(float value);
+  void endInspectorEdit();
+  bool isInspectorEditActive() const { return inspectorEditActive; }
+
+  // VariAudio "Show All Smart Controls" (false = default set only).
+  void setShowAllSmartControls(bool showAll);
+  bool getShowAllSmartControls() const { return showAllSmartControls; }
+
+  // Moves the selected notes (or every note when nothing is selected) by a
+  // scale-degree interval in the project key, as one undoable step.
+  HarmonyUtils::Result applyHarmonyInterval(HarmonyUtils::Interval interval,
+                                            bool up);
 
   void paint(juce::Graphics &g) override;
   void resized() override;
@@ -234,6 +275,8 @@ public:
 
   // Callbacks
   std::function<void(EditMode)> onEditModeRequested;
+  // Option/Alt-double-click on empty space (VariAudio: zoom to show all).
+  std::function<void()> onZoomFullRequested;
   std::function<void()> onUndoRequested;
   std::function<void()> onRedoRequested;
   std::function<void(Note *)> onNoteSelected;
@@ -356,11 +399,43 @@ private:
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
+  // Absolute snap: moves each selected segment onto the next semitone (or
+  // scale tone) in the given direction.
+  bool nudgeSelectedNotesToNextPitch(int direction);
+  // Shifts the selection by cents, ignoring snapping (Shift+Up/Down).
+  bool nudgeSelectedNotesByCents(int cents);
+  // Moves the selection to the previous/next segment (Left/Right).
+  bool selectAdjacentSegment(bool next);
+  // Selects the clicked segment and every later one with the same pitch.
+  void selectFollowingSamePitch(Note &note);
+  // Glue / split smart controls. Returns true when the click was consumed.
+  bool handleSmartControlClick(float worldX, float worldY,
+                               const juce::ModifierKeys &mods);
+  // Moves each target note by the semitone count the callback returns (no
+  // value or zero leaves the note alone) as one undoable step.
+  bool shiftNotesBySemitones(
+      const std::vector<Note *> &targets,
+      const std::function<std::optional<float>(const Note &)> &shiftForNote);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
 
   Project *project = nullptr;
   PitchUndoManager *undoManager = nullptr;
+  // VariAudio look and smart controls (see NoteRenderer::setSegmentStyle).
+  bool segmentStyle = true;
+  bool showAllSmartControls = true; // VariAudio "Show All", the default here
+  // Inspector slider gesture in progress.
+  bool inspectorEditActive = false;
+  InspectorParam inspectorEditParam = InspectorParam::CorrectPitch;
+  std::vector<Note *> inspectorEditNotes;
+  std::vector<TransformParams> inspectorEditOldParams;
+  std::vector<float> inspectorEditSourceMidi;
+  float correctionTargetFor(float sourceMidi) const;
+  bool absoluteDragSnap = true; // Pitch Snap Mode Absolute by default
+  // The first click of the current (double-)click landed on a segment. An
+  // Option-click splits it, after which the double-click point may hit no
+  // segment; it must still not count as an empty-space double-click.
+  bool clickStartedOnSegment = false;
 
   // New modular components
   std::unique_ptr<CoordinateMapper> coordMapper;
@@ -410,10 +485,16 @@ private:
     Note* note;
     Project* owner;
     float midi, finalMidi;
+    // Correct Pitch reference before and after the drag.
+    float source, finalSource;
   };
   bool trackGestureActive = false, trackBoxSelecting = false;
   juce::Point<float> trackGestureStart, trackGestureEnd;
   std::vector<TrackPitchMacroTarget> trackGestureTargets;
+  // Track targets fetched once per mouseDown (fetching requests analysis and
+  // sets a status message), shared by the empty-canvas test and
+  // beginTrackGesture.
+  std::optional<std::vector<TrackPitchMacroTarget>> mouseDownTrackTargets;
   std::vector<TrackGestureNote> trackGestureNotes;
   std::vector<const Note*> trackBoxInitialSelection;
   std::vector<juce::Rectangle<float>> trackNoteBounds(const Note&, const Project&) const;
@@ -514,6 +595,8 @@ private:
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
   bool modifierZoomDragActive = false;
+  // Option/Alt-drag zooms vertically only (Cmd-drag zooms both axes).
+  bool modifierZoomVerticalOnly = false;
   juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;

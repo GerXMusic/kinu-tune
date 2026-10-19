@@ -13,6 +13,12 @@ bool LoopDragHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   if (!owner_.viewState.cycleEditEnabled)
     return false;
 
+  // Only a plain left click edits the cycle. A right/Ctrl click must not
+  // start a gesture: its mouseUp is filtered out as a popup click, so the
+  // cycle drag would stay armed and take over the next drag anywhere.
+  if (!e.mods.isLeftButtonDown() || e.mods.isPopupMenu())
+    return false;
+
   // Only handle clicks in the loop timeline area
   if (e.y < PianoRollComponent::timelineHeight ||
       e.y >= PianoRollComponent::headerHeight ||

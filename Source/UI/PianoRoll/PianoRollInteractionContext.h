@@ -70,6 +70,11 @@ public:
   void invalidateWaveformCache();
   void invalidateBasePitchCache();
   void updatePitchDrawingConfirmation();
+  bool handleSmartControlClick(float worldX, float worldY,
+                               const juce::ModifierKeys &mods);
+  PitchEditor::DragSnapKind resolveDragSnapKind(const juce::ModifierKeys &mods) const;
+  void setHoveredNote(Note *note);
+  void selectFollowingSamePitch(Note &note);
 
 private:
   PianoRollComponent &component;

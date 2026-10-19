@@ -99,3 +99,25 @@ void PianoRollInteractionContext::updatePitchDrawingConfirmation()
 {
   component.updatePitchDrawingConfirmationPopup();
 }
+
+bool PianoRollInteractionContext::handleSmartControlClick(
+    float worldX, float worldY, const juce::ModifierKeys &mods)
+{
+  return component.handleSmartControlClick(worldX, worldY, mods);
+}
+
+PitchEditor::DragSnapKind PianoRollInteractionContext::resolveDragSnapKind(
+    const juce::ModifierKeys &mods) const
+{
+  return component.resolveDragSnapKind(mods);
+}
+
+void PianoRollInteractionContext::setHoveredNote(Note *note)
+{
+  component.setHoveredNote(note);
+}
+
+void PianoRollInteractionContext::selectFollowingSamePitch(Note &note)
+{
+  component.selectFollowingSamePitch(note);
+}

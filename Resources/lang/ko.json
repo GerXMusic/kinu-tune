@@ -7,8 +7,8 @@
   "canvas.timing": "타이밍",
   "category.edit_mode": "편집 모드",
   "category.transport": "트랜스포트",
-  "command.about": "PitchNet 정보",
-  "command.about.desp": "PitchNet 및 제3자 고지",
+  "command.about": "Kinu Tune 정보",
+  "command.about.desp": "Kinu Tune 및 제3자 고지",
   "command.pitch_drawing_tool": "피치 그리기 도구",
   "command.pitch_drawing_tool.desp": "피치 그리기 도구를 활성화합니다",
   "command.export_audio": "오디오 내보내기...",
@@ -258,7 +258,6 @@
   "tooltip.engine_vocoder": "뉴럴 보코더(PC-NSF-HiFiGAN)\n스펙트럼에서 목소리를 다시 만듭니다. 큰 피치 변화에 가장 강하고 편집한 구간 전체의 음색을 다시 형성합니다.",
   "tooltip.engine_vocoder_unavailable": "Mac 및 DirectML을 지원하는 Windows에서만 사용할 수 있습니다",
   "tooltip.live_audition": "실시간 미리듣기 켜기/끄기",
-  "tooltip.quantize_macro": "피치 보정 매크로",
   "tooltip.restore_original": "원본 복원",
   "tooltip.select_tool": "기본 도구 (단축키: 1)",
   "tooltip.split_tool": "노트 분리 도구 (단축키: 2)",
@@ -269,7 +268,7 @@
   "tooltip.region_view_track": "트랙 모드: 트랙의 모든 클립을 표시 중입니다. 클릭하면 선택한 클립의 소스만 표시합니다.",
   "update.ask_later": "나중에 묻기",
   "update.download_now": "지금 다운로드",
-  "update.message": "PitchNet의 새 버전이 있습니다. 다운로드할까요?",
+  "update.message": "Kinu Tune의 새 버전이 있습니다. 다운로드할까요?",
   "update.skip_version": "이 버전 건너뛰기",
   "update.title": "업데이트 사용 가능"
 }

@@ -574,13 +574,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
             }
             safeThis->noteDragAuditionBackendPreviewStarted = true;
           }
+          // Whole segment, repeated from its start until mouse up.
           if (safeThis->onRequestDragAudition)
-            safeThis->onRequestDragAudition(preview, auditionSampleRate);
+            safeThis->onRequestDragAudition(preview, auditionSampleRate, true);
           return;
         }
         if (auto *engine = safeThis->editorController->getAudioEngine())
         {
-          engine->beginAuditionLoop(preview, auditionSampleRate);
+          engine->beginAuditionLoop(preview, auditionSampleRate,
+                                    /*seamless*/ false);
         }
       });
   if (!isPluginMode())
@@ -692,6 +694,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (auto *project = getProject())
       fitAnalyzedPitchRangeToView(*project);
   };
+  pianoRoll.onZoomFullRequested = [this] { zoomToFull(); };
 
   // Add child components - standalone uses menus; plugin instances do not.
 #if JUCE_MAC
@@ -712,6 +715,54 @@ MainComponent::MainComponent(bool enableAudioDevice)
   workspace.setMainContent(&pianoRollView);
   workspace.getMainCard().setBackgroundColour(juce::Colours::transparentBlack);
   workspace.getMainCard().setBorderColour(juce::Colours::transparentBlack);
+
+  // VariAudio-style inspector: always visible on the left, harmony included,
+  // so the one-click harmony buttons never hide behind a panel toggle.
+  variAudioInspector.getCurrentProject = [this] { return getProject(); };
+  using InspectorParam = PianoRollComponent::InspectorParam;
+  variAudioInspector.getParamValue = [this](VariAudioInspector::Param param)
+  { return pianoRoll.getInspectorValue(static_cast<InspectorParam>(param)); };
+  variAudioInspector.getTargetCount = [this]
+  {
+    const auto targets = pianoRoll.getInspectorTargets();
+    const bool selection = !targets.empty() && targets.front()->isSelected();
+    return std::pair<int, bool>{static_cast<int>(targets.size()), selection};
+  };
+  variAudioInspector.onParamEditBegin = [this](VariAudioInspector::Param param)
+  { pianoRoll.beginInspectorEdit(static_cast<InspectorParam>(param)); };
+  variAudioInspector.onParamEditValue = [this](float value)
+  { pianoRoll.setInspectorEditValue(value); };
+  variAudioInspector.onParamEditEnd = [this] { pianoRoll.endInspectorEdit(); };
+  variAudioInspector.onSnapModeChanged =
+      [this](VariAudioInspector::SnapMode mode)
+  {
+    pianoRoll.setSnapToSemitoneDrag(mode != VariAudioInspector::SnapMode::Off);
+    if (mode != VariAudioInspector::SnapMode::Off)
+      pianoRoll.setAbsoluteDragSnap(mode == VariAudioInspector::SnapMode::Absolute);
+    parameterPanel.updateGlobalSliders();
+    variAudioInspector.refresh();
+  };
+  variAudioInspector.onShowAllSmartControlsChanged = [this](bool showAll)
+  { pianoRoll.setShowAllSmartControls(showAll); };
+  variAudioInspector.onDragSnapModeChanged = [this](DragSnapMode mode)
+  {
+    pianoRoll.setDragSnapMode(mode);
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
+  };
+  auto &harmonyPanel = variAudioInspector.getHarmonyPanel();
+  harmonyPanel.onHarmonyRequested =
+      [this](HarmonyUtils::Interval interval, bool up)
+  { return pianoRoll.applyHarmonyInterval(interval, up); };
+  variAudioInspector.isProjectKeyScope = [this] { return isTrackViewMode(); };
+  variAudioInspector.onEditorScaleChanged = [this]
+  {
+    pianoRoll.refreshScaleFromProject();
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
+  };
+  workspace.setInspectorContent(&variAudioInspector,
+                                VariAudioInspector::preferredWidth);
 
   // Add parameter panel to workspace.
   workspace.addPanel("parameters", TR("panel.parameters"), &parameterPanel,
@@ -744,9 +795,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setPluginMode(isPluginMode());
   parameterPanel.setUiBrightness(settingsManager->getUiBrightnessPercent());
   applyUiBrightness(settingsManager->getUiBrightnessPercent());
-  parameterPanel.onProjectBound = [this](Project* project)
+  parameterPanel.onProjectBound = [this](Project *)
   {
-    toolbar.setProject(project);
+    // Every path that rebinds the project goes through the parameter panel,
+    // so the inspector and harmony card follow it from here.
+    variAudioInspector.getHarmonyPanel().refreshProject();
+    variAudioInspector.refresh();
     if (hasCachedHostTimelineState)
       updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
                               cachedHostBeatDenominator);
@@ -818,27 +872,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { setEditMode(mode); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
-  toolbar.onScaleRootChanged = [this](int)
-  {
-    pianoRoll.refreshScaleFromProject();
-    parameterPanel.updateGlobalSliders();
-    notifyProjectDataChanged();
-  };
-  toolbar.onScaleRootPreviewChanged = [this](std::optional<int> rootNote)
-  {
-    pianoRoll.setScaleRootPreview(rootNote);
-  };
-  toolbar.onScaleModeChanged = [this](ScaleMode)
-  {
-    pianoRoll.refreshScaleFromProject();
-    parameterPanel.updateGlobalSliders();
-    notifyProjectDataChanged();
-  };
-  toolbar.onScaleModePreviewChanged =
-      [this](std::optional<ScaleMode> mode)
-  {
-    pianoRoll.setScaleModePreview(mode);
-  };
   toolbar.onToggleLoop = [this](bool enabled)
   {
     if (auto *project = getProject())
@@ -892,11 +925,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
       settingsManager->saveConfig();
     }
     if (!dragAuditionEnabled)
-      finishDraggedNoteAudition();
-  };
-  toolbar.onCorrectPitchCenter = [this]
-  {
-    pianoRollView.showPitchCenterPopup();
+      cancelDraggedNoteAudition();
   };
   toolbar.setUndoRedoEnabled(undoManager && undoManager->canUndo(),
                              undoManager && undoManager->canRedo());
@@ -1141,12 +1170,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Start timer for UI updates
   startTimerHz(60);
 
-  if (!isPluginMode())
-    juce::Timer::callAfterDelay(800, [safeThis = juce::Component::SafePointer<MainComponent>(this)]
-    {
-      if (safeThis != nullptr)
-        safeThis->checkForUpdatesOnLaunch();
-    });
+  // The launch update check asks Session Loops' server about PitchNet releases
+  // and offers their download page, which does not apply to Kinu Tune.
+  // checkForUpdatesOnLaunch() stays in place for a future Kinu Tune feed.
 
   LOG("MainComponent: constructor complete");
 }
@@ -1309,7 +1335,6 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   pianoRoll.setProject(project);
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
-  toolbar.setProject(project);
   if (project)
   {
     toolbar.setTotalTime(project->getAudioData().getDuration());
@@ -1391,6 +1416,10 @@ MainComponent::~MainComponent()
   updateRequest.reset();
 
   setComponentEffect(nullptr);
+  // A drag audition may still be sounding if the editor closes mid-drag; the
+  // host preview path must be released while its callbacks are still valid.
+  cancelDraggedNoteAudition();
+  finishPianoKeyAudition();
   noteDragAuditionActive = false;
   resampledLoopAudition.reset();
 #if JUCE_MAC
@@ -1903,6 +1932,21 @@ void MainComponent::analyzeAudio(
   }
 }
 
+void MainComponent::zoomToFull()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+  // The piano roll's widest zoom shows the whole timeline (down to
+  // MIN_PIXELS_PER_SECOND for a long one); start at its left edge.
+  pianoRoll.setPixelsPerSecond(0.0f, false);
+  pianoRoll.setScrollX(pianoRoll.getTimelineStart() * pianoRoll.getPixelsPerSecond());
+  onZoomChanged(pianoRoll.getPixelsPerSecond());
+  if (pianoRoll.onScrollChanged)
+    pianoRoll.onScrollChanged(pianoRoll.getScrollX());
+  fitAnalyzedPitchRangeToView(*project);
+}
+
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
   float minMidi = std::numeric_limits<float>::max();
@@ -2256,6 +2300,7 @@ void MainComponent::exportMidiFile()
 
 void MainComponent::play()
 {
+  abandonDragAudition(true); // the user's transport choice wins
   auto *project = getProject();
 
   // In plugin mode, playback is controlled by the host. Update immediately for
@@ -2303,6 +2348,7 @@ void MainComponent::play()
 
 void MainComponent::pause()
 {
+  abandonDragAudition(true); // the user's transport choice wins
   if (previewRegionActive)
   {
     finishPreviewRegion(true);
@@ -2332,6 +2378,7 @@ void MainComponent::pause()
 
 void MainComponent::stop()
 {
+  abandonDragAudition(true); // the user's transport choice wins
   if (previewRegionActive)
   {
     finishPreviewRegion(false);
@@ -2415,6 +2462,7 @@ void MainComponent::previewNoteRegion(int startFrame, int endFrame)
 {
   if (endFrame <= startFrame)
     return;
+  abandonDragAudition(false); // the region preview replaces it
 
   const double startTime = framesToSeconds(startFrame);
   const double endTime = framesToSeconds(endFrame);
@@ -2494,8 +2542,21 @@ void MainComponent::finishPreviewRegion(bool restorePosition)
 
 void MainComponent::auditionDraggedNote(const Note &note)
 {
-  if (!dragAuditionEnabled || !resampledLoopAudition || note.isRest())
+  if (!dragAuditionEnabled || noteDragAuditionSuppressed ||
+      !resampledLoopAudition || note.isRest())
     return;
+
+  // VariAudio acoustic feedback: while a segment is dragged its whole audio
+  // repeats from the start; a new rendering is needed only when the pitch
+  // (or the dragged segment) changes. The player keeps its position across
+  // the swap, so the repetition does not restart on every pitch step.
+  if (noteDragAuditionActive && &note == lastAuditionedNote &&
+      std::abs(note.getAdjustedMidiNote() - lastAuditionedMidi) < 0.01f)
+    return;
+  if (noteDragAuditionActive && &note != lastAuditionedNote)
+    noteDragAuditionBackendPreviewStarted = false; // new segment, new range
+  lastAuditionedNote = &note;
+  lastAuditionedMidi = note.getAdjustedMidiNote();
 
   std::vector<float> source;
   if (auto *project = getProject())
@@ -2566,13 +2627,52 @@ void MainComponent::dispatchPendingDragAudition()
   noteDragAuditionPending = false;
   resampledLoopAudition->request(std::move(pendingNoteDragAuditionSource),
                                  pendingNoteDragAuditionShift,
-                                 pendingNoteDragAuditionMidiNote);
+                                 pendingNoteDragAuditionMidiNote,
+                                 /*wholeSegment*/ true);
+}
+
+void MainComponent::abandonDragAudition(bool stopSound)
+{
+  if (!noteDragAuditionActive)
+    return;
+  // The feedback lives only while the mouse is down, so an active audition
+  // means a drag is in progress: keep it silent for the rest of that drag
+  // (otherwise the next mouse move would start it again over the transport).
+  noteDragAuditionSuppressed = true;
+  if (stopSound)
+  {
+    if (isPluginMode())
+    {
+      if (onStopDragAudition)
+        onStopDragAudition();
+    }
+    else if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
+    {
+      engine->endAuditionLoop();
+    }
+  }
+  if (resampledLoopAudition)
+    resampledLoopAudition->cancel();
+  noteDragAuditionActive = false;
+  noteDragAuditionPending = false;
+  noteDragAuditionBackendPreviewStarted = false;
+  noteDragAuditionWasPlaying = false;
+  lastAuditionedNote = nullptr;
+  pendingNoteDragAuditionSource.clear();
 }
 
 void MainComponent::finishDraggedNoteAudition()
 {
+  // Mouse up ends the feedback, as in VariAudio.
+  noteDragAuditionSuppressed = false;
+  cancelDraggedNoteAudition();
+}
+
+void MainComponent::cancelDraggedNoteAudition()
+{
   if (!noteDragAuditionActive)
     return;
+  lastAuditionedNote = nullptr;
 
   if (resampledLoopAudition)
     resampledLoopAudition->cancel();
@@ -2630,6 +2730,12 @@ void MainComponent::auditionPianoKey(int midiNote)
     tone.setSample(0, sample, value);
   }
 
+  // The key's tone replaces a still-sounding segment audition; take over its
+  // transport state rather than reading the audition's own "playing" flag.
+  const bool takeOverDrag = noteDragAuditionActive;
+  const bool dragWasPlaying = noteDragAuditionWasPlaying;
+  abandonDragAudition(false);
+
   if (isPluginMode())
   {
     // ARA starts the host preview signal flow for a range; the temporary tone
@@ -2637,12 +2743,12 @@ void MainComponent::auditionPianoKey(int midiNote)
     if (auto *project = getProject(); project && onRequestBackendPreview)
       onRequestBackendPreview(*project, 0, 1);
     if (onRequestDragAudition)
-      onRequestDragAudition(tone, sampleRate);
+      onRequestDragAudition(tone, sampleRate, false);
   }
   else if (auto *engine = editorController ? editorController->getAudioEngine()
                                             : nullptr)
   {
-    pianoKeyAuditionWasPlaying = engine->isPlaying();
+    pianoKeyAuditionWasPlaying = takeOverDrag ? dragWasPlaying : engine->isPlaying();
     pianoKeyAuditionReturnTime = engine->getPosition();
     engine->beginAuditionLoop(tone, sampleRate);
   }
@@ -2812,6 +2918,9 @@ void MainComponent::undo()
 {
   // Restore any transient anchor preview before changing history.
   pianoRoll.cancelPitchDrawingPreview();
+  // Cmd+Z during an inspector slider drag: commit the gesture first, so undo
+  // takes it back instead of leaving it with pointers into a rebuilt list.
+  pianoRoll.endInspectorEdit();
 
   if (undoManager && undoManager->canUndo())
   {
@@ -2824,6 +2933,7 @@ void MainComponent::redo()
 {
   // Restore any transient anchor preview before changing history.
   pianoRoll.cancelPitchDrawingPreview();
+  pianoRoll.endInspectorEdit();
 
   if (undoManager && undoManager->canRedo())
   {
@@ -2834,6 +2944,9 @@ void MainComponent::redo()
 
 void MainComponent::afterHistoryChange(bool requiresResynthesis)
 {
+  // Undo/redo can rebuild the note list (split, merge), so hover and smart
+  // control pointers into it must not survive.
+  pianoRoll.dropTransientNotePointers();
   parameterPanel.updateFromNote();
   pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
   pianoRoll.repaint();
@@ -3754,6 +3867,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::showAbout,
       CommandIDs::showDeltaPitch,
       CommandIDs::showBasePitch,
+      CommandIDs::zoomFull,
 
       // Transport commands
       CommandIDs::playPause,
@@ -3864,6 +3978,13 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo(TR("command.show_base_pitch"), TR("command.show_base_pitch.desp"), TR("menu.view"), 0);
     result.addDefaultKeypress('b', primaryModifier | juce::ModifierKeys::shiftModifier);
     result.setTicked(settingsManager->getShowBasePitch());
+    break;
+
+  case CommandIDs::zoomFull:
+    // Cubase's "Zoom Full" key.
+    result.setInfo(TR("command.zoom_full"), TR("command.zoom_full.desp"), TR("menu.view"), 0);
+    result.addDefaultKeypress('f', juce::ModifierKeys::shiftModifier);
+    result.setActive(project != nullptr);
     break;
 
   // Transport commands
@@ -4016,6 +4137,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     commandManager->commandStatusChanged();
     return true;
   }
+
+  case CommandIDs::zoomFull:
+    zoomToFull();
+    return true;
 
   case CommandIDs::showBasePitch:
   {

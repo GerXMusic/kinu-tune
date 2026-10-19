@@ -23,3 +23,26 @@ inline std::vector<Note*> collectPitchMacroNotes(
   }
   return result;
 }
+
+// Notes a pitch macro edits: in the given windows, and only the selected ones
+// when onlySelected (the caller decides across all tracks, so a selection in
+// one track does not leave another track's notes unselected-but-edited).
+inline std::vector<Note*> collectPitchMacroTargetNotes(
+    Project& project, bool trackMode, const std::vector<juce::Range<int>>& windows,
+    bool onlySelected)
+{
+  std::vector<Note*> result;
+  for (auto* note : collectPitchMacroNotes(project, trackMode, windows))
+    if (!onlySelected || note->isSelected())
+      result.push_back(note);
+  return result;
+}
+
+inline bool hasSelectedPitchMacroNotes(
+    Project& project, bool trackMode, const std::vector<juce::Range<int>>& windows)
+{
+  for (auto* note : collectPitchMacroNotes(project, trackMode, windows))
+    if (note->isSelected())
+      return true;
+  return false;
+}

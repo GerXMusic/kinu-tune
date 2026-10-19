@@ -3,6 +3,7 @@
 #include "../Utils/PitchMacroScope.h"
 #include "../Utils/AppLogger.h"
 #include "../Undo/AmplitudeAction.h"
+#include "../Undo/InspectorEditAction.h"
 #include "../Utils/BasePitchCurve.h"
 #include "../Utils/CurveResampler.h"
 #include "../Utils/Constants.h"
@@ -11,6 +12,7 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
+#include "../Utils/HarmonyUtils.h"
 #include "../Utils/TimingRegionUtils.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
@@ -113,6 +115,7 @@ namespace
     float deltaOffset;
     std::vector<float> bakedDeltaPitch;
     std::vector<float> deltaPitch;
+    float correctionSource; // Correct Pitch reference (the sung pitch)
 
     static NoteEditState capture(const Note& note)
     {
@@ -120,18 +123,21 @@ namespace
               note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
-              note.getBakedDeltaPitch(), note.getDeltaPitch()};
+              note.getBakedDeltaPitch(), note.getDeltaPitch(),
+              note.getLastNonMacroMidiNote()};
     }
 
     static NoteEditState defaultsFor(const Note& note)
     {
       return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-              0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch()};
+              0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
+              note.getOriginalMidiNote()};
     }
 
     void applyTo(Note& note) const
     {
       note.setMidiNote(midiNote);
+      note.setLastNonMacroMidiNote(correctionSource);
       note.setPitchOffset(pitchOffset);
       note.setVolumeDb(volumeDb);
       note.setFormantShift(formantShift);
@@ -1633,7 +1639,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
   const float mouseX = static_cast<float>(e.x - pianoKeysWidth);
   const float mouseY = static_cast<float>(e.y - headerHeight);
 
-  if (std::abs(deltaX) >= 0.01f)
+  if (std::abs(deltaX) >= 0.01f && !modifierZoomVerticalOnly)
   {
     const float zoomFactorX = std::pow(1.0065f, deltaX);
     const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
@@ -1664,7 +1670,7 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
   updateScrollBars();
   repaint();
 
-  if (std::abs(deltaX) >= 0.01f && onZoomChanged)
+  if (std::abs(deltaX) >= 0.01f && !modifierZoomVerticalOnly && onZoomChanged)
     onZoomChanged(pixelsPerSecond);
 }
 
@@ -1732,7 +1738,9 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
 {
   if (!trackViewMode || editMode != EditMode::Select || !getTrackEditTargets ||
       !e.mods.isLeftButtonDown() || !isCanvasPoint(e)) return false;
-  trackGestureTargets = getTrackEditTargets();
+  trackGestureTargets = mouseDownTrackTargets ? std::move(*mouseDownTrackTargets)
+                                              : getTrackEditTargets();
+  mouseDownTrackTargets.reset();
   if (trackGestureTargets.empty()) return false;
   const float worldX = e.x - pianoKeysWidth + scrollX;
   const float worldY = e.y - headerHeight + scrollY;
@@ -1746,7 +1754,8 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
       for (const auto& bounds : trackNoteBounds(*note, *target.project))
         if (bounds.contains(e.position)) hit = note;
       if (note->isSelected()) {
-        trackGestureNotes.push_back({note, target.project, note->getMidiNote(), note->getMidiNote()});
+        trackGestureNotes.push_back({note, target.project, note->getMidiNote(), note->getMidiNote(),
+                                     note->getLastNonMacroMidiNote(), note->getLastNonMacroMidiNote()});
         if (std::find(selectedOwners.begin(), selectedOwners.end(), target.project) == selectedOwners.end())
           selectedOwners.push_back(target.project);
       }
@@ -1803,12 +1812,24 @@ void PianoRollComponent::updateTrackGesture(const juce::MouseEvent& e)
     syncTrackPreviewSelection();
   } else {
     float delta = (trackGestureStart.y - e.position.y) / pixelsPerSemitone;
-    if (snapToSemitoneDrag != e.mods.isAltDown()) delta = std::round(delta);
+    // One offset for every note, resolved on the first note's on-screen pitch
+    // (midi + offset) like a multi-note drag, so all notes keep their intervals.
+    if (!trackGestureNotes.empty()) {
+      const auto& first = trackGestureNotes.front();
+      const float anchor = first.midi + first.note->getPitchOffset();
+      delta = pitchEditor->resolveDragOffset(delta, anchor, resolveDragSnapKind(e.mods));
+    }
     for (auto& item : trackGestureNotes) {
       auto target = std::find_if(trackGestureTargets.begin(), trackGestureTargets.end(),
           [&](const auto& target) { return target.project == item.owner; });
-      if (target != trackGestureTargets.end() && (!target->isValid || target->isValid()))
+      if (target != trackGestureTargets.end() && (!target->isValid || target->isValid())) {
         item.note->setMidiNote(item.midi + delta);
+        // Keep the Correct Pitch reference (see ScaleUtils::carriedCorrectionSource).
+        item.note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+            *item.owner, item.source, item.note->getOriginalMidiNote(), item.midi,
+            item.midi + delta,
+            item.owner->getPitchReferenceHz()));
+      }
     }
     repaint();
   }
@@ -1826,7 +1847,10 @@ void PianoRollComponent::finishTrackGesture()
         { return target.project == item.owner; });
     return target == targets.end() || (target->isValid && !target->isValid());
   }), notes.end());
-  for (auto& item : notes) item.finalMidi = item.note->getMidiNote();
+  for (auto& item : notes) {
+    item.finalMidi = item.note->getMidiNote();
+    item.finalSource = item.note->getLastNonMacroMidiNote();
+  }
   if (std::none_of(notes.begin(), notes.end(), [](const auto& item) {
       return std::abs(item.finalMidi - item.midi) > 0.0001f; })) { repaint(); return; }
   auto safe = juce::Component::SafePointer<PianoRollComponent>(this);
@@ -1838,6 +1862,7 @@ void PianoRollComponent::finishTrackGesture()
       for (const auto& item : notes) {
         if (item.owner != target.project) continue;
         item.note->setMidiNote(redo ? item.finalMidi : item.midi);
+        item.note->setLastNonMacroMidiNote(redo ? item.finalSource : item.source);
         item.note->markDirty(); item.note->markSynthDirty();
         first = std::min(first, item.note->getStartFrame());
         last = std::max(last, item.note->getEndFrame());
@@ -1870,6 +1895,7 @@ void PianoRollComponent::finishTrackGesture()
 void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 {
   swallowGestureUntilMouseUp = false;
+  mouseDownTrackTargets.reset(); // fetched at most once for this click
 
   if (!project)
   {
@@ -1890,6 +1916,9 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
+  if (e.getNumberOfClicks() <= 1)
+    clickStartedOnSegment =
+        isCanvasPoint(e) && findNoteAt(adjustedX, adjustedY) != nullptr;
 
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
@@ -1947,9 +1976,14 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  if (isCanvasPoint(e) && isModifierZoomDrag(e))
+  // Cmd-click on a segment toggles its selection (VariAudio); zoom-drag
+  // stays available from empty canvas.
+  const bool cmdClickOnSegment =
+      editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
+  if (isCanvasPoint(e) && isModifierZoomDrag(e) && !cmdClickOnSegment)
   {
     modifierZoomDragActive = true;
+    modifierZoomVerticalOnly = false;
     modifierZoomLastPosition = e.position;
     return;
   }
@@ -1969,15 +2003,47 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       }
     }
   }
-  // In Select mode, Alt inverts note-drag snapping. Keep Alt-drag panning
-  // available when the gesture begins anywhere else on the canvas.
+  // On a segment Alt is Relative snap / Alt-click split; anywhere else on the
+  // canvas Alt-drag zooms vertically.
   const bool altNoteDrag =
       editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
   {
+    // Plain drag on empty canvas pans, so Option/Alt-drag zooms vertically
+    // (Cmd-drag keeps zooming both axes).
+    modifierZoomDragActive = true;
+    modifierZoomVerticalOnly = true;
+    modifierZoomLastPosition = e.position;
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    return;
+  }
+
+  // A plain drag on empty canvas (not a segment, control or the waveform)
+  // pans the view with the pointer. A click there still clears the selection,
+  // as the zero-size box selection it replaces did; dragging from the
+  // waveform keeps box selection.
+  if (editMode == EditMode::Select && e.mods.isLeftButtonDown() &&
+      !e.mods.isAnyModifierKeyDown() && isCanvasPoint(e) &&
+      isEmptyCanvasPoint(e.position))
+  {
+    if (project)
+      project->deselectAllNotes();
+    if (trackViewMode && mouseDownTrackTargets)
+    {
+      // syncTrackPreviewSelection() reads trackGestureTargets.
+      trackGestureTargets = std::move(*mouseDownTrackTargets);
+      mouseDownTrackTargets.reset();
+      for (auto& target : trackGestureTargets)
+        if (!target.isValid || target.isValid())
+          for (auto& note : target.project->getNotes())
+            note.setSelected(false);
+      syncTrackPreviewSelection();
+    }
+    updatePitchToolHandlesFromSelection();
     modifierPanDragActive = true;
     modifierPanLastPosition = e.position;
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    repaint();
     return;
   }
 
@@ -2220,7 +2286,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
       !altControlsNoteSnap)
   {
-    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor); // Alt-drag: vertical zoom
     return;
   }
 
@@ -2392,9 +2458,10 @@ void PianoRollComponent::modifierKeysChanged(
 
   if (zoomModifierDown && mouseOverCanvas)
     setMouseCursor(zoomMouseCursor);
-  else if (modifierPanDragActive ||
-           (modifiers.isAltDown() && mouseOverCanvas && !pointerOverNote))
+  else if (modifierPanDragActive)
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+  else if (modifiers.isAltDown() && mouseOverCanvas && !pointerOverNote)
+    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
   else
     updateMouseCursorForEditMode();
 }
@@ -2433,6 +2500,9 @@ juce::String PianoRollComponent::getTooltip()
     case PitchToolHandles::HandleType::Amplitude: return TR("handle.amplitude");
     case PitchToolHandles::HandleType::Formant: return TR("handle.formant");
     case PitchToolHandles::HandleType::TiltRight: return TR("handle.tilt_right");
+    case PitchToolHandles::HandleType::CorrectPitch: return TR("handle.correct_pitch");
+    case PitchToolHandles::HandleType::GlueLeft: return TR("handle.glue_left");
+    case PitchToolHandles::HandleType::GlueRight: return TR("handle.glue_right");
     default: return {};
   }
 }
@@ -2446,6 +2516,34 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 
   if (!project)
     return;
+
+  // VariAudio: Option/Alt-double-click where there is no segment shows the
+  // whole event (as Shift+F does). A double-click that began on a segment
+  // (whose first Option-click split it) is not one.
+  if (e.mods.isAltDown() && isCanvasPoint(e))
+  {
+    const float worldX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+    const float worldY = e.y - headerHeight + static_cast<float>(scrollY);
+    if (findNoteAt(worldX, worldY) == nullptr && !clickStartedOnSegment)
+    {
+      if (onZoomFullRequested)
+        onZoomFullRequested();
+      return;
+    }
+  }
+
+  // VariAudio: Shift-double-click selects this and every later segment of
+  // the same pitch.
+  if (editMode == EditMode::Select && e.mods.isShiftDown() && isCanvasPoint(e))
+  {
+    const float worldX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+    const float worldY = e.y - headerHeight + static_cast<float>(scrollY);
+    if (auto *note = findNoteAt(worldX, worldY))
+    {
+      selectFollowingSamePitch(*note);
+      return;
+    }
+  }
 
   if (e.y >= timelineHeight && e.y < headerHeight && e.x >= pianoKeysWidth)
   {
@@ -2488,6 +2586,27 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
 
+  // VariAudio-style: double-clicking a segment body resets it (pitch, curve,
+  // formant, volume and timing) as one undoable step. Smart controls keep
+  // their own double-click handling.
+  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+    if (auto *note = findNoteAt(adjustedX, adjustedY))
+      if (!(pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0))
+      {
+        // Only the double-clicked segment, and only when it was edited (no
+        // empty undo steps). A Correct Pitch reference that drifted (nudges
+        // that went out and back) counts as an edit too.
+        if (!note->isNeutralForOriginalWaveform() ||
+            std::abs(note->getLastNonMacroMidiNote() - note->getOriginalMidiNote()) > 1.0e-4f)
+        {
+          applyRestoreAction(std::make_unique<ResetNoteEditsAction>(
+              *project, std::vector<Note *>{note}, true, true, true,
+              "Restore All Edits", createResetTimingAction(*note)));
+          dropTransientNotePointers();
+        }
+        return;
+      }
+
   // Keep note-specific double-click interactions with their edit handlers.
   // Everywhere else on the canvas, a double-click controls transport at the
   // clicked time rather than changing the current edit selection.
@@ -2523,6 +2642,23 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
 
   bool isOverPianoKeys = e.x < pianoKeysWidth;
   bool isOverTimeline = e.y < headerHeight;
+
+  // Option/Alt + wheel: vertical zoom around the pointer (Cmd + wheel is
+  // horizontal).
+  if (e.mods.isAltDown() && !e.mods.isCommandDown() && !e.mods.isCtrlDown())
+  {
+    const float mouseY = static_cast<float>(e.y - headerHeight);
+    const float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+    float newPps = pixelsPerSemitone * zoomFactor;
+    if (zoomFactor < 1.0f)
+    {
+      const float range = minPps * 0.35f;
+      const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
+      newPps = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
+    }
+    setPixelsPerSemitone(juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, newPps), mouseY);
+    return;
+  }
 
   // Hover-based zoom (no modifier keys needed)
   if (!e.mods.isCommandDown() && !e.mods.isCtrlDown())
@@ -2969,9 +3105,540 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
   if (project == nullptr || semitoneDelta == 0)
     return false;
 
-  auto selectedNotes = project->getSelectedNotes();
-  if (selectedNotes.empty())
+  return shiftNotesBySemitones(
+      project->getSelectedNotes(), [semitoneDelta](const Note &)
+      { return std::optional<float>(static_cast<float>(semitoneDelta)); });
+}
+
+bool PianoRollComponent::nudgeSelectedNotesToNextPitch(int direction)
+{
+  if (project == nullptr || direction == 0)
     return false;
+
+  const float reference = ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
+  const ScaleMode mode = project->getPreferredScaleMode();
+  const int root = project->getScaleRootNote();
+  const bool useScale = project->getDragSnapMode() == DragSnapMode::Scale &&
+                        mode != ScaleMode::None && mode != ScaleMode::Chromatic &&
+                        root >= 0;
+  return shiftNotesBySemitones(
+      project->getSelectedNotes(),
+      [=](const Note &note)
+      {
+        // Absolute: step from the nearest semitone (or scale tone) so the
+        // segment lands exactly on the next one.
+        const float adjusted = note.getAdjustedMidiNote();
+        int target = static_cast<int>(std::round(adjusted - reference)) + direction;
+        if (useScale)
+          for (int guard = 0; guard < 12 &&
+                              !ScaleUtils::isPitchClassInScale(mode, target, root);
+               ++guard)
+            target += direction;
+        return std::optional<float>(static_cast<float>(target) + reference - adjusted);
+      });
+}
+
+bool PianoRollComponent::nudgeSelectedNotesByCents(int cents)
+{
+  if (project == nullptr || cents == 0)
+    return false;
+
+  return shiftNotesBySemitones(
+      project->getSelectedNotes(), [cents](const Note &)
+      { return std::optional<float>(static_cast<float>(cents) / 100.0f); });
+}
+
+PitchEditor::DragSnapKind
+PianoRollComponent::resolveDragSnapKind(const juce::ModifierKeys &mods) const
+{
+  using Kind = PitchEditor::DragSnapKind;
+  if (mods.isShiftDown())
+    return Kind::Off;
+  if (mods.isCommandDown())
+    return Kind::Absolute;
+  if (mods.isAltDown())
+    return Kind::Relative;
+  if (!snapToSemitoneDrag)
+    return Kind::Off;
+  return absoluteDragSnap ? Kind::Absolute : Kind::Relative;
+}
+
+std::vector<Note *> PianoRollComponent::getInspectorTargets() const
+{
+  std::vector<Note *> selected, all;
+  if (project == nullptr)
+    return all;
+  for (auto &note : project->getNotes())
+  {
+    if (note.isRest())
+      continue;
+    all.push_back(&note);
+    if (note.isSelected())
+      selected.push_back(&note);
+  }
+  return selected.empty() ? all : selected;
+}
+
+float PianoRollComponent::correctionTargetFor(float sourceMidi) const
+{
+  if (project != nullptr)
+    return ScaleUtils::correctionTargetFor(*project, sourceMidi, pitchReferenceHz);
+  return ScaleUtils::snapMidiToSemitone(sourceMidi, pitchReferenceHz);
+}
+
+std::optional<float>
+PianoRollComponent::getInspectorValue(InspectorParam param) const
+{
+  const auto targets = getInspectorTargets();
+  if (targets.empty())
+    return std::nullopt;
+  const Note &note = *targets.front();
+  switch (param)
+  {
+    case InspectorParam::CorrectPitch:
+    {
+      // Share of the original deviation from the target pitch that has been
+      // removed: 0% = as sung, 100% = exactly on the semitone/scale tone. A
+      // pitch outside 0-100% shows 0%, which is where a gesture starts from
+      // (beginInspectorEdit re-anchors it), so the slider never jumps.
+      if (project == nullptr)
+        return 0.0f;
+      const auto share = ScaleUtils::correctionShare(
+          *project, note.getLastNonMacroMidiNote(), note.getMidiNote(), pitchReferenceHz);
+      return share ? *share * 100.0f : 0.0f;
+    }
+    case InspectorParam::FlattenCurve:
+      return juce::jlimit(0.0f, 100.0f, (1.0f - note.getVibrato()) * 100.0f);
+    case InspectorParam::PitchDrift:
+      return juce::jlimit(0.0f, 100.0f, (1.0f - note.getPitchDrift()) * 100.0f);
+    case InspectorParam::Formant:
+      return note.getFormantShift();
+    case InspectorParam::Volume:
+      return note.getVolumeDb();
+  }
+  return std::nullopt;
+}
+
+void PianoRollComponent::beginInspectorEdit(InspectorParam param)
+{
+  if (inspectorEditActive)
+    endInspectorEdit();
+  inspectorEditNotes = getInspectorTargets();
+  if (inspectorEditNotes.empty())
+    return;
+  inspectorEditActive = true;
+  inspectorEditParam = param;
+  inspectorEditOldParams.clear();
+  inspectorEditSourceMidi.clear();
+  for (auto *note : inspectorEditNotes)
+  {
+    inspectorEditOldParams.push_back(TransformParams::fromNote(*note));
+    // A pitch that is not a 0-100% correction of its reference (older
+    // projects, pitch drawing) starts over from where it is, so the slider
+    // never jumps. The undo step restores the old reference.
+    if (param == InspectorParam::CorrectPitch && project != nullptr &&
+        !ScaleUtils::correctionShare(*project, note->getLastNonMacroMidiNote(),
+                                     note->getMidiNote(), pitchReferenceHz))
+      note->setLastNonMacroMidiNote(note->getMidiNote());
+    inspectorEditSourceMidi.push_back(note->getLastNonMacroMidiNote());
+  }
+}
+
+void PianoRollComponent::setInspectorEditValue(float value)
+{
+  if (!inspectorEditActive || project == nullptr)
+    return;
+
+  int minFrame = std::numeric_limits<int>::max();
+  int maxFrame = std::numeric_limits<int>::min();
+  for (size_t i = 0; i < inspectorEditNotes.size(); ++i)
+  {
+    auto *note = inspectorEditNotes[i];
+    switch (inspectorEditParam)
+    {
+      case InspectorParam::CorrectPitch:
+      {
+        const float source = inspectorEditSourceMidi[i];
+        const float target = correctionTargetFor(source);
+        note->setMidiNoteFromPitchCorrection(
+            target + (source - target) * (1.0f - value / 100.0f));
+        break;
+      }
+      case InspectorParam::FlattenCurve:
+        note->setVibrato(1.0f - value / 100.0f);
+        break;
+      case InspectorParam::PitchDrift:
+        note->setPitchDrift(1.0f - value / 100.0f);
+        break;
+      case InspectorParam::Formant:
+        note->setFormantShift(value);
+        break;
+      case InspectorParam::Volume:
+        // Gain is applied to the audio once, on release (AmplitudeAction).
+        note->setVolumeDb(value);
+        break;
+    }
+    note->markDirty();
+    minFrame = std::min(minFrame, note->getStartFrame());
+    maxFrame = std::max(maxFrame, note->getEndFrame());
+  }
+
+  if (inspectorEditParam != InspectorParam::Volume)
+  {
+    PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
+    project->markNoteEditDirtyRange(minFrame, maxFrame);
+    invalidateBasePitchCache();
+    if (onPitchEdited)
+      onPitchEdited();
+  }
+  repaint();
+}
+
+void PianoRollComponent::endInspectorEdit()
+{
+  if (!inspectorEditActive)
+    return;
+  inspectorEditActive = false;
+  auto notes = std::move(inspectorEditNotes);
+  auto oldParams = std::move(inspectorEditOldParams);
+  inspectorEditSourceMidi.clear();
+  inspectorEditNotes.clear();
+  // References as they were before the gesture (beginInspectorEdit may have
+  // re-anchored them).
+  std::vector<float> oldSource;
+  for (const auto &params : oldParams)
+    oldSource.push_back(params.correctionSource);
+  if (project == nullptr || notes.empty())
+    return;
+
+  if (inspectorEditParam == InspectorParam::Volume)
+  {
+    std::vector<float> before, after;
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+      before.push_back(oldParams[i].volumeDb);
+      after.push_back(notes[i]->getVolumeDb());
+    }
+    if (before == after)
+      return;
+    auto action = std::make_unique<AmplitudeAction>(
+        *project, notes, before, after, pitchToolController->onAmplitudeEdited,
+        "Change Volume");
+    action->redo();
+    if (undoManager)
+      undoManager->addAction(std::move(action));
+    return;
+  }
+
+  std::vector<TransformParams> newParams;
+  std::vector<float> newSource;
+  bool changed = false;
+  for (size_t i = 0; i < notes.size(); ++i)
+  {
+    newParams.push_back(TransformParams::fromNote(*notes[i]));
+    newSource.push_back(notes[i]->getLastNonMacroMidiNote());
+    // A re-anchored reference alone is not an edit.
+    auto compared = newParams.back();
+    compared.correctionSource = oldParams[i].correctionSource;
+    changed |= !(compared == oldParams[i]);
+  }
+  if (!changed)
+  {
+    for (size_t i = 0; i < notes.size(); ++i)
+      notes[i]->setLastNonMacroMidiNote(oldParams[i].correctionSource);
+    return;
+  }
+
+  int minFrame = std::numeric_limits<int>::max();
+  int maxFrame = std::numeric_limits<int>::min();
+  for (auto *note : notes)
+  {
+    note->markSynthDirty();
+    minFrame = std::min(minFrame, note->getStartFrame());
+    maxFrame = std::max(maxFrame, note->getEndFrame());
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(*project);
+  project->markNoteEditDirtyRange(minFrame, maxFrame);
+  invalidateBasePitchCache();
+
+  static const char *names[] = {"Correct Pitch", "Flatten Curve", "Pitch Drift",
+                                "Shift Formant", "Change Volume"};
+  if (undoManager)
+    undoManager->addAction(std::make_unique<InspectorEditAction>(
+        project, notes, oldParams, newParams, oldSource, newSource,
+        names[static_cast<int>(inspectorEditParam)]));
+
+  if (onPitchEdited)
+    onPitchEdited();
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
+}
+
+void PianoRollComponent::setShowAllSmartControls(bool showAll)
+{
+  showAllSmartControls = showAll;
+  updatePitchToolHandlesFromSelection();
+  repaint();
+}
+
+Note *PianoRollComponent::findContiguousNeighbour(const Note &note,
+                                                  bool next) const
+{
+  if (project == nullptr)
+    return nullptr;
+
+  // Same rule as NoteSplitter::findMergeableNotesAt: never across the
+  // boundary between two analysed chunks.
+  const auto &chunkRanges = project->getAudioData().segmentChunkRanges;
+  const auto chunkIndex = [&chunkRanges](const Note &candidate)
+  {
+    if (chunkRanges.empty())
+      return 0;
+    const int midpoint = candidate.getSrcStartFrame() +
+                         std::max(0, candidate.getSrcDurationFrames()) / 2;
+    for (size_t i = 0; i < chunkRanges.size(); ++i)
+      if (midpoint >= chunkRanges[i].first && midpoint < chunkRanges[i].second)
+        return static_cast<int>(i);
+    return -1;
+  };
+  const int noteChunk = chunkIndex(note);
+  if (noteChunk < 0)
+    return nullptr;
+
+  for (auto &other : project->getNotes())
+  {
+    if (&other == &note || other.isRest() || chunkIndex(other) != noteChunk)
+      continue;
+    const bool joins =
+        next ? other.getStartFrame() == note.getEndFrame() &&
+                   other.getSrcStartFrame() == note.getSrcEndFrame()
+             : other.getEndFrame() == note.getStartFrame() &&
+                   other.getSrcEndFrame() == note.getSrcStartFrame();
+    if (joins)
+      return &other;
+  }
+  return nullptr;
+}
+
+bool PianoRollComponent::isEmptyCanvasPoint(juce::Point<float> position)
+{
+  if (project == nullptr || position.x < pianoKeysWidth || position.y < headerHeight ||
+      position.x >= pianoKeysWidth + getVisibleContentWidth() ||
+      position.y >= headerHeight + getVisibleContentHeight())
+    return false;
+
+  const float worldX = position.x - pianoKeysWidth + static_cast<float>(scrollX);
+  const float worldY = position.y - headerHeight + static_cast<float>(scrollY);
+  if (findNoteAt(worldX, worldY) != nullptr || findPreviewButtonNoteAt(worldX, worldY))
+    return false;
+  if (hoveredNote && pitchToolHandles &&
+      pitchToolHandles->containsLayoutPoint(worldX, worldY))
+    return false;
+
+  // Track mode: segments of the other regions count as content too. While
+  // other regions are still analysing no targets come back; keep the old
+  // behaviour then (their notes cannot be hit-tested, so do not pan).
+  if (trackViewMode && getTrackEditTargets)
+  {
+    if (!mouseDownTrackTargets)
+      mouseDownTrackTargets = getTrackEditTargets();
+    if (mouseDownTrackTargets->empty())
+      return false;
+    for (auto& target : *mouseDownTrackTargets)
+    {
+      if (target.isValid && !target.isValid())
+        continue;
+      for (auto* note : collectPitchMacroNotes(*target.project, true, target.frames))
+        for (const auto& bounds : trackNoteBounds(*note, *target.project))
+          if (bounds.contains(position))
+            return false;
+    }
+  }
+
+  // The waveform band is drawn centred in the canvas, in screen space.
+  const float canvasHeight = static_cast<float>(getVisibleContentHeight());
+  const float centreY = static_cast<float>(headerHeight) + canvasHeight * 0.5f;
+  const float halfBand = canvasHeight * WaveformBackgroundRenderer::bandHeightRatio * 0.5f;
+  const float level = waveformBackgroundRenderer
+                          ? waveformBackgroundRenderer->envelopeAt(
+                                static_cast<double>(worldX) / pixelsPerSecond)
+                          : 0.0f;
+  constexpr float silenceLevel = 0.01f;
+  constexpr float margin = 3.0f;
+  const bool onWaveform = level > silenceLevel &&
+                          std::abs(position.y - centreY) <= level * halfBand + margin;
+  return !onWaveform;
+}
+
+void PianoRollComponent::dropTransientNotePointers()
+{
+  // Last resort: a gesture still holding note pointers here cannot be
+  // committed safely any more (the list may already be rebuilt).
+  inspectorEditActive = false;
+  inspectorEditNotes.clear();
+  inspectorEditOldParams.clear();
+  inspectorEditSourceMidi.clear();
+  hoveredNote = nullptr;
+  if (pitchToolHandles)
+  {
+    pitchToolHandles->clear();
+    pitchToolHandles->setHoveredHandleIndex(-1);
+  }
+  hoveredPitchToolHandle = -1;
+  updatePreviewButtonBounds();
+  repaint();
+}
+
+bool PianoRollComponent::handleSmartControlClick(float worldX, float worldY,
+                                                 const juce::ModifierKeys &mods)
+{
+  if (project == nullptr || !pitchToolHandles || pitchToolHandles->isEmpty())
+    return false;
+  // Cmd/Ctrl-click edits the selection, even over a smart control.
+  if (mods.isCommandDown() || mods.isCtrlDown())
+    return false;
+  const int index = pitchToolHandles->hitTest(worldX, worldY);
+  if (index < 0)
+    return false;
+
+  const auto handle = pitchToolHandles->getHandle(index);
+  if (handle.note == nullptr)
+    return false;
+
+  bool changed = false;
+  switch (handle.type)
+  {
+    case PitchToolHandles::HandleType::GlueLeft:
+      if (auto *previous = findContiguousNeighbour(*handle.note, false))
+        changed = noteSplitter->mergeNotes(previous, handle.note);
+      break;
+    case PitchToolHandles::HandleType::GlueRight:
+      if (auto *next = findContiguousNeighbour(*handle.note, true))
+        changed = noteSplitter->mergeNotes(handle.note, next);
+      break;
+    default:
+      return false;
+  }
+
+  // Merging rebuilds the note list, so drop pointers into it.
+  dropTransientNotePointers();
+  juce::ignoreUnused(changed);
+  return true;
+}
+
+bool PianoRollComponent::selectAdjacentSegment(bool next)
+{
+  if (project == nullptr)
+    return false;
+
+  std::vector<Note *> ordered;
+  for (auto &note : project->getNotes())
+    if (!note.isRest())
+      ordered.push_back(&note);
+  if (ordered.empty())
+    return false;
+  std::sort(ordered.begin(), ordered.end(), [](const Note *a, const Note *b)
+            { return a->getStartFrame() < b->getStartFrame(); });
+
+  // Anchor on the last selected segment when moving right, the first when
+  // moving left, so repeated presses walk through the take.
+  int anchor = -1;
+  for (int i = 0; i < static_cast<int>(ordered.size()); ++i)
+    if (ordered[static_cast<size_t>(i)]->isSelected())
+    {
+      if (next || anchor < 0)
+        anchor = i;
+      if (!next)
+        break;
+    }
+
+  int target = anchor < 0 ? (next ? 0 : static_cast<int>(ordered.size()) - 1)
+                          : anchor + (next ? 1 : -1);
+  target = juce::jlimit(0, static_cast<int>(ordered.size()) - 1, target);
+
+  project->deselectAllNotes();
+  ordered[static_cast<size_t>(target)]->setSelected(true);
+  updatePitchToolHandlesFromSelection();
+  if (onNoteSelected)
+    onNoteSelected(ordered[static_cast<size_t>(target)]);
+  repaint();
+  return true;
+}
+
+void PianoRollComponent::selectFollowingSamePitch(Note &note)
+{
+  if (project == nullptr)
+    return;
+  const int pitch = static_cast<int>(std::round(note.getAdjustedMidiNote()));
+  project->deselectAllNotes();
+  for (auto &other : project->getNotes())
+    if (!other.isRest() && other.getStartFrame() >= note.getStartFrame() &&
+        static_cast<int>(std::round(other.getAdjustedMidiNote())) == pitch)
+      other.setSelected(true);
+  updatePitchToolHandlesFromSelection();
+  repaint();
+}
+
+HarmonyUtils::Result PianoRollComponent::applyHarmonyInterval(
+    HarmonyUtils::Interval interval, bool up)
+{
+  if (project == nullptr)
+    return HarmonyUtils::Result::NoNotes;
+
+  // Harmony follows the project key even when drag-snap is set to chromatic.
+  const ScaleMode keyMode = project->getPreferredScaleMode();
+  const int keyRoot = project->getScaleRootNote();
+  if (interval != HarmonyUtils::Interval::Octave &&
+      !HarmonyUtils::supportsDiatonicIntervals(keyMode, keyRoot))
+    return HarmonyUtils::Result::ScaleUnsupported;
+
+  // One click should turn a duplicated lead track into a harmony line, so an
+  // empty selection means "every note".
+  auto targets = project->getSelectedNotes();
+  if (targets.empty())
+    for (auto &note : project->getNotes())
+      targets.push_back(&note);
+
+  const int referenceHz = pitchReferenceHz;
+  int outOfRangeCount = 0;
+  const bool moved = shiftNotesBySemitones(
+      targets,
+      [interval, up, keyMode, keyRoot, referenceHz,
+       &outOfRangeCount](const Note &note) -> std::optional<float>
+      {
+        const float adjustedMidi = note.getAdjustedMidiNote();
+        const auto shift = HarmonyUtils::intervalShiftSemitones(
+            adjustedMidi, interval, up, keyMode, keyRoot, referenceHz);
+        if (!shift)
+          return std::nullopt;
+
+        // Clamping at the editor's range would land on an arbitrary,
+        // possibly out-of-key pitch, so such notes stay where they are.
+        const float target = adjustedMidi + static_cast<float>(*shift);
+        if (target < static_cast<float>(MIN_MIDI_NOTE) ||
+            target > static_cast<float>(MAX_MIDI_NOTE))
+        {
+          ++outOfRangeCount;
+          return std::nullopt;
+        }
+        return static_cast<float>(*shift);
+      });
+
+  if (outOfRangeCount > 0)
+    return moved ? HarmonyUtils::Result::PartlyOutOfRange
+                 : HarmonyUtils::Result::OutOfRange;
+  return moved ? HarmonyUtils::Result::Applied : HarmonyUtils::Result::NoNotes;
+}
+
+bool PianoRollComponent::shiftNotesBySemitones(
+    const std::vector<Note *> &targets,
+    const std::function<std::optional<float>(const Note &)> &shiftForNote)
+{
+  if (project == nullptr || targets.empty())
+    return false;
+
+  const auto &selectedNotes = targets;
 
   constexpr float minMidi = static_cast<float>(MIN_MIDI_NOTE);
   constexpr float maxMidi = static_cast<float>(MAX_MIDI_NOTE);
@@ -2979,6 +3646,10 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
   std::vector<Note *> notesToMove;
   std::vector<float> oldMidis;
   std::vector<float> newMidis;
+  // Harmony and arrow-key moves keep the Correct Pitch reference (see
+  // ScaleUtils::carriedCorrectionSource).
+  std::vector<float> oldSources;
+  std::vector<float> newSources;
   notesToMove.reserve(selectedNotes.size());
   oldMidis.reserve(selectedNotes.size());
   newMidis.reserve(selectedNotes.size());
@@ -2991,12 +3662,16 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
     if (!note || note->isRest())
       continue;
 
+    const auto semitoneDelta = shiftForNote(*note);
+    if (!semitoneDelta || std::abs(*semitoneDelta) < 1.0e-6f)
+      continue;
+
     const float oldMidi = note->getMidiNote();
     const float offset = note->getPitchOffset();
     const float oldAdjustedMidi = oldMidi + offset;
     const float movedAdjustedMidi =
         juce::jlimit(minMidi, maxMidi,
-                     oldAdjustedMidi + static_cast<float>(semitoneDelta));
+                     oldAdjustedMidi + *semitoneDelta);
     const float movedMidi = movedAdjustedMidi - offset;
 
     if (std::abs(movedMidi - oldMidi) <= 1.0e-6f)
@@ -3005,6 +3680,11 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
     notesToMove.push_back(note);
     oldMidis.push_back(oldMidi);
     newMidis.push_back(movedMidi);
+    oldSources.push_back(note->getLastNonMacroMidiNote());
+    newSources.push_back(ScaleUtils::carriedCorrectionSource(
+        *project, note->getLastNonMacroMidiNote(), note->getOriginalMidiNote(), oldMidi,
+        movedMidi,
+        project->getPitchReferenceHz()));
     dirtyStartFrame = std::min(dirtyStartFrame, note->getStartFrame());
     dirtyEndFrame = std::max(dirtyEndFrame, note->getEndFrame());
   }
@@ -3046,13 +3726,15 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
             if (note)
               note->markSynthDirty();
           projectPtr->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
-        });
+        },
+        oldSources, newSources);
     undoManager->addAction(std::move(action));
   }
 
   for (size_t i = 0; i < notesToMove.size(); ++i)
   {
     notesToMove[i]->setMidiNote(newMidis[i]);
+    notesToMove[i]->setLastNonMacroMidiNote(newSources[i]);
     notesToMove[i]->markDirty();
     notesToMove[i]->markSynthDirty();
   }
@@ -3070,10 +3752,18 @@ bool PianoRollComponent::keyPressed(const juce::KeyPress &key)
   const int keyCode = key.getKeyCode();
   if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
   {
+    // VariAudio: Up/Down move by a semitone; Shift moves in cent steps and
+    // ignores the pitch snap mode.
     const int direction = keyCode == juce::KeyPress::upKey ? 1 : -1;
-    const int step = mods.isShiftDown() ? 12 : 1;
-    return nudgeSelectedNotesBySemitones(direction * step);
+    if (mods.isShiftDown())
+      return nudgeSelectedNotesByCents(direction);
+    if (project != nullptr &&
+        resolveDragSnapKind({}) == PitchEditor::DragSnapKind::Absolute)
+      return nudgeSelectedNotesToNextPitch(direction);
+    return nudgeSelectedNotesBySemitones(direction);
   }
+  if (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
+    return selectAdjacentSegment(keyCode == juce::KeyPress::rightKey);
 
   return false;
 }
@@ -3550,6 +4240,14 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection()
 
   const auto hoverBounds = hoveredNote ? getNoteHoverShadowBounds(*hoveredNote)
                                        : juce::Rectangle<float>();
+  PitchToolHandles::Options options;
+  options.showAll = showAllSmartControls;
+  if (hoveredNote)
+  {
+    options.canGlueLeft = findContiguousNeighbour(*hoveredNote, false) != nullptr;
+    options.canGlueRight = findContiguousNeighbour(*hoveredNote, true) != nullptr;
+  }
+  pitchToolHandles->setOptions(options);
   pitchToolHandles->updateHandles(targetNotes, *coordMapper, hoverBounds);
   if (hoveredPitchToolHandle >=
       static_cast<int>(pitchToolHandles->getHandles().size()))
@@ -3598,6 +4296,10 @@ PianoRollComponent::getNoteHoverShadowBounds(const Note &note) const
   const float renderedWidth = std::max(w, 4.0f);
   const float h = pixelsPerSemitone;
   const float y = midiToY(note.getAdjustedMidiNote());
+
+  // Segment style: the highlight hugs the segment rectangle, like VariAudio.
+  if (segmentStyle)
+    return juce::Rectangle<float>(x, y, renderedWidth, h).expanded(4.0f, 4.0f);
 
   juce::Rectangle<float> shadowBounds(x, y, renderedWidth, h);
   const float *samples = nullptr;

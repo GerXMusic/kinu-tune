@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace ScaleUtils
 {
@@ -213,5 +214,105 @@ inline float snapMidiToScale(float midi,
     }
 
     return static_cast<float>(bestMidi) + offset;
+}
+
+// Correct Pitch moves a segment toward the nearest semitone, or the nearest
+// scale tone when "snap to scale" is on (inspector slider and smart control).
+inline float correctionTargetFor(const Project& project, float sourceMidi, int referenceHz)
+{
+    if (project.getDragSnapMode() == DragSnapMode::Scale)
+    {
+        const auto mode = project.getPreferredScaleMode();
+        const int root = project.getScaleRootNote();
+        if (mode != ScaleMode::None && mode != ScaleMode::Chromatic && root >= 0)
+            return snapMidiToScale(sourceMidi, mode, root, referenceHz);
+    }
+    return snapMidiToSemitone(sourceMidi, referenceHz);
+}
+
+// The Correct Pitch reference (Note::lastNonMacroMidiNote, "the sung pitch")
+// after an edit other than Correct Pitch moved a segment from fromMidi to
+// toMidi (harmony, arrow keys, drags, tilt, snap to semitone). The rule
+// depends only on where the segment ends up, not on the path, so moving a
+// segment away and back leaves it as it was. In order:
+//  1. A move from one target pitch to another keeps the current reference's
+//     deviation and correction share (whole-semitone moves, harmony).
+//  2. The analysed pitch moved by whole semitones is the sung pitch whenever
+//     the new pitch is a 0-100% correction of it (so a segment back at its
+//     analysed pitch is back at 0%, unedited).
+//  3. Otherwise the current deviation is kept around the target nearest to
+//     the new pitch, if that reads as a 0-100% correction.
+//  4. Otherwise, still around the same target, the reference stays; the
+//     share is then outside 0-100% and shows as 0% (Correct Pitch starts
+//     over from the current pitch when used).
+//  5. Otherwise the new pitch becomes the sung pitch (0%).
+inline float carriedCorrectionSource(const Project& project, float source,
+                                     float analysedMidi, float fromMidi, float toMidi,
+                                     int referenceHz)
+{
+    constexpr float kTolerance = 1.0e-3f;
+    constexpr float kNoDeviation = 1.0e-4f;
+    const auto targetOf = [&](float pitch)
+    { return correctionTargetFor(project, pitch, referenceHz); };
+    const auto inRange = [](float share)
+    { return share >= -kTolerance && share <= 1.0f + kTolerance; };
+    // Is `pitch` a 0-100% correction of the sung pitch `sung`?
+    const auto corrects = [&](float sung, float pitch)
+    {
+        const float sungTarget = targetOf(sung);
+        const float sungDeviation = sung - sungTarget;
+        if (std::abs(sungDeviation) < kNoDeviation)
+            return std::abs(pitch - sungTarget) < kTolerance;
+        return inRange(1.0f - (pitch - sungTarget) / sungDeviation);
+    };
+
+    const float target = targetOf(source);
+    const float deviation = source - target;
+    const bool hasDeviation = std::abs(deviation) >= kNoDeviation;
+
+    if (hasDeviation)
+    {
+        const float share = 1.0f - (fromMidi - target) / deviation;
+        if (inRange(share))
+        {
+            const float movedTarget = toMidi - deviation * (1.0f - share);
+            if (std::abs(targetOf(movedTarget) - movedTarget) < kTolerance &&
+                std::abs(targetOf(movedTarget + deviation) - movedTarget) < kTolerance)
+                return movedTarget + deviation;
+        }
+    }
+
+    const float steps = std::round(toMidi - analysedMidi);
+    for (const float n : {steps, steps - 1.0f, steps + 1.0f})
+        if (corrects(analysedMidi + n, toMidi))
+            return analysedMidi + n;
+
+    if (hasDeviation)
+    {
+        const float nearestTarget = targetOf(toMidi);
+        if (corrects(nearestTarget + deviation, toMidi) &&
+            std::abs(targetOf(nearestTarget + deviation) - nearestTarget) < kTolerance)
+            return nearestTarget + deviation;
+    }
+
+    if (std::abs(targetOf(toMidi) - target) < kTolerance)
+        return source;
+
+    return toMidi;
+}
+
+// Share (0-1) of the sung deviation that a pitch removes, or nullopt when the
+// pitch is not a 0-100% correction of that sung pitch.
+inline std::optional<float> correctionShare(const Project& project, float source,
+                                            float midi, int referenceHz)
+{
+    const float target = correctionTargetFor(project, source, referenceHz);
+    const float deviation = source - target;
+    if (std::abs(deviation) < 1.0e-4f)
+        return std::abs(midi - target) < 1.0e-3f ? std::optional<float>(0.0f) : std::nullopt;
+    const float share = 1.0f - (midi - target) / deviation;
+    if (share < -1.0e-3f || share > 1.0f + 1.0e-3f)
+        return std::nullopt;
+    return juce::jlimit(0.0f, 1.0f, share);
 }
 }

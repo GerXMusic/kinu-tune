@@ -193,7 +193,8 @@ ResampledLoopAudition::~ResampledLoopAudition()
 
 void ResampledLoopAudition::request(std::vector<float> source,
                                     float semitoneShift,
-                                    float targetMidiNote)
+                                    float targetMidiNote,
+                                    bool wholeSegment)
 {
   if (source.empty())
     return;
@@ -203,6 +204,7 @@ void ResampledLoopAudition::request(std::vector<float> source,
     pendingSource = std::move(source);
     pendingSemitoneShift = semitoneShift;
     pendingTargetMidiNote = targetMidiNote;
+    pendingWholeSegment = wholeSegment;
     hasPendingRequest = true;
     ++requestId;
   }
@@ -223,6 +225,7 @@ void ResampledLoopAudition::workerLoop()
     std::vector<float> source;
     float semitoneShift = 0.0f;
     float targetMidiNote = 60.0f;
+    bool wholeSegment = false;
     std::uint64_t id = 0;
     {
       std::unique_lock<std::mutex> lock(mutex);
@@ -233,15 +236,20 @@ void ResampledLoopAudition::workerLoop()
       source = std::move(pendingSource);
       semitoneShift = pendingSemitoneShift;
       targetMidiNote = pendingTargetMidiNote;
+      wholeSegment = pendingWholeSegment;
       id = requestId;
       hasPendingRequest = false;
     }
 
-    auto result = render(std::move(source), semitoneShift, targetMidiNote);
+    auto result = render(std::move(source), semitoneShift, targetMidiNote, wholeSegment);
     {
       const std::lock_guard<std::mutex> lock(mutex);
       if (shuttingDown)
         return;
+      // A newer request or cancel() superseded this one: drop the result so
+      // a cancelled or outdated audition never starts late.
+      if (id != requestId)
+        continue;
     }
 
     auto callback = onReady;
@@ -257,7 +265,8 @@ void ResampledLoopAudition::workerLoop()
 juce::AudioBuffer<float>
 ResampledLoopAudition::render(std::vector<float> source,
                               float semitoneShift,
-                              float targetMidiNote)
+                              float targetMidiNote,
+                              bool wholeSegment)
 {
   const int originalSamples = static_cast<int>(source.size());
   if (originalSamples < 2)
@@ -297,6 +306,22 @@ ResampledLoopAudition::render(std::vector<float> source,
 
   // Audition is intentionally quieter than program playback.
   result.applyGain(kAuditionGain);
+
+  if (wholeSegment)
+  {
+    // Drag feedback: the whole segment, then a silent gap, repeated by the
+    // player while the user drags. Project audio is always 44.1 kHz.
+    constexpr int kFadeIn = 220;   // ~5 ms
+    constexpr int kFadeOut = 880;  // ~20 ms
+    const int padding = static_cast<int>(loopGapSeconds * 44100.0);
+    juce::AudioBuffer<float> once(1, resampledSamples + padding);
+    once.clear();
+    once.copyFrom(0, 0, result, 0, 0, resampledSamples);
+    once.applyGainRamp(0, 0, std::min(kFadeIn, resampledSamples), 0.0f, 1.0f);
+    const int fadeOut = std::min(kFadeOut, resampledSamples);
+    once.applyGainRamp(0, resampledSamples - fadeOut, fadeOut, 1.0f, 0.0f);
+    return once;
+  }
 
   // Autocorrelation finds the voiced period in the sustained part of the
   // note. Choose an integer-period loop whose two boundaries have the lowest

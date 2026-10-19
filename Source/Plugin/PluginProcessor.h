@@ -263,8 +263,10 @@ public:
   // never runs and the ARA preview path handles auditioning instead.
   void startPluginPreview(double startSeconds, double endSeconds);
   void stopPluginPreview();
+  // wholeSegment: drag feedback that repeats the buffer from its start (with
+  // its own silent gap) instead of a seamless sustain loop.
   void startPluginAudition(const juce::AudioBuffer<float> &buffer,
-                           double sampleRate);
+                           double sampleRate, bool wholeSegment = false);
   void stopPluginAudition();
 
   // Non-ARA mode: capture control
@@ -496,7 +498,13 @@ private:
   PluginPreviewState pluginPreview;
   juce::int64 pluginPreviewCursor = 0;
   std::shared_ptr<juce::AudioBuffer<float>> pluginAuditionBuffer;
+  std::atomic<bool> pluginAuditionSeamless{true};
   // Audio-thread-only handoff state for crossfading new audition renders.
+  bool activePluginAuditionSeamless = true;
+  bool previousPluginAuditionSeamless = true;
+  // The audition was rendered in the previous preview block, so a new
+  // buffer continues it rather than starting over.
+  bool pluginAuditionSounding = false;
   std::shared_ptr<juce::AudioBuffer<float>> activePluginAuditionBuffer;
   std::shared_ptr<juce::AudioBuffer<float>> previousPluginAuditionBuffer;
   juce::int64 pluginAuditionCursor = 0;

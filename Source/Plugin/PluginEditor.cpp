@@ -527,8 +527,8 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
       [pitchDocController]() { pitchDocController->stopPreview(); });
   mainView->setOnRequestDragAudition(
       [pitchDocController](const juce::AudioBuffer<float> &buffer,
-                           double sampleRate) {
-        pitchDocController->startPreviewAudio(buffer, sampleRate);
+                           double sampleRate, bool wholeSegment) {
+        pitchDocController->startPreviewAudio(buffer, sampleRate, wholeSegment);
       });
   mainView->setOnStopDragAudition(
       [pitchDocController]() { pitchDocController->stopPreview(); });
@@ -1473,8 +1473,9 @@ void PitchNetAudioProcessorEditor::setupNonARAMode() {
   mainView->setOnStopBackendPreview(
       [this]() { audioProcessor.stopPluginPreview(); });
   mainView->setOnRequestDragAudition(
-      [this](const juce::AudioBuffer<float> &buffer, double sampleRate) {
-        audioProcessor.startPluginAudition(buffer, sampleRate);
+      [this](const juce::AudioBuffer<float> &buffer, double sampleRate,
+             bool wholeSegment) {
+        audioProcessor.startPluginAudition(buffer, sampleRate, wholeSegment);
       });
   mainView->setOnStopDragAudition(
       [this]() { audioProcessor.stopPluginAudition(); });

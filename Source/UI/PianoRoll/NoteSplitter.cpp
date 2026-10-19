@@ -90,6 +90,10 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     int startFrame = note->getStartFrame();
     int endFrame = note->getEndFrame();
     const float previousPitchCenter = note->getAdjustedMidiNote();
+    // Splitting is pitch-neutral, so both halves keep the gap between the
+    // Correct Pitch reference (the sung pitch) and the pitch.
+    const float correctionOffset =
+        note->getLastNonMacroMidiNote() - note->getMidiNote();
 
     // Keep at least one analysis frame on each side of the split.
     if (splitFrame <= startFrame || splitFrame >= endFrame)
@@ -213,9 +217,11 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     rebasePitchDeviation(*note, previousPitchCenter - leftPitchCenter);
     rebasePitchDeviation(secondNote, previousPitchCenter - rightPitchCenter);
     note->setMidiNote(leftPitchCenter);
+    note->setLastNonMacroMidiNote(leftPitchCenter + correctionOffset);
     note->setOriginalMidiNote(leftPitchCenter);
     note->setPitchOffset(0.0f);
     secondNote.setMidiNote(rightPitchCenter);
+    secondNote.setLastNonMacroMidiNote(rightPitchCenter + correctionOffset);
     secondNote.setOriginalMidiNote(rightPitchCenter);
     secondNote.setPitchOffset(0.0f);
 
@@ -393,6 +399,10 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
             secondActive, secondNote.getAdjustedMidiNote()));
     }
     mergedNote.setMidiNote(mergedPitchCenter);
+    // Merging is pitch-neutral: keep the first segment's gap between the
+    // Correct Pitch reference (the sung pitch) and the pitch.
+    mergedNote.setLastNonMacroMidiNote(
+        mergedPitchCenter + firstNote.getLastNonMacroMidiNote() - firstNote.getMidiNote());
     mergedNote.setOriginalMidiNote(mergedPitchCenter);
     mergedNote.setPitchOffset(0.0f);
     const bool isDirty = firstNote.isDirty() || secondNote.isDirty();

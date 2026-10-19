@@ -1,6 +1,7 @@
 #include "PitchToolController.h"
 #include "../../Undo/AmplitudeAction.h"
 #include "../../Utils/PitchCurveProcessor.h"
+#include "../../Utils/ScaleUtils.h"
 
 #include <algorithm>
 #include <limits>
@@ -50,7 +51,8 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
        handle.type == PitchToolHandles::HandleType::Vibrato ||
        handle.type == PitchToolHandles::HandleType::PitchDrift ||
        handle.type == PitchToolHandles::HandleType::Formant ||
-       handle.type == PitchToolHandles::HandleType::Amplitude);
+       handle.type == PitchToolHandles::HandleType::Amplitude ||
+       handle.type == PitchToolHandles::HandleType::CorrectPitch);
   if (isGroupEdit || !handle.note)
     affectedNotes = selectedNotes;
   else
@@ -268,6 +270,34 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }
+      case PitchToolHandles::HandleType::CorrectPitch:
+      {
+        // VariAudio "Correct Pitch", on the inspector slider's scale: the
+        // share of the sung deviation (from the correction reference) that
+        // is removed. Dragging up adds to the share the segment had when the
+        // drag began, 60 px for the full correction. The reference itself
+        // is left alone, so the slider shows the same value afterwards.
+        const float tiltMean = (origParams.tiltLeft + origParams.tiltRight) / 2.0f;
+        const float startMidi = origParams.midiNote + tiltMean;
+        const int referenceHz = project->getPitchReferenceHz();
+        float source = origParams.correctionSource;
+        // A pitch that is not a 0-100% correction of its reference (older
+        // projects, pitch drawing) starts over from where it is, so the drag
+        // never jumps.
+        if (!ScaleUtils::correctionShare(*project, source, startMidi, referenceHz))
+          source = startMidi;
+        note->setLastNonMacroMidiNote(source);
+        const float target = ScaleUtils::correctionTargetFor(*project, source, referenceHz);
+        const float deviation = source - target;
+        const float startShare =
+            std::abs(deviation) < 1.0e-3f
+                ? 1.0f
+                : juce::jlimit(0.0f, 1.0f, 1.0f - (startMidi - target) / deviation);
+        const float share =
+            juce::jlimit(0.0f, 1.0f, startShare - dragDeltaY / 60.0f);
+        note->setMidiNoteFromPitchCorrection(target + deviation * (1.0f - share));
+        break;
+      }
       case PitchToolHandles::HandleType::SmoothLeft:
       {
         // Drag RIGHT (positive X) into note = more smoothing
@@ -295,6 +325,18 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       case PitchToolHandles::HandleType::None:
       default:
         continue;  // Skip this note
+    }
+
+    // The other handles write midiNote through setMidiNote, which would make
+    // the current pitch the Correct Pitch reference; keep it instead.
+    if (type != PitchToolHandles::HandleType::CorrectPitch)
+    {
+      const float origLiveMidi =
+          origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f;
+      note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+          *project, origParams.correctionSource, note->getOriginalMidiNote(),
+          origLiveMidi, note->getMidiNote(),
+          project->getPitchReferenceHz()));
     }
 
     note->markDirty();
@@ -344,6 +386,7 @@ void PitchToolController::cancel()
       // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
       const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;
       affectedNotes[i]->setMidiNote(params.midiNote + tiltMean);
+      affectedNotes[i]->setLastNonMacroMidiNote(params.correctionSource);
     }
   }
 

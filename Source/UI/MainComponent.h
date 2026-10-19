@@ -17,6 +17,7 @@
 #include "TrackListPanel.h"
 #include "PianoRollComponent.h"
 #include "PianoRollWorkspaceView.h"
+#include "VariAudioInspector.h"
 #include "SettingsOverlay.h"
 #include "ToolbarComponent.h"
 #include "Workspace/WorkspaceComponent.h"
@@ -169,7 +170,7 @@ public:
     onStopBackendPreview = std::move(callback);
   }
   void setOnRequestDragAudition(
-      std::function<void(const juce::AudioBuffer<float> &, double)> callback) override {
+      std::function<void(const juce::AudioBuffer<float> &, double, bool)> callback) override {
     onRequestDragAudition = std::move(callback);
   }
   void setOnStopDragAudition(std::function<void()> callback) override {
@@ -257,7 +258,9 @@ public:
   std::function<void(const Project &)> onRequestBackendRender;
   std::function<void(const Project &, int, int)> onRequestBackendPreview;
   std::function<void()> onStopBackendPreview;
-  std::function<void(const juce::AudioBuffer<float> &, double)> onRequestDragAudition;
+  // (buffer, sample rate, wholeSegment): true repeats the whole buffer from its
+  // start (drag feedback), false loops it seamlessly (sustained key tone).
+  std::function<void(const juce::AudioBuffer<float> &, double, bool)> onRequestDragAudition;
   std::function<void()> onStopDragAudition;
 
   // Plugin mode - request host transport control (optional; only works if host
@@ -294,7 +297,15 @@ private:
   void previewNoteRegion(int startFrame, int endFrame);
   void finishPreviewRegion(bool restorePosition);
   void auditionDraggedNote(const Note &note);
+  // Mouse up: the feedback stops (VariAudio-style).
   void finishDraggedNoteAudition();
+  // Stops any drag audition at once (mouse up, audition switched off,
+  // teardown).
+  void cancelDraggedNoteAudition();
+  // Another audition or a transport command takes over: forget the drag
+  // audition without restoring the transport it saved. stopSound also
+  // silences it (transport commands); a new audition replaces it instead.
+  void abandonDragAudition(bool stopSound);
   void dispatchPendingDragAudition();
   void auditionPianoKey(int midiNote);
   void finishPianoKeyAudition();
@@ -312,6 +323,8 @@ private:
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
   void fitAnalyzedPitchRangeToView(Project &project);
+  // Whole timeline horizontally, the sung range vertically (Shift+F).
+  void zoomToFull();
   void applyUiBrightness(double brightnessPercent);
 
   void reloadInferenceModels(bool async = false);
@@ -363,6 +376,9 @@ private:
   std::unique_ptr<ResampledLoopAudition> resampledLoopAudition;
   bool dragAuditionEnabled = false;
   bool noteDragAuditionActive = false;
+  // Transport or another preview took over during the drag: stay silent
+  // until the mouse goes up.
+  bool noteDragAuditionSuppressed = false;
   bool noteDragAuditionBackendPreviewStarted = false;
   bool noteDragAuditionPending = false;
   bool noteDragAuditionWasPlaying = false;
@@ -374,6 +390,9 @@ private:
   float pendingNoteDragAuditionMidiNote = 60.0f;
   std::vector<float> pendingNoteDragAuditionSource;
   static constexpr juce::int64 noteDragAuditionDebounceMs = 20;
+  // Segment and pitch of the current rendering (compared, never read).
+  const Note *lastAuditionedNote = nullptr;
+  float lastAuditionedMidi = 0.0f;
 
   // New modular components
   std::unique_ptr<AudioFileManager> fileManager;
@@ -391,6 +410,7 @@ private:
   WorkspaceComponent workspace;
   PianoRollComponent pianoRoll;
   PianoRollWorkspaceView pianoRollView;
+  VariAudioInspector variAudioInspector; // left column, VariAudio-style
   ParameterPanel parameterPanel;
   TrackListPanel trackListPanel; // content of the left side panel
   std::function<void()> onTrackColourModeChanged;

@@ -331,9 +331,14 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
     std::vector<NoteCenter> notes;
   };
   auto states = std::make_shared<std::vector<State>>();
+  // A selection anywhere (any track) limits the macro to the selection.
+  bool onlySelected = false;
+  for (auto& target : targets)
+    onlySelected |= hasSelectedPitchMacroNotes(*target.project, track, target.frames);
   for (auto& target : targets) {
     State state{target, target.project->getPitchCenter(), {}};
-    for (auto* note : collectPitchMacroNotes(*target.project, track, target.frames))
+    for (auto* note : collectPitchMacroTargetNotes(*target.project, track, target.frames,
+                                                   onlySelected))
       state.notes.push_back({note, note->getMidiNote(), note->getLastNonMacroMidiNote(),
                              note->getPitchDrift()});
     states->push_back(std::move(state));

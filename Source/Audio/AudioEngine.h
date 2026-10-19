@@ -41,8 +41,11 @@ public:
 
   // Temporary audition source. It loops independently of the project
   // transport, so previewing a note never moves the timeline playhead.
+  // seamless: crossfade the tail into the head (sustained tones). false:
+  // repeat the whole buffer from its start (drag feedback); a new buffer
+  // while one is playing continues at the same relative position.
   void beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
-                         int sampleRate);
+                         int sampleRate, bool seamless = true);
   void endAuditionLoop();
   bool isAuditioning() const { return auditionActive.load(); }
 
@@ -116,6 +119,7 @@ private:
   std::atomic<int> auditionTransitionSamplesTotal{0};
   std::atomic<bool> playing{false};
   std::atomic<bool> auditionActive{false};
+  std::atomic<bool> auditionSeamless{true};
   std::atomic<bool> shouldStop{false};
 
   std::shared_ptr<PositionCallback> positionCallback;

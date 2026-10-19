@@ -45,6 +45,11 @@ public:
   }
 
   void draw(juce::Graphics &g, const juce::Rectangle<int> &visibleArea);
+  // Envelope level (0..1) of everything drawn at a project time, using the
+  // same measure as the drawing. Used to tell waveform from empty canvas.
+  float envelopeAt(double projectSeconds) const;
+  // Fraction of the visible height the waveform band spans, centred.
+  static constexpr float bandHeightRatio = 0.8f;
   // ARA: the other regions of the track are drawn into the same strip, with
   // the same envelope and colour as the active region's waveform.
   // Track mode: draw the project's waveform only within this span (project

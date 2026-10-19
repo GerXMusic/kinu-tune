@@ -23,6 +23,11 @@ public:
     void setSnapToSemitoneDragEnabled(bool enabled) { snapToSemitoneDragEnabled = enabled; }
     void setDragSnapMode(DragSnapMode mode) { dragSnapMode = mode; }
     void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(420, 450, hz); }
+    // VariAudio Pitch Snap Mode: Absolute lands on a semitone (or scale tone),
+    // Relative moves in whole semitones keeping the cents deviation, Off is free.
+    enum class DragSnapKind { Off, Relative, Absolute };
+    float resolveDragOffset(float rawOffsetSemitones, float anchorMidiNote,
+                            DragSnapKind kind) const;
     float getSnappedDragOffset(float rawOffsetSemitones,
                                float anchorMidiNote) const;
 
@@ -37,7 +42,7 @@ public:
     // Multi-note dragging
     void startMultiNoteDrag(const std::vector<Note*>& notes, float y,
                             Note* hoveredNote);
-    void updateMultiNoteDrag(float x, float y, bool invertSnap = false);
+    void updateMultiNoteDrag(float x, float y, DragSnapKind snapKind);
     void endMultiNoteDrag();
     bool isDraggingMultiNotes() const { return isMultiDragging; }
     const std::vector<Note*>& getDraggedNotes() const { return draggedNotes; }

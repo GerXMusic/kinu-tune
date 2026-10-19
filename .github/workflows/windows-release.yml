@@ -1,0 +1,61 @@
+# Builds the Windows (x64, CPU) VST3 for an existing GitHub release and
+# attaches the zip to it. Run it by hand (Actions > Windows release build >
+# Run workflow) after the release exists; the model files are taken from the
+# release's "*-models.zip" asset, because they are not in the repository.
+name: Windows release build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (e.g. v0.1.0-beta)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout the tagged source with submodules
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          submodules: recursive
+
+      - name: Fetch the model files from the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern "*-models.zip" --dir models-dl
+          Expand-Archive -Path (Get-ChildItem models-dl/*.zip | Select-Object -First 1).FullName -DestinationPath models-dl/x
+          New-Item -ItemType Directory -Force -Path Resources/models | Out-Null
+          Copy-Item -Path models-dl/x/models/* -Destination Resources/models -Recurse -Force
+          Get-ChildItem -Recurse Resources/models | Select-Object FullName, Length
+
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DPITCHNET_DEV_BUILD=OFF -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
+
+      - name: Build the VST3
+        run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
+
+      - name: Package and attach to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ inputs.tag }}".TrimStart('v')
+          $name = "Kinu-Tune-$version-Windows-x64"
+          New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
+          Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3" "$name/"
+          foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifigan.onnx") {
+            Copy-Item "Resources/models/$f" "$name/models/"
+          }
+          Copy-Item -Recurse "Resources/models/GAME" "$name/models/"
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.txt, MODIFICATIONS.md "$name/"
+          Copy-Item licenses/* "$name/licenses/"
+          Copy-Item packaging/INSTALL-Windows.txt "$name/INSTALL.txt"
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          gh release upload "${{ inputs.tag }}" "$name.zip" --repo "${{ github.repository }}" --clobber

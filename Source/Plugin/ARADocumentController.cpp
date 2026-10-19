@@ -615,6 +615,16 @@ PitchNetDocumentController *PitchNetEditorRenderer::getDocController() const {
 PitchNetEditorRenderer::~PitchNetEditorRenderer() {
   for (auto *sequence : listenedRegionSequences)
     sequence->removeListener(this);
+
+  // A preview that this renderer owned or claimed must not stay bound to it:
+  // nobody else would play it. Clearing the owner lets any renderer claim.
+  if (auto *docCtrl = getDocController()) {
+    auto &previewState = docCtrl->getPreviewState();
+    PitchNetEditorRenderer *self = this;
+    previewState.previewOwnerRenderer.compare_exchange_strong(self, nullptr);
+    self = this;
+    previewState.previewClaimedRenderer.compare_exchange_strong(self, nullptr);
+  }
 }
 
 void PitchNetEditorRenderer::prepareToPlay(
@@ -917,20 +927,23 @@ void PitchNetEditorRenderer::writePreviewLoop(
   const int loopStart = static_cast<int>(previewLoopRange.getStart());
   const int loopEnd = static_cast<int>(previewLoopRange.getEnd());
   const int loopLength = loopEnd - loopStart;
-  const int crossfade = std::min(8192, std::max(1, loopLength / 2));
+  // Drag feedback repeats the whole segment (its silent gap separates the
+  // repetitions); only sustained tones crossfade their tail into the head.
+  const int crossfade =
+      previewLoopSeamless ? std::min(8192, std::max(1, loopLength / 2)) : 0;
   const int crossfadeStart = loopEnd - crossfade;
   auto renderLoopSample = [](const juce::AudioBuffer<float> &source,
-                             juce::int64 position, int channel) {
+                             juce::int64 position, int channel, bool seamless) {
     const int length = source.getNumSamples();
     if (length <= 0 || channel < 0 || channel >= source.getNumChannels())
       return 0.0f;
     position %= length;
     if (position < 0)
       position += length;
-    const int overlap = std::min(8192, std::max(1, length / 2));
+    const int overlap = seamless ? std::min(8192, std::max(1, length / 2)) : 0;
     const int overlapStart = length - overlap;
     float value = source.getSample(channel, static_cast<int>(position));
-    if (position >= overlapStart) {
+    if (overlap > 0 && position >= overlapStart) {
       const float t = static_cast<float>(position - overlapStart) / overlap;
       value = value * std::cos(t * juce::MathConstants<float>::halfPi) +
               source.getSample(channel, static_cast<int>(position - overlapStart)) *
@@ -939,7 +952,7 @@ void PitchNetEditorRenderer::writePreviewLoop(
     return value;
   };
   auto advanceLoopPosition = [](const juce::AudioBuffer<float> &source,
-                                juce::int64 &position) {
+                                juce::int64 &position, bool seamless) {
     const int length = source.getNumSamples();
     if (length <= 0) {
       position = 0;
@@ -948,13 +961,13 @@ void PitchNetEditorRenderer::writePreviewLoop(
     position %= length;
     if (position < 0)
       position += length;
-    const int overlap = std::min(8192, std::max(1, length / 2));
+    const int overlap = seamless ? std::min(8192, std::max(1, length / 2)) : 0;
     if (++position >= length)
       position -= length - overlap;
   };
   for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
     const int position = static_cast<int>(previewLoopPosition);
-    const bool inCrossfade = position >= crossfadeStart;
+    const bool inCrossfade = crossfade > 0 && position >= crossfadeStart;
     const float t = inCrossfade
                         ? static_cast<float>(position - crossfadeStart) /
                               static_cast<float>(crossfade)
@@ -974,9 +987,9 @@ void PitchNetEditorRenderer::writePreviewLoop(
            ch < previousPreviewBuffer->getNumChannels())) {
         const int previousSourceChannel =
             previousPreviewBuffer->getNumChannels() == 1 ? 0 : ch;
-        const float oldValue = renderLoopSample(*previousPreviewBuffer,
-                                                previousPreviewLoopPosition,
-                                                previousSourceChannel);
+        const float oldValue = renderLoopSample(
+            *previousPreviewBuffer, previousPreviewLoopPosition,
+            previousSourceChannel, previousPreviewLoopSeamless);
         const float handoff = 1.0f - static_cast<float>(previewTransitionRemaining) /
                                            static_cast<float>(previewTransitionTotal);
         value = oldValue * std::cos(handoff * juce::MathConstants<float>::halfPi) +
@@ -989,7 +1002,8 @@ void PitchNetEditorRenderer::writePreviewLoop(
       previewLoopPosition -= loopLength - crossfade;
     if (previewTransitionRemaining > 0 && previousPreviewBuffer &&
         previousPreviewBuffer->getNumSamples() > 0) {
-      advanceLoopPosition(*previousPreviewBuffer, previousPreviewLoopPosition);
+      advanceLoopPosition(*previousPreviewBuffer, previousPreviewLoopPosition,
+                          previousPreviewLoopSeamless);
       --previewTransitionRemaining;
     }
   }
@@ -1062,9 +1076,45 @@ bool PitchNetEditorRenderer::processBlock(
   // request in that case; normal transport playback still takes the path
   // below when no preview is active.
   if (!posInfo.getIsPlaying() || previewRequested) {
+    auto *previewRegion = previewState.previewedRegion.load();
+    auto *previewOwner = previewState.previewOwnerRenderer.load();
+    const auto previewRegionIsAssigned = [&]() {
+      if (previewRegion == nullptr)
+        return false;
+
+      // Resolved on the model thread from region and region-sequence
+      // assignments (see startPreviewRange()).
+      if (previewOwner != nullptr)
+        return previewOwner == this;
+
+      const auto &assignedRegions = getPlaybackRegions();
+      // REAPER can request an editor preview before assigning this renderer a
+      // region. The document-level preview selection is authoritative there.
+      if (assignedRegions.empty())
+        return true;
+
+      for (auto *region : assignedRegions)
+        if (region == previewRegion)
+          return true;
+
+      return false;
+    }();
+
     auto audition = std::atomic_load(&previewState.auditionBuffer);
     if (previewState.auditionActive.load() && audition) {
       auto *claimedRenderer = previewState.previewClaimedRenderer.load();
+      // With several instances (a lead track and its duplicated harmony
+      // track) every editor renderer sees the same document-level audition.
+      // Only the renderer that owns the edited region may claim it; otherwise
+      // the audition plays through another track, which is silent when that
+      // track is muted or the harmony track is soloed. Without a known owner
+      // any renderer may claim it, as before.
+      if (claimedRenderer == nullptr && previewOwner != nullptr &&
+          previewOwner != this) {
+        previewState.auditionBlocksSkippedNotOwner.fetch_add(1);
+        buffer.clear();
+        return true;
+      }
       if (claimedRenderer == nullptr) {
         PitchNetEditorRenderer *expected = nullptr;
         previewState.previewClaimedRenderer.compare_exchange_strong(expected,
@@ -1084,38 +1134,34 @@ bool PitchNetEditorRenderer::processBlock(
         previousPreviewBuffer = hasActivePreview ? std::move(previewBuffer)
                                                  : nullptr;
         previousPreviewLoopPosition = hasActivePreview ? previewLoopPosition : 0;
+        previousPreviewLoopSeamless = previewLoopSeamless;
         previewTransitionTotal = 4096;
         previewTransitionRemaining = previousPreviewBuffer ? previewTransitionTotal : 0;
         previewBuffer = audition;
         previewLoopRange = juce::Range<juce::int64>::withStartAndLength(
             0, previewBuffer->getNumSamples());
+        previewLoopSeamless = previewState.auditionSeamless.load();
         previewLoopPosition = previewLoopRange.getStart();
+        if (!previewLoopSeamless && previousPreviewBuffer &&
+            previousPreviewBuffer->getNumSamples() > 0) {
+          // Drag feedback: a pitch change swaps the rendering but keeps the
+          // repetition going at the same point of the segment.
+          const double relative =
+              static_cast<double>(previousPreviewLoopPosition) /
+              static_cast<double>(previousPreviewBuffer->getNumSamples());
+          previewLoopPosition = juce::jlimit<juce::int64>(
+              0, previewBuffer->getNumSamples() - 1,
+              static_cast<juce::int64>(relative * previewBuffer->getNumSamples()));
+        }
         lastAuditionBuffer = audition;
       }
       writePreviewLoop(buffer);
+      previewState.auditionBlocksWritten.fetch_add(1);
       if (!std::exchange(wasPreviewing, true))
         buffer.applyGainRamp(0, std::min(50, buffer.getNumSamples()), 0.0f,
                              1.0f);
       return true;
     }
-    auto *previewRegion = previewState.previewedRegion.load();
-    const auto previewRegionIsAssigned = [&]() {
-      if (previewRegion == nullptr)
-        return false;
-
-      const auto &assignedRegions = getPlaybackRegions();
-      // REAPER can request an editor preview before assigning this renderer a
-      // region. The document-level preview selection is authoritative there.
-      if (assignedRegions.empty())
-        return true;
-
-      for (auto *region : assignedRegions)
-        if (region == previewRegion)
-          return true;
-
-      return false;
-    }();
-
     if (!previewRegion || !previewRegionIsAssigned) {
       buffer.clear();
       lastPreviewStartTime = -1.0;
@@ -2183,6 +2229,9 @@ void PitchNetDocumentController::startPreviewRange(
     }
   }
 
+  ARA_DIAG("previewRange start=" + juce::String(previewStartInModificationSeconds) +
+           " end=" + juce::String(previewEndInModificationSeconds) +
+           " region=" + ARA_DIAG_PTR(previewRegion));
   if (!previewRegion)
     return;
 
@@ -2196,6 +2245,39 @@ void PitchNetDocumentController::startPreviewRange(
                                        previewEndInModificationSeconds);
   if (endInMod <= startInMod)
     return;
+
+  // Which editor renderer plays this region? Hosts assign editor renderers
+  // either playback regions or region sequences (tracks). With several
+  // instances (a lead track and its duplicated harmony track) only the one
+  // whose assignment covers the region may play the preview; otherwise the
+  // audition comes out of another track and can be inaudible.
+  PitchNetEditorRenderer *owner = nullptr;
+  juce::String rendererReport;
+  {
+    auto *sequence = previewRegion->getRegionSequence();
+    int index = 0;
+    for (auto *renderer :
+         getDocumentController()->getEditorRenderers<PitchNetEditorRenderer>()) {
+      if (renderer == nullptr)
+        continue;
+      const auto &regions = renderer->getPlaybackRegions<juce::ARAPlaybackRegion>();
+      const auto &sequences = renderer->getRegionSequences<juce::ARARegionSequence>();
+      const bool hasRegion =
+          std::find(regions.begin(), regions.end(), previewRegion) != regions.end();
+      const bool hasSequence =
+          sequence != nullptr &&
+          std::find(sequences.begin(), sequences.end(), sequence) != sequences.end();
+      if ((hasRegion || hasSequence) && owner == nullptr)
+        owner = renderer;
+      rendererReport << " r" << index++ << "=" << ARA_DIAG_PTR(renderer)
+                     << "(regions=" << static_cast<int>(regions.size())
+                     << " sequences=" << static_cast<int>(sequences.size())
+                     << (hasRegion ? " ownsRegion" : "")
+                     << (hasSequence ? " ownsSequence" : "") << ")";
+    }
+  }
+  previewState.previewOwnerRenderer.store(owner);
+  ARA_DIAG("previewOwner owner=" + ARA_DIAG_PTR(owner) + rendererReport);
 
   const double modificationToPlayback =
       previewRegion->getStartInPlaybackTime() - regionStartInMod;
@@ -2216,7 +2298,8 @@ void PitchNetDocumentController::startPreviewRange(
 }
 
 void PitchNetDocumentController::startPreviewAudio(
-    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+    const juce::AudioBuffer<float> &buffer, double sampleRate, bool wholeSegment) {
+  previewState.auditionSeamless.store(!wholeSegment);
   if (buffer.getNumSamples() <= 0)
     return;
   const double sourceRate = sampleRate > 0.0 ? sampleRate : 44100.0;
@@ -2237,6 +2320,20 @@ void PitchNetDocumentController::startPreviewAudio(
 }
 
 void PitchNetDocumentController::stopPreview() {
+  if (previewState.auditionActive.load())
+    ARA_DIAG("auditionStop blocksWritten=" +
+             juce::String(previewState.auditionBlocksWritten.load()) +
+             " skippedNotOwner=" +
+             juce::String(previewState.auditionBlocksSkippedNotOwner.load()) +
+             " region=" + ARA_DIAG_PTR(previewState.previewedRegion.load()) +
+             " owner=" + ARA_DIAG_PTR(previewState.previewOwnerRenderer.load()) +
+             " claimed=" + ARA_DIAG_PTR(previewState.previewClaimedRenderer.load()) +
+             " editorRenderers=" +
+             juce::String((int)getDocumentController()
+                              ->getEditorRenderers<PitchNetEditorRenderer>()
+                              .size()));
+  previewState.auditionBlocksWritten.store(0);
+  previewState.auditionBlocksSkippedNotOwner.store(0);
   previewState.auditionActive.store(false);
   std::atomic_store(&previewState.auditionBuffer,
                     std::shared_ptr<juce::AudioBuffer<float>>{});
@@ -2244,6 +2341,7 @@ void PitchNetDocumentController::stopPreview() {
   previewState.previewEndTime.store(0.0);
   previewState.previewedRegion.store(nullptr);
   previewState.previewClaimedRenderer.store(nullptr);
+  previewState.previewOwnerRenderer.store(nullptr);
 }
 
 juce::ARAPlaybackRenderer *

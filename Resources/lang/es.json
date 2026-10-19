@@ -7,8 +7,8 @@
   "canvas.timing": "Tiempo",
   "category.edit_mode": "Modo de edición",
   "category.transport": "Transporte",
-  "command.about": "Acerca de PitchNet",
-  "command.about.desp": "Acerca de PitchNet y avisos de terceros",
+  "command.about": "Acerca de Kinu Tune",
+  "command.about.desp": "Acerca de Kinu Tune y avisos de terceros",
   "command.pitch_drawing_tool": "Herramienta de dibujo de tono",
   "command.pitch_drawing_tool.desp": "Activar la herramienta de dibujo de tono",
   "command.export_audio": "Exportar audio...",
@@ -258,7 +258,6 @@
   "tooltip.engine_vocoder": "Vocoder neuronal (PC-NSF-HiFiGAN)\nReconstruye la voz a partir de su espectro. Es lo mejor para cambios de tono grandes y remodela el timbre en toda la región editada.",
   "tooltip.engine_vocoder_unavailable": "Solo disponible en Mac y en Windows con DirectML",
   "tooltip.live_audition": "Audición en vivo activada/desactivada",
-  "tooltip.quantize_macro": "Macro de corrección de tono",
   "tooltip.restore_original": "Restaurar el original",
   "tooltip.select_tool": "Herramienta principal (atajo: 1)",
   "tooltip.split_tool": "Herramienta de separación de notas (atajo: 2)",
@@ -269,7 +268,7 @@
   "tooltip.region_view_track": "Modo pista: se muestran todos los clips de la pista. Haz clic para ver solo la fuente del clip seleccionado.",
   "update.ask_later": "Preguntar más tarde",
   "update.download_now": "Descargar ahora",
-  "update.message": "Hay una nueva versión de PitchNet. ¿Quieres descargarla?",
+  "update.message": "Hay una nueva versión de Kinu Tune. ¿Quieres descargarla?",
   "update.skip_version": "Omitir esta versión",
   "update.title": "Actualización disponible"
 }

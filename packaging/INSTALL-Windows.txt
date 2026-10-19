@@ -1,0 +1,24 @@
+Kinu Tune - Windows (x64) インストール / Install
+
+このビルドは GitHub Actions で自動ビルドしたもので、Windows 上での動作はまだ確認していません。
+This build is made automatically on GitHub Actions and has not been tested on Windows yet.
+
+1. "Kinu Tune.vst3" フォルダーを次の場所にコピーします。
+   Copy the "Kinu Tune.vst3" folder to:
+     C:\Program Files\Common Files\VST3\
+
+2. "models" フォルダーを次の場所にコピーします(フォルダーが無ければ作ります)。
+   Copy the "models" folder into (create the folders if needed):
+     %APPDATA%\Keinoaza\Kinu Tune\
+   結果として %APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx などがある状態にします。
+   so that %APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx exists.
+
+3. DAW を起動し直し、プラグインを再スキャンします。
+   Restart your DAW and rescan plugins.
+
+ダウンロードした zip の中身がブロックされて読み込めない場合は、zip のプロパティで「許可する(ブロック解除)」にしてから展開してください。
+If Windows blocks the downloaded files, open the zip's Properties, tick "Unblock", then extract again.
+
+ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses\
+The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
+Source code: https://github.com/keinoaza666-stack/kinu-tune

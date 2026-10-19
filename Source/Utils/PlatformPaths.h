@@ -6,14 +6,15 @@
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: /Library/Application Support/<company>/<app>/models/
- *   - Logs: ~/Library/Logs/PitchNet/
- *   - Config: ~/Library/Application Support/PitchNet/
+ *   - Models: ~/Library/Application Support/Keinoaza/Kinu Tune/models/, then
+ *             /Library/Application Support/Keinoaza/Kinu Tune/models/
+ *   - Logs: ~/Library/Logs/Kinu Tune/
+ *   - Config: ~/Library/Kinu Tune/
  *
  * Windows:
  *   - Models: %PROGRAMDATA%/<company>/<app>/models/
- *   - Logs: %APPDATA%/PitchNet/Logs/
- *   - Config: %APPDATA%/PitchNet/
+ *   - Logs: %APPDATA%/Kinu Tune/Logs/
+ *   - Config: %APPDATA%/Kinu Tune/
  *
  * Linux:
  *   - Models: <exe_dir>/models/
@@ -22,6 +23,9 @@
  */
 namespace PlatformPaths
 {
+    inline constexpr const char *kVendorFolderName = "Keinoaza";
+    inline constexpr const char *kProductFolderName = "Kinu Tune";
+
     inline juce::File getProjectResourcesDirectory()
     {
 #if JUCE_DEBUG
@@ -46,12 +50,22 @@ namespace PlatformPaths
 
         return {};
 #else
-        return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+        // Kinu Tune keeps its resources apart from PitchNet's. The per-user
+        // folder comes first so a local install needs no administrator rights.
+        auto resourcesUnder = [](juce::File::SpecialLocationType location)
+        {
+            return juce::File::getSpecialLocation(location)
 #if JUCE_MAC
-            .getChildFile("Application Support")
+                .getChildFile("Application Support")
 #endif
-            .getChildFile("Session Loops")
-            .getChildFile("PitchNet");
+                .getChildFile(kVendorFolderName)
+                .getChildFile(kProductFolderName);
+        };
+
+        auto userResources = resourcesUnder(juce::File::userApplicationDataDirectory);
+        if (userResources.getChildFile("models").isDirectory())
+            return userResources;
+        return resourcesUnder(juce::File::commonApplicationDataDirectory);
 #endif
     }
 
@@ -213,17 +227,20 @@ namespace PlatformPaths
     inline juce::File getLogsDirectory()
     {
 #if JUCE_MAC
-        // macOS: ~/Library/Logs/PitchNet/
+        // macOS: ~/Library/Logs/Kinu Tune/
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-            .getChildFile("Library/Logs/PitchNet");
+            .getChildFile("Library/Logs")
+            .getChildFile(kProductFolderName);
 #elif JUCE_WINDOWS
-        // Windows: %APPDATA%/PitchNet/Logs/
+        // Windows: %APPDATA%/Kinu Tune/Logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("PitchNet/Logs");
+            .getChildFile(kProductFolderName)
+            .getChildFile("Logs");
 #else
-        // Linux: ~/.config/PitchNet/logs/
+        // Linux: ~/.config/Kinu Tune/logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("PitchNet/logs");
+            .getChildFile(kProductFolderName)
+            .getChildFile("logs");
 #endif
     }
 
@@ -231,7 +248,7 @@ namespace PlatformPaths
     {
         // All platforms use userApplicationDataDirectory
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("PitchNet");
+            .getChildFile(kProductFolderName);
     }
 
     inline juce::File getLogFile(const juce::String &name)

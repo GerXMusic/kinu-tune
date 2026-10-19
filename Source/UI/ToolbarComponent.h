@@ -5,7 +5,7 @@
 #include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
-#include "ScaleSelectionControl.h"
+#include "../Models/Project.h"
 #include <optional>
 
 // Forward declaration - EditMode is defined in PianoRollComponent.h
@@ -92,7 +92,6 @@ public:
     // Left-panel group is ARA only; hidden (and takes no space) otherwise.
     void setLeftPanelAvailable(bool available);
     void setUndoRedoEnabled(bool undoEnabled, bool redoEnabled);
-    void setProject(Project* project);
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
@@ -118,11 +117,6 @@ public:
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
     std::function<void(bool)> onToggleAudition;
-    std::function<void()> onCorrectPitchCenter;
-    std::function<void(int)> onScaleRootChanged;
-    std::function<void(ScaleMode)> onScaleModeChanged;
-    std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
-    std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     std::function<void(bool)> onToggleLeftPanel;  // Called with new left-panel visibility
@@ -153,8 +147,6 @@ private:
     ToggleButton pitchDrawingModeButton;
     ToggleButton timingModeButton;
     ToggleButton followButton;
-    ScaleSelectionControl scaleSelectionButton;
-    Button quantizeButton;
     ToggleButton auditionButton;
     Button undoButton;
     Button redoButton;

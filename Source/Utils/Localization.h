@@ -139,9 +139,7 @@ public:
     }
 
     auto settingsFile =
-        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("PitchNet")
-            .getChildFile("settings.xml");
+        PlatformPaths::getConfigDirectory().getChildFile("settings.xml");
 
     if (settingsFile.existsAsFile()) {
       auto xml = juce::XmlDocument::parse(settingsFile);

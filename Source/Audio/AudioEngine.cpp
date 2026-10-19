@@ -126,10 +126,11 @@ void AudioEngine::getNextAudioBlock(
     auto *outputBuffer = bufferToFill.buffer;
     const int numOutputSamples = bufferToFill.numSamples;
     const int startSample = bufferToFill.startSample;
-    auto renderLoopSample = [this](const juce::AudioBuffer<float> &waveform,
-                                   int sampleRate, double &position) {
+    const bool seamless = auditionSeamless.load();
+    auto renderLoopSample = [this, seamless](const juce::AudioBuffer<float> &waveform,
+                                             int sampleRate, double &position) {
       const int sampleCount = waveform.getNumSamples();
-      const int overlap = std::min(8192, std::max(1, sampleCount / 2));
+      const int overlap = seamless ? std::min(8192, std::max(1, sampleCount / 2)) : 0;
       const double overlapStart = static_cast<double>(sampleCount - overlap);
       const double sampleRatio = currentSampleRate > 0.0
                                      ? static_cast<double>(sampleRate) / currentSampleRate
@@ -146,7 +147,7 @@ void AudioEngine::getNextAudioBlock(
       };
 
       float value = sampleAt(position);
-      if (position >= overlapStart) {
+      if (overlap > 0 && position >= overlapStart) {
         const float t = static_cast<float>((position - overlapStart) / overlap);
         value = value * std::cos(t * juce::MathConstants<float>::halfPi) +
                 sampleAt(position - overlapStart) *
@@ -513,7 +514,7 @@ void AudioEngine::clearLoopRange() {
 }
 
 void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
-                                    int sampleRate) {
+                                    int sampleRate, bool seamless) {
   if (buffer.getNumSamples() <= 0)
     return;
 
@@ -530,10 +531,19 @@ void AudioEngine::beginAuditionLoop(const juce::AudioBuffer<float> &buffer,
     auditionTransitionSamplesTotal.store(0);
     auditionTransitionSamplesRemaining.store(0);
   }
+  // Drag feedback keeps its place in the segment across a pitch change.
+  const bool keepPlace = !seamless && auditionActive.load() &&
+                         auditionWaveform.getNumSamples() > 0;
+  const double relative =
+      keepPlace ? auditionReadPosition.load() / auditionWaveform.getNumSamples() : 0.0;
   auditionWaveform.makeCopyOf(buffer);
   auditionSampleRate = sampleRate > 0 ? sampleRate : waveformSampleRate;
+  auditionSeamless.store(seamless);
   auditionPosition.store(0);
-  auditionReadPosition.store(0.0);
+  auditionReadPosition.store(
+      keepPlace ? juce::jlimit(0.0, static_cast<double>(buffer.getNumSamples() - 1),
+                               relative * buffer.getNumSamples())
+                : 0.0);
   auditionActive.store(true);
   interpolator.reset();
   playing.store(true);

@@ -43,8 +43,16 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   if (!project)
     return false;
 
-  // Pitch tool controller interaction
-  if (owner_.pitchToolController && owner_.pitchToolHandles)
+  mouseDownWorldY = worldY;
+  dragThresholdPassed = false;
+
+  // Glue smart controls act on click (splitting is Alt-click only).
+  if (owner_.handleSmartControlClick(worldX, worldY, e.mods))
+    return true;
+
+  // Pitch tool controller interaction (Cmd/Ctrl clicks are selection edits)
+  const bool selectionModifier = e.mods.isCommandDown() || e.mods.isCtrlDown();
+  if (!selectionModifier && owner_.pitchToolController && owner_.pitchToolHandles)
   {
     juce::MouseEvent adjustedEvent =
         e.withNewPosition(juce::Point<float>(worldX, worldY));
@@ -63,6 +71,37 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
+  if (note && e.mods.isAltDown() && !e.mods.isCommandDown())
+  {
+    // VariAudio: Alt-click on a segment splits it at the pointer.
+    owner_.noteSplitter->splitNoteAtX(note, worldX);
+    owner_.setHoveredNote(nullptr);
+    owner_.repaint();
+    return true;
+  }
+
+  if (note && (e.mods.isCommandDown() || e.mods.isCtrlDown()))
+  {
+    // Cmd-click toggles the segment in the selection without dragging.
+    note->setSelected(!note->isSelected());
+    owner_.updatePitchToolHandlesFromSelection();
+    if (owner_.onNoteSelected)
+      owner_.onNoteSelected(note);
+    owner_.repaint();
+    return true;
+  }
+
+  if (note && !note->isSelected())
+  {
+    // VariAudio: clicking a segment selects it (and only it); Shift-click adds
+    // it to the selection and drags the whole selection.
+    if (!e.mods.isShiftDown())
+      project->deselectAllNotes();
+    note->setSelected(true);
+    if (owner_.onNoteSelected)
+      owner_.onNoteSelected(note);
+  }
+
   if (note)
   {
     // Check if clicking on an already selected note (for multi-note drag)
@@ -73,9 +112,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     if (clickedOnSelected)
     {
       // Start multi-note drag
+      // Feedback starts when the drag does (VariAudio: a click is silent).
       owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY, note);
-      if (owner_.onNoteDragAudition)
-        owner_.onNoteDragAudition(*note);
     }
     else
     {
@@ -121,8 +159,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
         originalF0Values.push_back(audioData.f0[i]);
 
       prepareDragBasePreview();
-      if (owner_.onNoteDragAudition)
-        owner_.onNoteDragAudition(*draggedNote);
+      // Feedback starts when the drag does (VariAudio: a click is silent).
     }
 
     owner_.repaint();
@@ -312,11 +349,22 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
     return true;
   }
 
+  // A click with a few pixels of jitter (the first click of a double-click)
+  // must not become a pitch edit.
+  constexpr float kDragThreshold = 3.0f;
+  if ((owner_.pitchEditor->isDraggingMultiNotes() || (isDragging && draggedNote)) &&
+      !dragThresholdPassed)
+  {
+    if (std::abs(worldY - mouseDownWorldY) < kDragThreshold)
+      return true;
+    dragThresholdPassed = true;
+  }
+
   // Multi-note drag
   if (owner_.pitchEditor->isDraggingMultiNotes())
   {
-    owner_.pitchEditor->updateMultiNoteDrag(worldX, worldY,
-                                            e.mods.isAltDown());
+    owner_.pitchEditor->updateMultiNoteDrag(
+        worldX, worldY, owner_.resolveDragSnapKind(e.mods));
     if (owner_.onNoteDragAudition)
     {
       if (auto *note = owner_.pitchEditor->getHoveredMultiDragNote())
@@ -338,9 +386,15 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   {
     float deltaY = dragStartY - worldY;
     float deltaSemitones = deltaY / owner_.pixelsPerSemitone;
-    if (owner_.snapToSemitoneDrag != e.mods.isAltDown())
-      deltaSemitones = owner_.pitchEditor->getSnappedDragOffset(
-          deltaSemitones, originalMidiNote);
+    const auto snapKind = owner_.resolveDragSnapKind(e.mods);
+    // Absolute lands the pitch shown on screen (midi + offset at drag start)
+    // on a semitone, so include the starting offset in the anchor.
+    deltaSemitones =
+        snapKind == PitchEditor::DragSnapKind::Absolute
+            ? owner_.pitchEditor->resolveDragOffset(
+                  deltaSemitones + originalPitchOffset, originalMidiNote, snapKind)
+            : owner_.pitchEditor->resolveDragOffset(deltaSemitones,
+                                                    originalMidiNote, snapKind);
 
     draggedNote->setPitchOffset(deltaSemitones);
     draggedNote->markDirty();
@@ -605,9 +659,16 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       auto &audioData = project->getAudioData();
       int f0Size = static_cast<int>(audioData.f0.size());
 
-      // Update note's midiNote with final offset
+      // Update note's midiNote with final offset, keeping the Correct Pitch
+      // reference (see ScaleUtils::carriedCorrectionSource).
+      const float oldSource = draggedNote->getLastNonMacroMidiNote();
       const float finalMidiNote = originalMidiNote + newOffset;
       draggedNote->setMidiNote(finalMidiNote);
+      draggedNote->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+          *project, oldSource, draggedNote->getOriginalMidiNote(), originalMidiNote,
+          finalMidiNote,
+          project->getPitchReferenceHz()));
+      const float newSource = draggedNote->getLastNonMacroMidiNote();
       draggedNote->setPitchOffset(0.0f);
       draggedNote->markSynthDirty();
 
@@ -621,6 +682,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Create undo action
       if (owner_.undoManager)
       {
+        // The rebuild above may have resized f0; read its size now.
+        f0Size = static_cast<int>(audioData.f0.size());
         std::vector<F0FrameEdit> f0Edits;
         for (int i = startFrame; i < endFrame && i < f0Size; ++i)
         {
@@ -654,7 +717,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
                   n->markSynthDirty();
                 }
               }
-            });
+            },
+            oldSource, newSource);
         owner_.undoManager->addAction(std::move(action));
       }
 
@@ -876,35 +940,18 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           PitchToolHandles::HandleType::TiltLeft)
       {
         auto selectedNotes = project->getSelectedNotes();
-
-        if (owner_.undoManager)
-        {
-          std::vector<float> oldTilts;
-          std::vector<float> oldMidiNotes;
-          oldTilts.reserve(selectedNotes.size());
-          oldMidiNotes.reserve(selectedNotes.size());
-
-          for (auto *note : selectedNotes)
-          {
-            if (note)
-            {
-              oldTilts.push_back(note->getTiltLeft());
-              oldMidiNotes.push_back(note->getMidiNote());
-            }
-          }
-
-          auto action = std::make_unique<TiltResetAction>(
-              selectedNotes, TiltResetAction::TiltSide::Left,
-              oldTilts, oldMidiNotes,
-              [project, selectedNotes]()
-              { rebuildProjectForNotes(project, selectedNotes); });
-          owner_.undoManager->addAction(std::move(action));
-        }
+        std::vector<float> oldTilts;
+        std::vector<float> oldMidiNotes;
+        std::vector<float> oldSources;
+        std::vector<float> newSources;
 
         for (auto *note : selectedNotes)
         {
           if (note)
           {
+            oldTilts.push_back(note->getTiltLeft());
+            oldMidiNotes.push_back(note->getMidiNote());
+            oldSources.push_back(note->getLastNonMacroMidiNote());
             const float oldTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
@@ -915,9 +962,22 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
             note->setMidiNote(baseline + newTiltMean);
+            // Keep the Correct Pitch reference (ScaleUtils::carriedCorrectionSource).
+            note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+                *project, oldSources.back(), note->getOriginalMidiNote(),
+                oldMidiNotes.back(), note->getMidiNote(), project->getPitchReferenceHz()));
+            newSources.push_back(note->getLastNonMacroMidiNote());
             note->markDirty();
           }
         }
+
+        if (owner_.undoManager)
+          owner_.undoManager->addAction(std::make_unique<TiltResetAction>(
+              selectedNotes, TiltResetAction::TiltSide::Left,
+              oldTilts, oldMidiNotes,
+              [project, selectedNotes]()
+              { rebuildProjectForNotes(project, selectedNotes); },
+              oldSources, newSources));
 
         rebuildAndNotify();
         return;
@@ -928,35 +988,18 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           PitchToolHandles::HandleType::TiltRight)
       {
         auto selectedNotes = project->getSelectedNotes();
-
-        if (owner_.undoManager)
-        {
-          std::vector<float> oldTilts;
-          std::vector<float> oldMidiNotes;
-          oldTilts.reserve(selectedNotes.size());
-          oldMidiNotes.reserve(selectedNotes.size());
-
-          for (auto *note : selectedNotes)
-          {
-            if (note)
-            {
-              oldTilts.push_back(note->getTiltRight());
-              oldMidiNotes.push_back(note->getMidiNote());
-            }
-          }
-
-          auto action = std::make_unique<TiltResetAction>(
-              selectedNotes, TiltResetAction::TiltSide::Right,
-              oldTilts, oldMidiNotes,
-              [project, selectedNotes]()
-              { rebuildProjectForNotes(project, selectedNotes); });
-          owner_.undoManager->addAction(std::move(action));
-        }
+        std::vector<float> oldTilts;
+        std::vector<float> oldMidiNotes;
+        std::vector<float> oldSources;
+        std::vector<float> newSources;
 
         for (auto *note : selectedNotes)
         {
           if (note)
           {
+            oldTilts.push_back(note->getTiltRight());
+            oldMidiNotes.push_back(note->getMidiNote());
+            oldSources.push_back(note->getLastNonMacroMidiNote());
             const float oldTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
@@ -967,9 +1010,22 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
             note->setMidiNote(baseline + newTiltMean);
+            // Keep the Correct Pitch reference (ScaleUtils::carriedCorrectionSource).
+            note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
+                *project, oldSources.back(), note->getOriginalMidiNote(),
+                oldMidiNotes.back(), note->getMidiNote(), project->getPitchReferenceHz()));
+            newSources.push_back(note->getLastNonMacroMidiNote());
             note->markDirty();
           }
         }
+
+        if (owner_.undoManager)
+          owner_.undoManager->addAction(std::make_unique<TiltResetAction>(
+              selectedNotes, TiltResetAction::TiltSide::Right,
+              oldTilts, oldMidiNotes,
+              [project, selectedNotes]()
+              { rebuildProjectForNotes(project, selectedNotes); },
+              oldSources, newSources));
 
         rebuildAndNotify();
         return;
@@ -997,6 +1053,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         std::vector<float> oldMidis;
         std::vector<float> oldOffsets;
         std::vector<float> newMidis;
+        std::vector<float> oldSources;
+        std::vector<float> newSources;
 
         notesToSnap.reserve(selectedNotes.size());
         oldMidis.reserve(selectedNotes.size());
@@ -1020,6 +1078,11 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           oldMidis.push_back(oldMidi);
           oldOffsets.push_back(oldOffset);
           newMidis.push_back(snappedMidi);
+          oldSources.push_back(selected->getLastNonMacroMidiNote());
+          newSources.push_back(ScaleUtils::carriedCorrectionSource(
+              *project, selected->getLastNonMacroMidiNote(),
+              selected->getOriginalMidiNote(), oldMidi, snappedMidi,
+              project->getPitchReferenceHz()));
         }
 
         if (!notesToSnap.empty())
@@ -1032,13 +1095,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                     [project](const std::vector<Note *> &notes)
                     {
                       rebuildProjectForNotes(project, notes);
-                    });
+                    },
+                    oldSources, newSources);
             owner_.undoManager->addAction(std::move(action));
           }
 
           for (size_t i = 0; i < notesToSnap.size(); ++i)
           {
             notesToSnap[i]->setMidiNote(newMidis[i]);
+            notesToSnap[i]->setLastNonMacroMidiNote(newSources[i]);
             notesToSnap[i]->setPitchOffset(0.0f);
             notesToSnap[i]->markDirty();
           }
@@ -1057,17 +1122,23 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
     if (std::abs(snappedMidi - adjustedMidi) > 0.001f)
     {
+      const float oldSource = note->getLastNonMacroMidiNote();
+      const float newSource = ScaleUtils::carriedCorrectionSource(
+          *project, oldSource, note->getOriginalMidiNote(), oldMidi, snappedMidi,
+          project->getPitchReferenceHz());
       if (owner_.undoManager)
       {
         auto action =
             std::make_unique<NoteSnapToSemitoneAction>(
                 note, oldMidi, oldOffset, snappedMidi,
                 [project](Note *changedNote)
-                { rebuildProjectForNotes(project, {changedNote}); });
+                { rebuildProjectForNotes(project, {changedNote}); },
+                oldSource, newSource);
         owner_.undoManager->addAction(std::move(action));
       }
 
       note->setMidiNote(snappedMidi);
+      note->setLastNonMacroMidiNote(newSource);
       note->setPitchOffset(0.0f);
       note->markDirty();
       rebuildAndNotify();

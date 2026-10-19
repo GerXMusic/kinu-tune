@@ -9,7 +9,7 @@
 
 /**
  * Simple file logger for debugging.
- * Logs to %APPDATA%/PitchNet/debug.log
+ * Logs to the Kinu Tune logs folder (see PlatformPaths::getLogsDirectory)
  */
 class AppLogger {
 public:

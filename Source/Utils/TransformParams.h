@@ -19,6 +19,8 @@ struct TransformParams
     float midiNote = 0.0f;
     float deltaScale = 1.0f;
     float deltaOffset = 0.0f;
+    // Correct Pitch reference (the sung pitch); restored with midiNote.
+    float correctionSource = 0.0f;
 
     TransformParams() = default;
 
@@ -37,6 +39,7 @@ struct TransformParams
         p.midiNote = note.getMidiNote();
         p.deltaScale = note.getDeltaScale();
         p.deltaOffset = note.getDeltaOffset();
+        p.correctionSource = note.getLastNonMacroMidiNote();
         return p;
     }
 
@@ -44,6 +47,7 @@ struct TransformParams
     void applyToNote(Note& note) const
     {
         note.setMidiNote(midiNote);
+        note.setLastNonMacroMidiNote(correctionSource);
         note.setTiltLeft(tiltLeft);
         note.setTiltRight(tiltRight);
         note.setVibrato(vibrato);
@@ -68,7 +72,8 @@ struct TransformParams
                smoothRightFrames == other.smoothRightFrames &&
                midiNote == other.midiNote &&
                deltaScale == other.deltaScale &&
-               deltaOffset == other.deltaOffset;
+               deltaOffset == other.deltaOffset &&
+               correctionSource == other.correctionSource;
     }
 
     bool operator!=(const TransformParams& other) const

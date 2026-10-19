@@ -13,14 +13,34 @@ public:
   enum class HandleType {
     TiltLeft,
     TiltRight,
-    Vibrato,
+    Vibrato,      // VariAudio "Straighten Pitch Curve"
     PitchDrift,
     Formant,
-    Amplitude,
+    Amplitude,    // VariAudio "Volume"
     SmoothLeft,
     SmoothRight,
+    CorrectPitch, // VariAudio "Correct Pitch": drag toward the nearest semitone
+    GlueLeft,     // click: glue with the previous segment
+    GlueRight,    // click: glue with the next segment
     None
   };
+
+  // Smart-control layout options, set by the piano roll before each update.
+  struct Options {
+    bool showAll = false;     // VariAudio "Show All Smart Controls"
+    bool canGlueLeft = false; // a contiguous previous segment exists
+    bool canGlueRight = false;
+  };
+  void setOptions(Options newOptions) { options = newOptions; }
+  const Options& getOptions() const { return options; }
+
+  // Side of the small square smart controls, in pixels.
+  static constexpr float controlSize = 9.0f;
+  // VariAudio shows smart controls only once you zoom in on a segment. Below
+  // these sizes the controls would cover the segment body.
+  static constexpr float minSemitoneHeight = 16.0f;
+  static constexpr float minSegmentWidth = 24.0f;
+  static constexpr float minSegmentWidthForCorners = 5.0f * controlSize;
 
   static constexpr float buttonWidth = 30.0f;
   static constexpr float buttonHeight = 12.0f;
@@ -93,6 +113,7 @@ public:
 
 private:
   std::vector<Handle> handles;
+  Options options;
   int hoveredHandleIndex = -1;
   // Keep decoded icon data scoped to the component instead of function-local
   // statics, which can outlive the plug-in editor in Windows hosts.

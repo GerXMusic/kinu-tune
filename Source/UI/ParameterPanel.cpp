@@ -982,8 +982,8 @@ void ParameterPanel::updateGlobalSliders()
     else
     {
         selectedScaleRootNote = 0;
-        selectedScaleMode = ScaleMode::Chromatic;
-        snapToSemitones = false;
+        selectedScaleMode = ScaleMode::Major;
+        snapToSemitones = true;
         dragSnapMode = DragSnapMode::Chromatic;
         pitchReferenceHz = 440;
         timelineDisplayMode = TimelineDisplayMode::Beats;

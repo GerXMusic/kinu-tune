@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.7.2)
+project(PitchNet VERSION 0.1.0) # Kinu Tune version (based on PitchNet 0.7.2)
 
 # Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
 # x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
@@ -224,23 +224,30 @@ endif()
 option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OFF)
 
 # Diagnostic logging for the ARA model graph and render path. Writes through the
-# existing AppLogger to %APPDATA%/PitchNet/Logs/debug_<session>.log. Model-graph
+# existing AppLogger to %APPDATA%/Kinu Tune/Logs/debug_<session>.log. Model-graph
 # events are low frequency; the render report is one line per region, once. Off
 # by default - release builds contain none of it.
 option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF)
 
+# Kinu Tune is a modified version of PitchNet (Session Loops), itself derived
+# from HachiTune. It ships under its own vendor identity so it installs next to
+# PitchNet instead of replacing it.
+set(PITCHNET_COMPANY_NAME "Keinoaza")
+set(PITCHNET_MANUFACTURER_CODE Kein)
+set(PITCHNET_COPYRIGHT
+    "Copyright 2026 Session Loops, HachiTune contributors and Keinoaza")
 if(PITCHNET_DEV_BUILD)
-    set(PITCHNET_PRODUCT_NAME "PitchNet Dev")
-    set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet.dev")
-    set(PITCHNET_PLUGIN_CODE PTD1)
+    set(PITCHNET_PRODUCT_NAME "Kinu Tune Dev")
+    set(PITCHNET_BUNDLE_ID "com.keinoaza.kinutune.dev")
+    set(PITCHNET_PLUGIN_CODE Kntd)
     message(STATUS
-        "PitchNet: side-by-side DEV build "
+        "Kinu Tune: side-by-side DEV build "
         "(product '${PITCHNET_PRODUCT_NAME}', plugin code ${PITCHNET_PLUGIN_CODE}, "
         "bundle id ${PITCHNET_BUNDLE_ID})")
 else()
-    set(PITCHNET_PRODUCT_NAME "PitchNet")
-    set(PITCHNET_BUNDLE_ID "com.sessionloops.pitchnet")
-    set(PITCHNET_PLUGIN_CODE PTE1)
+    set(PITCHNET_PRODUCT_NAME "Kinu Tune")
+    set(PITCHNET_BUNDLE_ID "com.keinoaza.kinutune")
+    set(PITCHNET_PLUGIN_CODE Kntu)
 endif()
 
 # Per-dirty-note synthesis diagnostics. synthesizeRegion() always logs a few
@@ -255,10 +262,9 @@ option(PITCHNET_SYNTH_NOTE_DIAGNOSTICS "Log one line per dirty note on every syn
 # Create GUI application
 juce_add_gui_app(PitchNet
     PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
-    COMPANY_NAME "Session Loops"
-    COMPANY_WEBSITE "https://sessionloops.com"
+    COMPANY_NAME "${PITCHNET_COMPANY_NAME}"
     BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
-    COMPANY_COPYRIGHT "Copyright 2026"
+    COMPANY_COPYRIGHT "${PITCHNET_COPYRIGHT}"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/images/icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
@@ -307,12 +313,13 @@ endif()
 # Create VST3 plugin
 juce_add_plugin(PitchNetPlugin
     PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
-    COMPANY_NAME "Session Loops"
-    COMPANY_WEBSITE "https://sessionloops.com"
+    COMPANY_NAME "${PITCHNET_COMPANY_NAME}"
+    COMPANY_COPYRIGHT "${PITCHNET_COPYRIGHT}"
     BUNDLE_ID "${PITCHNET_BUNDLE_ID}"
-    PLUGIN_MANUFACTURER_CODE SLPS
+    PLUGIN_MANUFACTURER_CODE ${PITCHNET_MANUFACTURER_CODE}
     PLUGIN_CODE ${PITCHNET_PLUGIN_CODE}
     FORMATS ${PITCHNET_PLUGIN_FORMATS}
+    VST3_CATEGORIES Fx "Pitch Shift"
     AAX_CATEGORY AAX_ePlugInCategory_PitchShift
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -354,8 +361,8 @@ if(ARA_AVAILABLE)
     if(PITCHNET_ARA_DIAGNOSTICS)
         target_compile_definitions(PitchNetPlugin PRIVATE
             PITCHNET_ARA_DIAGNOSTICS=1)
-        message(STATUS "PitchNet: ARA diagnostics ENABLED "
-                       "(logs to %APPDATA%/PitchNet/Logs/debug_<session>.log)")
+        message(STATUS "Kinu Tune: ARA diagnostics ENABLED "
+                       "(macOS logs to ~/Library/Logs/Kinu Tune/)")
     endif()
 endif()
 if(AAX_AVAILABLE)
@@ -876,7 +883,8 @@ endif()
 
 # Common definitions
 target_compile_definitions(pitchnet_core PUBLIC
-    PITCHNET_LOGGING_ENABLED=$<NOT:$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>>
+    # ARA diagnostics need the file logger, so they turn it on in any config.
+    PITCHNET_LOGGING_ENABLED=$<OR:$<BOOL:${PITCHNET_ARA_DIAGNOSTICS}>,$<NOT:$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>>>
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1

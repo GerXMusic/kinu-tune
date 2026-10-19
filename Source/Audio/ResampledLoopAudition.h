@@ -23,15 +23,21 @@ public:
   explicit ResampledLoopAudition(ReadyCallback onReady);
   ~ResampledLoopAudition();
 
+  // wholeSegment: return the whole segment with short fades and a silent
+  // gap, to be repeated from its start while the user drags, instead of a
+  // seamless sustain loop.
   void request(std::vector<float> source, float semitoneShift,
-               float targetMidiNote);
+               float targetMidiNote, bool wholeSegment = false);
+  // Pause between repetitions. 60 ms felt restless (user, 2026-10-19).
+  static constexpr double loopGapSeconds = 0.3;
   void cancel();
 
 private:
   void workerLoop();
   static juce::AudioBuffer<float> render(std::vector<float> source,
                                          float semitoneShift,
-                                         float targetMidiNote);
+                                         float targetMidiNote,
+                                         bool wholeSegment);
 
   ReadyCallback onReady;
   std::mutex mutex;
@@ -39,6 +45,7 @@ private:
   std::vector<float> pendingSource;
   float pendingSemitoneShift = 0.0f;
   float pendingTargetMidiNote = 60.0f;
+  bool pendingWholeSegment = false;
   std::uint64_t requestId = 0;
   bool hasPendingRequest = false;
   bool shuttingDown = false;

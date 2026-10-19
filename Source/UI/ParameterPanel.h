@@ -163,9 +163,9 @@ private:
     MacroSlider brightnessSlider;
 
     int selectedScaleRootNote = 0;
-    ScaleMode selectedScaleMode = ScaleMode::Chromatic;
+    ScaleMode selectedScaleMode = ScaleMode::Major;
     ScaleMode lastNonChromaticMode = ScaleMode::Major;
-    bool snapToSemitones = false;
+    bool snapToSemitones = true;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     int pitchReferenceHz = 440;
     TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;

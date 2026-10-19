@@ -1,11 +1,57 @@
+Kinu Tune 0.1.0
+Copyright (C) 2026 Keinoaza
+
+Kinu Tune is a modified version of PitchNet 0.7.2 (Copyright (c) 2026 Session
+Loops and contributors), which is itself a modified derivative of HachiTune by
+the HachiTune contributors. Modified by Keinoaza from 2026-10-19: Cubase
+VariAudio-style editing and inspector, one-click scale-degree harmony, and the
+related changes listed in MODIFICATIONS.md in the source repository.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3, as published by
+the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+The complete license text is in the LICENSE file.
+
+Corresponding source for Kinu Tune is available at:
+https://github.com/keinoaza666-stack/kinu-tune
+Each binary release names the git tag it was built from, and its release page
+also carries a source archive that includes the git submodules (JUCE, ARA SDK,
+r8brain-free-src).
+
+Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune
+contributors, OpenVPI, Steinberg or Celemony. Cubase and VariAudio are
+trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark
+of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of
+Celemony Software GmbH.
+
+Kinu Tune binary releases include the FCPE, GAME and PC-NSF-HiFiGAN model
+files described below. They do NOT include rmvpe.onnx (see "RMVPE model
+assets"). The GAME and PC-NSF-HiFiGAN model files are licensed under CC
+BY-NC-SA 4.0, whose NonCommercial term reads: "NonCommercial means not
+primarily intended for or directed towards commercial advantage or monetary
+compensation." Kinu Tune binary releases are distributed free of charge. Read
+the license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en)
+for what it allows.
+
+License texts referenced below are in the licenses/ folder of the source
+repository and of every binary release.
+
+========================================================================
+Notices carried over from PitchNet
+========================================================================
+
 PitchNet 0.7.2
 Copyright (c) 2026 Session Loops and contributors.
 
 PitchNet is a modified derivative of HachiTune by the HachiTune contributors.
 PitchNet is distributed under the GNU Affero General Public License, version 3.
-The complete AGPLv3 text is provided in the installer License page.
+The complete AGPLv3 text is provided in the LICENSE file.
 
-Corresponding source for this release is available at:
+Corresponding source for PitchNet is available at:
 https://github.com/SessionLoops/PitchNet
 
 Third-party components
@@ -13,8 +59,8 @@ Third-party components
 
 JUCE Framework
 Copyright (c) Raw Material Software Limited.
-PitchNet uses JUCE under the GNU Affero General Public License, version 3.
-The applicable AGPLv3 text is provided in the installer License page.
+PitchNet and Kinu Tune use JUCE under the GNU Affero General Public License,
+version 3. The applicable AGPLv3 text is provided in the LICENSE file.
 
 r8brain-free-src
 Source: https://github.com/avaneev/r8brain-free-src
@@ -42,6 +88,9 @@ SOFTWARE.
 
 ONNX Runtime 1.19.2
 Copyright (c) Microsoft Corporation
+The ONNX Runtime library bundled in the plugin (libonnxruntime.1.19.2.dylib)
+contains further third-party components (protobuf, abseil, re2, flatbuffers,
+Eigen, onnx and others). Their notices: licenses/onnxruntime-ThirdPartyNotices.txt
 
 MIT License
 
@@ -66,6 +115,16 @@ SOFTWARE.
 GAME model assets
 Source: https://github.com/openvpi/GAME
 Copyright (c) 2026 Team OpenVPI
+
+The GAME model files (the ONNX weights in models/GAME) are licensed under the
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+license (https://creativecommons.org/licenses/by-nc-sa/4.0/), as stated in
+the GAME v1.0.0 release notes:
+https://github.com/openvpi/GAME/releases/tag/v1.0.0
+Kinu Tune redistributes, unchanged, the "small" ONNX models attached to
+https://github.com/openvpi/GAME/releases/tag/v1.0.3 (GAME-1.0.3-small-onnx.zip).
+The GAME README also asks that nobody use it to generate someone's singing or
+speech without that person's consent.
 
 The GAME source repository is licensed under the MIT License:
 
@@ -92,12 +151,122 @@ Source: https://github.com/openvpi/vocoders
 
 The openvpi/vocoders source repository is licensed under the GNU Affero
 General Public License, version 3. The complete AGPLv3 text is provided in the
-installer License page. Corresponding source is available from the repository
-above.
+LICENSE file. Corresponding source is available from the repository above.
+
+The pretrained PC-NSF-HiFiGAN model weights are provided by the OpenVPI Team
+under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+International license (https://creativecommons.org/licenses/by-nc-sa/4.0/).
+Official release (other versions and future updates are available there):
+https://github.com/openvpi/vocoders/releases/tag/pc-nsf-hifigan-44.1k-hop512-128bin-2025.02
+Changes: the weights are not fine-tuned. They are redistributed in converted
+file formats: ONNX (pc_nsf_hifigan.onnx) and a compiled Core ML model for macOS
+(pc_nsf_hifigan.mlmodelc), both as included in the PitchNet 0.7.2
+distributions. The Core ML model stores the weights in 16-bit floating point
+(Float16), so its weight values are rounded from the original 32-bit values.
+
+The complete notice from the official release follows (also provided as
+licenses/PC-NSF-HiFiGAN-NOTICE.txt):
+
+--- DiffSinger Community Vocoder ---
+
+ARCHITECTURE: PC-NSF-HiFiGAN
+RELEASE DATE: 2025-02-27
+
+HYPER PARAMETERS:
+ - 44100 sample rate
+ - 128 mel bins
+ - 512 hop size
+ - 2048 window size
+ - fmin at 40Hz
+ - fmax at 16000Hz
+
+
+NOTICE:
+
+All model weights in the [DiffSinger Community Vocoder Project](https://openvpi.github.io/vocoders/), including
+model weights in this directory, are provided by the [OpenVPI Team](https://github.com/openvpi/), under the
+[Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/) license.
+
+
+ACKNOWLEDGEMENTS:
+
+Training data of this vocoder is provided and permitted by the following organizations, societies and individuals:
+
+孙飒              https://space.bilibili.com/12945221
+赤松_Akamatsu     https://www.zhibin.club
+乐威              https://www.zhibin.club
+伯添              https://space.bilibili.com/24087011
+雲宇光             https://space.bilibili.com/660675050
+橙子言             https://space.bilibili.com/318486464
+人衣大人           https://space.bilibili.com/2270344
+玖蝶              https://space.bilibili.com/676771003
+Yuuko
+白夜零BYL          https://space.bilibili.com/1605040503
+嗷天              https://space.bilibili.com/5675252
+洛泠羽            https://space.bilibili.com/347373318
+灰条纹的灰猫君      https://space.bilibili.com/2083633
+幽寂              https://space.bilibili.com/478860
+恶魔王女           https://space.bilibili.com/2475098
+AlexYHX 芮晴
+绮萱              https://y.qq.com/n/ryqq/singer/003HjD6H4aZn1K
+诗芸              https://y.qq.com/n/ryqq/singer/0005NInj142zm0
+汐蕾              https://y.qq.com/n/ryqq/singer/0023cWMH1Bq1PJ
+1262917464
+炜阳
+叶卡yolka
+幸の夏            https://space.bilibili.com/1017297686
+暮色未量           https://space.bilibili.com/272904686
+晓寞sama          https://space.bilibili.com/3463394
+没头绪的节操君
+串串BunC          https://space.bilibili.com/95817834
+落雨              https://space.bilibili.com/1292427
+长尾巴的翎艾        https://space.bilibili.com/1638666
+声闻计划           https://space.bilibili.com/392812269
+唐家大小姐         http://5sing.kugou.com/palmusic/default.html
+不伊子
+芸青岩            https://space.bilibili.com/35236775
+妖橙              https://space.bilibili.com/161975631
+双桨              https://space.bilibili.com/13245483
+灵滅              https://space.bilibili.com/276988145
+AlexYHX          https://space.bilibili.com/13303439
+祁唱              https://space.bilibili.com/11256670
+早稻叽            https://space.bilibili.com/1950658
+泽木团子           https://space.bilibili.com/5343740
+
+The following public datasets are used:
+
+Opencpop         https://wenet.org.cn/opencpop/
+CCMUSIC          https://ccmusic-database.github.io/index.html
+SingingVoiceDataset  http://isophonics.net/SingingVoiceDataset
+東北イタコ         https://zunko.jp/itadev/login.php
+御丹宮くるみ        https://onikuru.info/db-download/
+PJS              https://sites.google.com/site/shinnosuketakamichi/research-topics/pjs_corpus
+HTS              http://hts.sp.nitech.ac.jp/
+TIGER 2.0        https://tigermeat.xyz
+
+Training machines are provided by:
+
+花儿不哭           https://space.bilibili.com/5760446
+
+
+TERMS OF REDISTRIBUTIONS:
+
+1. Do not sell this vocoder, or charge any fees from redistributing it, as prohibited by
+   the license.
+2. Include a copy of the CC BY-NC-SA 4.0 license, or a link referring to it.
+3. Include a copy of this notice, or any other notices informing that this vocoder is
+   provided by the OpenVPI Team, that this vocoder is licensed under CC BY-NC-SA 4.0, and
+   with a complete acknowledgement list as shown above.
+4. If you fine-tuned or modified the weights, leave a notice about what has been changed.
+5. (Optional) Leave a link to the official release page of the vocoder, and tell users
+   that other versions and future updates of this vocoder can be obtained from the website.
 
 FCPE model assets
 Source: https://github.com/CNChTu/FCPE
 Copyright (c) 2023 CN_ChiTu
+fcpe.onnx holds the weights of torchfcpe/assets/fcpe_c_v001.pt from the
+MIT-licensed FCPE repository (not the separately licensed models published
+elsewhere).
 
 The FCPE source repository is licensed under the MIT License:
 
@@ -125,6 +294,32 @@ Source: https://github.com/yxlllc/RMVPE
 The RMVPE repository did not provide a LICENSE file when these notices were
 prepared. No redistribution license is asserted here. Confirm an explicit
 license or permission before distributing rmvpe.onnx.
+Kinu Tune binary releases do not include rmvpe.onnx (checked 2026-10-19: the
+repository still declares no license).
+
+VST 3 SDK (bundled with JUCE)
+Source: https://github.com/steinbergmedia/vst3sdk
+Copyright (c) 2025, Steinberg Media Technologies GmbH
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ARA SDK
 Copyright (c) Celemony Software GmbH and contributors.
@@ -132,8 +327,16 @@ The ARA API and ARA Library are available under the Apache License 2.0. The
 ARA SDK also includes components under zlib, MIT, and 2-clause BSD licenses.
 See the ARA SDK notices in the corresponding source release for the complete
 attribution and license texts.
+Apache License 2.0 text: licenses/Apache-2.0.txt
+ARA SDK notice: licenses/ARA_SDK-NOTICE.txt
 
-AAX SDK
+Components compiled in through JUCE
+FLAC, Ogg Vorbis, the Independent JPEG Group's software, libpng, zlib,
+HarfBuzz, SheenBidi (Apache License 2.0) and LV2. This software is based in
+part on the work of the Independent JPEG Group. Copyright notices and license
+texts: licenses/JUCE-dependencies.txt
+
+AAX SDK (not built into or shipped with Kinu Tune releases)
 Copyright (c) 2024 Avid Technology Inc.
 The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
 applicable, GPLv3. See https://developer.avid.com/aax for its terms.

@@ -92,6 +92,8 @@ public:
     }
     float getLastNonMacroMidiNote() const { return lastNonMacroMidiNote; }
     void setLastNonMacroMidiNote(float note) { lastNonMacroMidiNote = note; }
+    // Pitch moves keep this reference through
+    // ScaleUtils::carriedCorrectionSource (see there).
     void setMidiNoteFromPitchCorrection(float note) { midiNote = note; }
     float getOriginalMidiNote() const { return originalMidiNote; }
     void setOriginalMidiNote(float note) { originalMidiNote = note; }

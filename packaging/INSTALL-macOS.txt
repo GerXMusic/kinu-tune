@@ -1,0 +1,22 @@
+Kinu Tune - macOS (Apple silicon) インストール / Install
+
+1. "Kinu Tune.vst3" を次の場所にコピーします。
+   Copy "Kinu Tune.vst3" to:
+     ~/Library/Audio/Plug-Ins/VST3/
+
+2. "models" フォルダーを次の場所にコピーします(フォルダーが無ければ作ります)。
+   Copy the "models" folder into (create the folders if needed):
+     ~/Library/Application Support/Keinoaza/Kinu Tune/
+   結果として .../Kinu Tune/models/fcpe.onnx などがある状態にします。
+   so that .../Kinu Tune/models/fcpe.onnx exists.
+
+3. Apple の公証を受けていないため、ターミナルで次を実行します。
+   The build is not notarized; run this in Terminal:
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+
+4. DAW を起動し直し、プラグインを再スキャンします。
+   Restart your DAW and rescan plugins.
+
+ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses/
+The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
+Source code: https://github.com/keinoaza666-stack/kinu-tune

@@ -7,7 +7,7 @@
 //
 // Routes through the project's existing AppLogger so every event lands in one
 // chronological file:
-//   %APPDATA%/PitchNet/Logs/debug_<session>.log
+//   %APPDATA%/Kinu Tune/Logs/debug_<session>.log
 //
 // AppLogger reopens the file on every call, so this is NOT realtime-safe.
 // Model-graph events are low frequency by nature. Render-path reporting must

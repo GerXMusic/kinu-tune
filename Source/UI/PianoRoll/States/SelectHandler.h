@@ -65,6 +65,9 @@ private:
 
   // Single note drag state
   bool isDragging = false;
+  // Pitch drags start only after the pointer moves a few pixels.
+  float mouseDownWorldY = 0.0f;
+  bool dragThresholdPassed = false;
   Note *draggedNote = nullptr;
   float dragStartY = 0.0f;
   float originalPitchOffset = 0.0f;

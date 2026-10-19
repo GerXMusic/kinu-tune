@@ -113,8 +113,12 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
     secondsPerTick = 2.0f;
   else if (pixelsPerSecond >= 25.0f)
     secondsPerTick = 5.0f;
-  else
+  else if (pixelsPerSecond >= 10.0f)
     secondsPerTick = 10.0f;
+  else if (pixelsPerSecond >= 4.0f)
+    secondsPerTick = 30.0f;
+  else
+    secondsPerTick = 60.0f;
 
   // Ticks are labelled in HOST time and drawn at the matching project time.
   const auto firstTick = static_cast<float>(
@@ -291,8 +295,12 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       secondsPerTick = 2.0f;
     else if (pixelsPerSecond >= 25.0f)
       secondsPerTick = 5.0f;
-    else
+    else if (pixelsPerSecond >= 10.0f)
       secondsPerTick = 10.0f;
+    else if (pixelsPerSecond >= 4.0f)
+      secondsPerTick = 30.0f;
+    else
+      secondsPerTick = 60.0f;
 
     const double majorTickSeconds = secondsPerTick * 2.0;
     const double visibleStart = coordMapper->projectToTimeline(scrollX / pixelsPerSecond);

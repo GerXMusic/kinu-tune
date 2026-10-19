@@ -65,6 +65,9 @@ void WorkspaceComponent::resized()
     bounds.removeFromLeft(margin);
     bounds.removeFromBottom(margin);
 
+    if (inspectorContent != nullptr)
+        inspectorContent->setBounds(bounds.removeFromLeft(inspectorWidth));
+
     // Left panel: slides in from the left edge and pushes the main view. The
     // container keeps its full width and is positioned partly off-screen while
     // animating, so its content never reflows mid-slide.
@@ -108,6 +111,17 @@ void WorkspaceComponent::resized()
 
     // Main content card
     mainCard.setBounds(bounds);
+}
+
+void WorkspaceComponent::setInspectorContent(juce::Component* content, int width)
+{
+    if (inspectorContent != nullptr)
+        removeChildComponent(inspectorContent);
+    inspectorContent = content;
+    inspectorWidth = width;
+    if (inspectorContent != nullptr)
+        addAndMakeVisible(inspectorContent);
+    resized();
 }
 
 void WorkspaceComponent::setMainContent(juce::Component* content)

@@ -138,7 +138,7 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
 
   const float visibleHeight = static_cast<float>(visibleArea.getHeight());
   const float centerY = visibleHeight * 0.5f;
-  const float waveformHeight = visibleHeight * 0.8f;
+  const float waveformHeight = visibleHeight * bandHeightRatio;
 
   // The strip is built in world pixels: pixel 0 of the image is world x =
   // stripStart, so the lambda below treats stripStart as its "scrollX".
@@ -263,4 +263,71 @@ void WaveformBackgroundRenderer::draw(juce::Graphics &g,
 
   g.drawImageAt(waveformCache, visibleArea.getX() + stripStart - viewLeft,
                 visibleArea.getY());
+}
+
+float WaveformBackgroundRenderer::envelopeAt(double projectSeconds) const
+{
+  if (!coordMapper)
+    return 0.0f;
+  const float pixelsPerSecond = coordMapper->getPixelsPerSecond();
+
+  const auto levelOf = [&](const float *samples, int numSamples,
+                           double sampleRate, double offsetSeconds,
+                           double clipStart, double clipEnd)
+  {
+    if (samples == nullptr || numSamples <= 0 || sampleRate <= 0.0 ||
+        projectSeconds < clipStart || projectSeconds > clipEnd)
+      return 0.0f;
+    const double local = projectSeconds - offsetSeconds;
+    if (local < 0.0 || local * sampleRate >= numSamples)
+      return 0.0f;
+    // Build the envelope the way draw() does - one point per display pixel
+    // over a neighbourhood wide enough for its spike rejection and
+    // attack/release smoothing to settle - and read the point under the
+    // pointer. A single-point build skips both and misreads note edges.
+    constexpr int contextPixels = 48;
+    const double samplesPerPixel = sampleRate / pixelsPerSecond;
+    const double centre = local * sampleRate;
+    const int start = std::max(
+        0, static_cast<int>(std::floor(centre - contextPixels * samplesPerPixel)));
+    const int end = std::min(
+        numSamples, static_cast<int>(std::ceil(centre + contextPixels * samplesPerPixel)));
+    if (end - start < 2)
+      return 0.0f;
+    const double spanPixels = (end - start) / samplesPerPixel;
+    const int pointCount = std::max(2, static_cast<int>(std::round(spanPixels)) + 1);
+    const auto levels = VisualWaveformEnvelope::build(
+        samples, numSamples, start, end, pointCount,
+        static_cast<float>(spanPixels), sampleRate, pixelsPerSecond, true, 1.0f);
+    const int index = juce::jlimit(
+        0, pointCount - 1,
+        static_cast<int>(std::round((centre - start) / (end - start) * (pointCount - 1))));
+    return levels.empty() ? 0.0f : levels[static_cast<size_t>(index)];
+  };
+
+  constexpr double lowest = std::numeric_limits<double>::lowest();
+  constexpr double highest = std::numeric_limits<double>::max();
+  float level = 0.0f;
+  if (project && project->getAudioData().waveform.getNumSamples() > 0)
+  {
+    const auto &audio = project->getAudioData();
+    level = std::max(level, levelOf(audio.waveform.getReadPointer(0),
+                                    audio.waveform.getNumSamples(),
+                                    audio.sampleRate, 0.0,
+                                    projectDrawRange ? projectDrawRange->first : lowest,
+                                    projectDrawRange ? projectDrawRange->second : highest));
+  }
+  if (regionPreviews)
+    for (const auto &region : *regionPreviews)
+      if (!region.active && region.waveformSamples)
+        level = std::max(level, levelOf(region.waveformSamples->data(),
+                                        static_cast<int>(region.waveformSamples->size()),
+                                        region.waveformSampleRate,
+                                        coordMapper->timelineToProject(region.waveformStartSeconds),
+                                        lowest, highest));
+  if (liveNumSamples > 0 && liveWaveform.getNumChannels() > 0)
+    level = std::max(level, levelOf(liveWaveform.getReadPointer(0), liveNumSamples,
+                                    liveSampleRate, liveTimelineOffsetSeconds,
+                                    lowest, highest));
+  return level;
 }

@@ -50,6 +50,9 @@ public:
   // setFillBodies(false) to draw the outline on its own.
   void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
   void setFillBodies(bool shouldFill) { fillBodies = shouldFill; }
+  // Cubase VariAudio look: flat rectangular segments on the pitch row and a
+  // pitch-name label on the hovered segment, instead of waveform-shaped blobs.
+  void setSegmentStyle(bool shouldUseSegments) { segmentStyle = shouldUseSegments; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
                                double currentTime)
   {
@@ -75,6 +78,7 @@ private:
   bool greyscale = false;
   std::optional<juce::Colour> outlineColour;
   bool fillBodies = true;
+  bool segmentStyle = true;
   bool previewPlaybackActive = false;
   int previewStartFrame = 0;
   int previewEndFrame = 0;

@@ -20,7 +20,10 @@ constexpr float FREQ_A4 = 440.0f;
 // UI constants
 constexpr float DEFAULT_PIXELS_PER_SECOND = 100.0f;
 constexpr float DEFAULT_PIXELS_PER_SEMITONE = 45.0f;
-constexpr float MIN_PIXELS_PER_SECOND = 20.0f;
+// Widest horizontal zoom. Low enough that "Zoom Full" (Shift+F) fits a
+// song-length take (about 9 minutes in 1100 px); the piano roll's own
+// limit is the larger of this and "whole timeline in view".
+constexpr float MIN_PIXELS_PER_SECOND = 2.0f;
 constexpr float MAX_PIXELS_PER_SECOND = 500.0f;
 constexpr float MIN_PIXELS_PER_SEMITONE = 8.0f;
 constexpr float MAX_PIXELS_PER_SEMITONE = 120.0f;

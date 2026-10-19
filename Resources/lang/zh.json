@@ -7,8 +7,8 @@
   "canvas.timing": "时值",
   "category.edit_mode": "编辑模式",
   "category.transport": "走带控制",
-  "command.about": "关于 PitchNet",
-  "command.about.desp": "关于 PitchNet 及第三方声明",
+  "command.about": "关于 Kinu Tune",
+  "command.about.desp": "关于 Kinu Tune 及第三方声明",
   "command.pitch_drawing_tool": "音高绘制工具",
   "command.pitch_drawing_tool.desp": "启用音高绘制工具",
   "command.export_audio": "导出音频...",
@@ -258,7 +258,6 @@
   "tooltip.engine_vocoder": "神经声码器（PC-NSF-HiFiGAN）\n从频谱重建人声。最擅长处理大幅音高变化，并会重塑整个编辑区域的音色。",
   "tooltip.engine_vocoder_unavailable": "仅适用于 Mac 及支持 DirectML 的 Windows",
   "tooltip.live_audition": "实时试听开/关",
-  "tooltip.quantize_macro": "音高修正宏",
   "tooltip.restore_original": "恢复原始",
   "tooltip.select_tool": "主工具（快捷键：1）",
   "tooltip.split_tool": "音符分割工具（快捷键：2）",
@@ -269,7 +268,7 @@
   "tooltip.region_view_track": "轨道模式：显示轨道上的所有片段。点击以只显示所选片段的源音频。",
   "update.ask_later": "稍后再说",
   "update.download_now": "立即下载",
-  "update.message": "PitchNet 有新版本可用，是否下载？",
+  "update.message": "Kinu Tune 有新版本可用，是否下载？",
   "update.skip_version": "跳过此版本",
   "update.title": "有可用更新"
 }

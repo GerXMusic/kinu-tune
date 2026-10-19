@@ -23,7 +23,7 @@ const OrtApiBase *getApiBase()
   if (dladdr(reinterpret_cast<const void *>(&getApiBase), &imageInfo) == 0 ||
       imageInfo.dli_fname == nullptr)
   {
-    initialisationError = "Could not locate the PitchNet plug-in bundle";
+    initialisationError = "Could not locate the Kinu Tune plug-in bundle";
     return nullptr;
   }
 
@@ -37,7 +37,7 @@ const OrtApiBase *getApiBase()
                          RTLD_NOW | RTLD_LOCAL);
   if (runtime == nullptr)
   {
-    initialisationError = "Could not load PitchNet's ONNX Runtime: " +
+    initialisationError = "Could not load Kinu Tune's ONNX Runtime: " +
                           juce::String(dlerror());
     return nullptr;
   }
@@ -47,7 +47,7 @@ const OrtApiBase *getApiBase()
       dlsym(runtime, "OrtGetApiBase"));
   if (getApiBase == nullptr)
   {
-    initialisationError = "PitchNet's ONNX Runtime has no OrtGetApiBase symbol";
+    initialisationError = "Kinu Tune's ONNX Runtime has no OrtGetApiBase symbol";
     return nullptr;
   }
 
@@ -66,7 +66,7 @@ bool initialise(juce::String *errorMessage)
     if (api == nullptr)
     {
       if (initialisationError.isEmpty())
-        initialisationError = "PitchNet's ONNX Runtime does not support API version " +
+        initialisationError = "Kinu Tune's ONNX Runtime does not support API version " +
                               juce::String(ORT_API_VERSION);
       return;
     }

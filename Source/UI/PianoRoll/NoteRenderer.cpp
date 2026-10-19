@@ -265,10 +265,18 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (drawHoveredBody && &note != hoveredNote)
       continue;
 
-    // Viewport culling: skip notes outside visible area
+    // Viewport culling: skip notes outside visible area. In segment style the
+    // ghost of the original position counts too.
     const double noteStartTime = framesToSeconds(note.getVisualStartFrame());
     const double noteEndTime = framesToSeconds(note.getVisualEndFrame());
-    if (noteEndTime < visibleStartTime || noteStartTime > visibleEndTime)
+    const bool ghostMayShow = segmentStyle && !greyscale;
+    const double cullStart = ghostMayShow
+        ? std::min(noteStartTime, static_cast<double>(framesToSeconds(note.getSrcStartFrame())))
+        : noteStartTime;
+    const double cullEnd = ghostMayShow
+        ? std::max(noteEndTime, static_cast<double>(framesToSeconds(note.getSrcEndFrame())))
+        : noteEndTime;
+    if (cullEnd < visibleStartTime || cullStart > visibleEndTime)
       continue;
 
     const float x = static_cast<float>(noteStartTime * pixelsPerSecond);
@@ -296,8 +304,12 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         return;
 
       auto shadowBounds =
-          getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
-      const float minimumHoverWidth = PitchToolHandles::buttonGroupWidth;
+          segmentStyle && !greyscale
+              ? juce::Rectangle<float>(x, y, renderedWidth, h)
+                    .expanded(4.0f).getSmallestIntegerContainer()
+              : getHighlightedShadowBounds(note, x, y, renderedWidth, w, h);
+      const float minimumHoverWidth =
+          segmentStyle && !greyscale ? 0.0f : PitchToolHandles::buttonGroupWidth;
       if (shadowBounds.getWidth() < minimumHoverWidth)
       {
         const float centerX = x + renderedWidth * 0.5f;
@@ -351,7 +363,104 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
       }
 
-      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
+      if (segmentStyle && !greyscale && drawBodies && !drawHoveredBody)
+      {
+        // Ghost of the original segment: its original pitch curve where it
+        // was analysed (timing and pitch), faint grey, so an edited segment
+        // can be brought back by eye. Only the curve, no segment box.
+        constexpr float kEps = 0.005f;
+        const bool pitchOrTimingEdited =
+            note.getStartFrame() != note.getSrcStartFrame() ||
+            note.getEndFrame() != note.getSrcEndFrame() ||
+            std::abs(note.getAdjustedMidiNote() - note.getOriginalMidiNote()) > kEps ||
+            note.hasBakedDeltaPitch() ||
+            std::abs(note.getTiltLeft()) > kEps || std::abs(note.getTiltRight()) > kEps ||
+            std::abs(note.getVibrato() - 1.0f) > kEps ||
+            std::abs(note.getPitchDrift() - 1.0f) > kEps ||
+            std::abs(note.getDeltaScale() - 1.0f) > kEps ||
+            std::abs(note.getDeltaOffset()) > kEps;
+        if (pitchOrTimingEdited)
+        {
+          const float ghostX = static_cast<float>(
+              framesToSeconds(note.getSrcStartFrame()) * pixelsPerSecond);
+
+          const auto& originalDelta = note.getOriginalDeltaPitch();
+          const auto& originalF0 = note.getF0Values();
+          if (!originalDelta.empty())
+          {
+            juce::Path curve;
+            bool penDown = false;
+            const float frameWidth = static_cast<float>(
+                framesToSeconds(1) * pixelsPerSecond);
+            for (size_t i = 0; i < originalDelta.size(); ++i)
+            {
+              const bool voiced = originalF0.size() != originalDelta.size() ||
+                                  originalF0[i] > 0.0f;
+              if (!voiced)
+              {
+                penDown = false;
+                continue;
+              }
+              const float px = ghostX + (static_cast<float>(i) + 0.5f) * frameWidth;
+              const float py = coordMapper->midiToY(note.getOriginalMidiNote() +
+                                                    originalDelta[i]) +
+                               pixelsPerSemitone * 0.5f;
+              if (!penDown)
+                curve.startNewSubPath(px, py);
+              else
+                curve.lineTo(px, py);
+              penDown = true;
+            }
+            g.setColour(juce::Colour(0xFFB0B0B0u).withAlpha(0.5f));
+            g.strokePath(curve, juce::PathStrokeType(1.0f));
+          }
+        }
+      }
+
+      if (segmentStyle && !greyscale)
+      {
+        // VariAudio segment: a flat block on the pitch row. Colours follow the
+        // Cubase Pro 15 manual figures (see docs/source-ledger.md S15).
+        const auto segmentBounds =
+            juce::Rectangle<float>(x, y + 1.0f, renderedWidth,
+                                   std::max(2.0f, h - 2.0f));
+        const bool selected = note.isSelected();
+        const auto fillTop = selected ? juce::Colour(0xFF5E93D6u)
+                                      : juce::Colour(0xFF4676A8u);
+        const auto fillBottom = selected ? juce::Colour(0xFF3F70AEu)
+                                         : juce::Colour(0xFF304861u);
+        g.setGradientFill(juce::ColourGradient(
+            fillTop.withAlpha(0.88f), segmentBounds.getX(), segmentBounds.getY(),
+            fillBottom.withAlpha(0.88f), segmentBounds.getX(),
+            segmentBounds.getBottom(), false));
+        g.fillRoundedRectangle(segmentBounds, 1.5f);
+
+        if (isPreviewPlaybackNote)
+        {
+          const float previewProgressX =
+              static_cast<float>(previewCurrentTime * pixelsPerSecond);
+          const float clipRight = juce::jlimit(
+              segmentBounds.getX(), segmentBounds.getRight(), previewProgressX);
+          if (clipRight > segmentBounds.getX())
+          {
+            g.setColour(juce::Colours::white.withAlpha(0.18f));
+            g.fillRoundedRectangle(
+                segmentBounds.withRight(clipRight), 1.5f);
+          }
+        }
+
+        noFill.reset();
+        g.setColour(selected ? juce::Colours::white.withAlpha(0.92f)
+                             : juce::Colour(0xFF2B7FD3u));
+        g.drawRoundedRectangle(segmentBounds.reduced(0.5f), 1.5f,
+                               selected ? 1.5f : 1.0f);
+        if (outlineColour.has_value())
+        {
+          g.setColour(*outlineColour);
+          g.drawRoundedRectangle(segmentBounds.expanded(1.0f), 1.5f, 1.0f);
+        }
+      }
+      else if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
       {
         const float centerY = y + h * 0.5f;
         const float waveHeight = h * 3.0f;
@@ -546,12 +655,42 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         g.strokePath(bodyShape, juce::PathStrokeType(1.0f));
       }
 
-      if (showSelectionStatus && note.isSelected())
+      if (showSelectionStatus && note.isSelected() &&
+          !(segmentStyle && !greyscale))
       {
         const auto outlineBounds = noteVisualBounds.expanded(1.0f);
         g.setColour(juce::Colours::white.withAlpha(0.72f));
         g.drawRoundedRectangle(outlineBounds, 2.0f, 1.5f);
       }
+    }
+
+    if (drawOverlays && segmentStyle && !greyscale && &note == hoveredNote &&
+        !isDraggingNote)
+    {
+      // VariAudio shows the segment's pitch on the segment under the mouse.
+      static const char *pitchNames[] = {"C", "C#", "D", "D#", "E", "F",
+                                         "F#", "G", "G#", "A", "A#", "B"};
+      const int midi = static_cast<int>(std::round(
+          note.getAdjustedMidiNote() -
+          ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz)));
+      const juce::String pitchName =
+          juce::String(pitchNames[((midi % 12) + 12) % 12]) +
+          juce::String(midi / 12 - 1);
+      const auto labelFont = AppFont::getBoldFont(12.0f);
+      const float labelWidth =
+          static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
+              labelFont, pitchName)) + 10.0f;
+      const float labelHeight = 16.0f;
+      // Inside the top of the segment, as in the manual's figure, so it does
+      // not cover the straighten control above the top edge.
+      auto label = juce::Rectangle<float>(labelWidth, labelHeight)
+                       .withCentre({x + renderedWidth * 0.5f,
+                                    y + 2.0f + labelHeight * 0.5f});
+      g.setColour(juce::Colour(0xFF104DA1u));
+      g.fillRoundedRectangle(label, 2.0f);
+      g.setColour(juce::Colours::white);
+      g.setFont(labelFont);
+      g.drawText(pitchName, label, juce::Justification::centred, false);
     }
 
     const bool isSingleDragged =
@@ -577,10 +716,20 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const bool isAmplitudeDragged = pitchToolController && pitchToolController->isDragging() &&
         pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::Amplitude &&
         pitchToolController->getActiveHandleNote() == &note;
-    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged))
+    const bool isCorrectDragged = pitchToolController && pitchToolController->isDragging() &&
+        pitchToolController->getActiveHandleType() == PitchToolHandles::HandleType::CorrectPitch &&
+        pitchToolController->getActiveHandleNote() == &note;
+    if (drawOverlays && (shouldShowPitchTip || isVibratoDragged || isTiltDragged || isFormantDragged || isDriftDragged || isAmplitudeDragged || isCorrectDragged))
     {
       juce::String label;
-      if (isAmplitudeDragged)
+      if (isCorrectDragged)
+      {
+        const float adjusted = note.getAdjustedMidiNote();
+        const float cents = 100.0f * (adjusted - ScaleUtils::snapMidiToSemitone(
+                                                     adjusted, pitchReferenceHz));
+        label = (cents > 0.0f ? "+" : "") + juce::String(std::round(cents)) + " ct";
+      }
+      else if (isAmplitudeDragged)
       {
         const juce::String prefix = note.getVolumeDb() > 0.0f ? "+" : "";
         const float rms = note.getSourceAmplitude();

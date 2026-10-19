@@ -29,88 +29,79 @@ PitchToolHandles::PitchToolHandles()
 void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
                                      const CoordinateMapper& mapper,
                                      const juce::Rectangle<float>& hoverBounds) {
+  juce::ignoreUnused(hoverBounds);
   handles.clear();
 
-  if (selectedNotes.empty())
+  if (selectedNotes.empty() || selectedNotes.front() == nullptr)
     return;
 
-  int minStartFrame = std::numeric_limits<int>::max();
-  int maxEndFrame = std::numeric_limits<int>::min();
-  float maxMidi = std::numeric_limits<float>::lowest();
-
-  for (const auto* note : selectedNotes) {
-    if (!note)
-      continue;
-
-    minStartFrame = std::min(minStartFrame, note->getStartFrame());
-    maxEndFrame = std::max(maxEndFrame, note->getEndFrame());
-    maxMidi = std::max(maxMidi, note->getMidiNote());
-  }
-
-  if (minStartFrame == std::numeric_limits<int>::max())
+  // VariAudio smart controls sit on the hovered segment's own rectangle
+  // (Cubase Pro 15 manual, "Smart Controls"; see docs/design.md 5.2).
+  auto* note = selectedNotes.front();
+  const float left = mapper.timeToX(mapper.framesToSeconds(note->getStartFrame()));
+  const float right = std::max(
+      left + 4.0f, mapper.timeToX(mapper.framesToSeconds(note->getEndFrame())));
+  const float top = mapper.midiToY(note->getAdjustedMidiNote());
+  const float bottom = top + mapper.getPixelsPerSemitone();
+  const float centreX = (left + right) * 0.5f;
+  const float s = controlSize;
+  const float gap = 3.0f;
+  if (mapper.getPixelsPerSemitone() < minSemitoneHeight ||
+      right - left < minSegmentWidth)
     return;
 
-  const float leftX = mapper.timeToX(mapper.framesToSeconds(minStartFrame));
-  const float rightX = mapper.timeToX(mapper.framesToSeconds(maxEndFrame));
-  const float centerX = (leftX + rightX) * 0.5f;
-  const float topY = mapper.midiToY(maxMidi);
-  auto* targetNote = selectedNotes.front();
-  // Use the actual rendered hover bounds when supplied by the piano roll.
-  // Fall back to the note body plus its normal hover padding otherwise.
-  constexpr float hoverPadding = 4.0f;
-  const float fallbackWidth =
-      std::max(rightX - leftX, 4.0f) + hoverPadding * 2.0f;
-  const float layoutWidth = hoverBounds.isEmpty()
-      ? std::max(fallbackWidth, buttonGroupWidth)
-      : hoverBounds.getWidth();
-  const float groupLeft = hoverBounds.isEmpty()
-      ? centerX - layoutWidth * 0.5f
-      : hoverBounds.getX();
-  const float groupTop = hoverBounds.isEmpty()
-      ? topY - hoverPadding - buttonHeight - 7.0f
-      : hoverBounds.getY() - buttonHeight - 7.0f;
-  const float slotWidth = (layoutWidth - buttonGap * 2.0f) / 3.0f;
-  const float bottom = hoverBounds.isEmpty()
-      ? topY + mapper.getPixelsPerSemitone() + hoverPadding
-      : hoverBounds.getBottom();
-  const float bottomRowY = bottom + 7.0f;
-  const auto addButtonHandle = [this, targetNote, groupLeft, slotWidth](
-      HandleType type, int column, float y)
-  {
-    const float x = groupLeft + (slotWidth + buttonGap) * column;
-    addHandle(type, x + slotWidth * 0.5f, y + buttonHeight * 0.5f,
-              targetNote);
-    handles.back().bounds = {x, y, slotWidth, buttonHeight};
+  const auto addSquare = [this, note, s](HandleType type, float cx, float cy) {
+    addHandle(type, cx, cy, note);
+    handles.back().bounds = {cx - s * 0.5f, cy - s * 0.5f, s, s};
   };
 
-  addButtonHandle(HandleType::TiltLeft, 0, groupTop);
-  addButtonHandle(HandleType::Vibrato, 1, groupTop);
-  addButtonHandle(HandleType::TiltRight, 2, groupTop);
-  addButtonHandle(HandleType::PitchDrift, 0, bottomRowY);
-  addButtonHandle(HandleType::Amplitude, 1, bottomRowY);
-  addButtonHandle(HandleType::Formant, 2, bottomRowY);
+  // Default set: straighten (top centre), correct pitch (below the bottom
+  // centre), glue (outside the bottom corners).
+  addSquare(HandleType::Vibrato, centreX, top - s * 0.5f - gap);
+  addSquare(HandleType::CorrectPitch, centreX, bottom + s * 0.5f + gap);
+
+  // No split line on the segment body: clicking a segment must only select
+  // it (user request, 2026-10-19). Splitting is Alt/Option-click or the
+  // Split tool.
+
+  if (options.canGlueLeft)
+    addSquare(HandleType::GlueLeft, left - s * 0.5f - 1.0f, bottom - s * 0.5f);
+  if (options.canGlueRight)
+    addSquare(HandleType::GlueRight, right + s * 0.5f + 1.0f, bottom - s * 0.5f);
+
+  if (!options.showAll || right - left < minSegmentWidthForCorners)
+    return;
+
+  // "Show All": tilt at the top corners, formant and volume in the bottom
+  // corners, just inside the segment so they do not collide with glue.
+  addSquare(HandleType::TiltLeft, left + s * 0.5f, top - s * 0.5f - gap);
+  addSquare(HandleType::TiltRight, right - s * 0.5f, top - s * 0.5f - gap);
+  addSquare(HandleType::Formant, left + s * 0.5f + 1.0f, bottom - s * 0.5f - 1.0f);
+  addSquare(HandleType::Amplitude, right - s * 0.5f - 1.0f, bottom - s * 0.5f - 1.0f);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
+  const auto fill = juce::Colour(0xFF4884BFu);
+  const auto edge = juce::Colour(0xFF9CC3EAu);
   for (int i = 0; i < static_cast<int>(handles.size()); ++i) {
     const auto& handle = handles[i];
-
     const bool hovered = i == hoveredHandleIndex;
-    g.setColour(hovered ? juce::Colour(0xFF3B3B3Au)
-                        : juce::Colour(0xFF2E2E2Du));
-
     const auto bounds = handle.bounds;
-    g.fillRect(bounds);
 
-    const auto& icon = getIconForType(handle.type);
-    if (icon.isValid())
-    {
-      const float iconWidth = icon.getWidth() * 0.5f;
-      const float iconHeight = icon.getHeight() * 0.5f;
-      g.drawImage(icon, bounds.getCentreX() - iconWidth * 0.5f,
-                  bounds.getCentreY() - iconHeight * 0.5f + 1.0f,
-                  iconWidth, iconHeight, 0, 0, icon.getWidth(),
-                  icon.getHeight());
+    g.setColour(hovered ? juce::Colours::white : fill);
+    g.fillRect(bounds);
+    g.setColour(hovered ? fill : edge);
+    g.drawRect(bounds, 1.0f);
+
+    // Glue controls carry a small arrow toward the segment they join.
+    if (handle.type == HandleType::GlueLeft || handle.type == HandleType::GlueRight) {
+      juce::Path arrow;
+      const float cx = bounds.getCentreX();
+      const float cy = bounds.getCentreY();
+      const float d = handle.type == HandleType::GlueLeft ? -1.5f : 1.5f;
+      arrow.addTriangle(cx + d, cy, cx - d, cy - 2.5f, cx - d, cy + 2.5f);
+      g.setColour(hovered ? fill : juce::Colours::white);
+      g.fillPath(arrow);
     }
   }
 }
@@ -146,16 +137,11 @@ int PitchToolHandles::hitTest(float worldX, float worldY, float tolerance) const
 
 bool PitchToolHandles::containsLayoutPoint(float worldX, float worldY) const
 {
-  // Combine handles within each row, not across the note between rows.
+  // Only the controls themselves (plus the small gap to the segment) belong to
+  // the layout. The segment body must stay free for note and track gestures.
   for (const auto& handle : handles)
-  {
-    auto rowBounds = handle.bounds;
-    for (const auto& other : handles)
-      if (other.bounds.getY() == handle.bounds.getY())
-        rowBounds = rowBounds.getUnion(other.bounds);
-    if (rowBounds.contains(worldX, worldY))
+    if (handle.bounds.expanded(3.0f).contains(worldX, worldY))
       return true;
-  }
   return false;
 }
 
