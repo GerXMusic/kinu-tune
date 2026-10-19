@@ -32,8 +32,6 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 - ピッチスナップモード(絶対 / 相対 / オフ)、ドラッグ中の Shift / Cmd / Option による切り替え、矢印キー操作
 - 左のインスペクタ: Tools(スライダー: ピッチを補正、カーブを平坦化、ピッチドリフト、フォルマントをシフト、ボリューム)、エディタースケール、ハモリ
 - ハモリ: 3度・4度・5度・6度・オクターブの上下をワンクリックで。長3度か短3度かはスケールに合わせて自動で決まります
-- ドラッグ中の試聴(セグメント全体を繰り返し鳴らし、離すと止まる)
-- 全体表示: Shift+F、またはセグメントの無い所で Option+ダブルクリック
 - 編集前のピッチカーブを灰色で表示、ダブルクリックでセグメントを元に戻す
 
 ### 動作環境
@@ -98,8 +96,6 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 - Pitch Snap Mode Absolute / Relative / Off, with Shift / Cmd / Option overrides while dragging, and arrow-key editing
 - Left inspector: Tools (Correct Pitch, Flatten Curve, Pitch Drift, Shift Formant, Volume), Editor Scale, Harmony
 - Harmony: one click shifts notes by a 3rd, 4th, 5th, 6th or an octave, up or down; major or minor thirds follow the scale
-- Live audition while dragging a segment (the whole segment repeats until release)
-- Zoom Full: Shift+F, or Option-double-click on empty space
 - The original pitch curve of an edited segment stays visible in grey; double-click resets a segment
 
 ### Requirements
