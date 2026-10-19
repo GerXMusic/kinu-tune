@@ -10,6 +10,10 @@ on:
       tag:
         description: "Release tag to build and attach to (e.g. v0.1.0-beta)"
         required: true
+      ref:
+        description: "Test build: build this branch or commit instead of the tag and keep the zip as a workflow artifact (the release is not changed)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -19,10 +23,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
-      - name: Checkout the tagged source with submodules
+      - name: Checkout the source with submodules
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.ref || inputs.tag }}
           submodules: recursive
 
       - name: Fetch the model files from the release
@@ -45,10 +49,8 @@ jobs:
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
 
-      - name: Package and attach to the release
+      - name: Package
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $version = "${{ inputs.tag }}".TrimStart('v')
           $name = "Kinu-Tune-$version-Windows-x64"
@@ -62,4 +64,19 @@ jobs:
           Copy-Item licenses/* "$name/licenses/"
           Copy-Item packaging/INSTALL-Windows.txt "$name/INSTALL.txt"
           Compress-Archive -Path $name -DestinationPath "$name.zip"
-          gh release upload "${{ inputs.tag }}" "$name.zip" --repo "${{ github.repository }}" --clobber
+          "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Attach to the release
+        if: ${{ inputs.ref == '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" "$env:ZIP_NAME.zip" --repo "${{ github.repository }}" --clobber
+
+      - name: Keep the test build as a workflow artifact
+        if: ${{ inputs.ref != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}-test
+          path: ${{ env.ZIP_NAME }}.zip
+          retention-days: 7

@@ -254,7 +254,7 @@ inline float carriedCorrectionSource(const Project& project, float source,
     constexpr float kNoDeviation = 1.0e-4f;
     const auto targetOf = [&](float pitch)
     { return correctionTargetFor(project, pitch, referenceHz); };
-    const auto inRange = [](float share)
+    const auto inRange = [&](float share)
     { return share >= -kTolerance && share <= 1.0f + kTolerance; };
     // Is `pitch` a 0-100% correction of the sung pitch `sung`?
     const auto corrects = [&](float sung, float pitch)
