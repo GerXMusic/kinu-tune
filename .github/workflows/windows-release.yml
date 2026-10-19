@@ -1,7 +1,7 @@
 # Builds the Windows (x64, CPU) VST3 for an existing GitHub release and
 # attaches the zip to it. Run it by hand (Actions > Windows release build >
 # Run workflow) after the release exists; the model files are taken from the
-# release's "*-models.zip" asset, because they are not in the repository.
+# release's "*-models.zip" asset, because GAME is not in the repository.
 name: Windows release build
 
 on:

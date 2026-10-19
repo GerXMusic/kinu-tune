@@ -84,7 +84,7 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
 ### 自分でビルドする
 
-下の [Build](#build) を見てください。ビルドには `Resources/models` にモデルファイルを置く必要があります(リポジトリには含めていません。配布版 zip の `models` フォルダーから取れます)。
+下の [Build](#build) を見てください。`fcpe.onnx`・`cent_table.bin`・`mel_filterbank.bin`・`pc_nsf_hifigan.onnx` はリポジトリの `Resources/models` に入っています。macOS 用の `pc_nsf_hifigan.mlmodelc` はリポジトリに無いので、配布版 zip の `models` フォルダーから `Resources/models` に置いてください。GAME のモデルは構成時に自動でダウンロードされます。
 
 ---
 
@@ -149,7 +149,7 @@ cmake --build build --config Release
 
 On macOS the default is a universal (arm64 + x86_64) build; the released binary is built with `-DCMAKE_OSX_ARCHITECTURES=arm64`.
 
-The build expects these files in `Resources/models` (they are not in this repository; take them from the `models` folder of a release zip): `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin`, `pc_nsf_hifigan.mlmodelc` (macOS) or `pc_nsf_hifigan.onnx` (other platforms). The GAME models are downloaded into `Resources/models/GAME` during configure if missing. `rmvpe.onnx` is optional.
+The build expects these files in `Resources/models`: `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin` and `pc_nsf_hifigan.onnx` are in this repository; `pc_nsf_hifigan.mlmodelc` (required on macOS) is not, so take it from the `models` folder of a release zip. The GAME models are downloaded into `Resources/models/GAME` during configure if missing. `rmvpe.onnx` is optional.
 
 Options added or used by Kinu Tune:
 
