@@ -1,6 +1,7 @@
 #include "NoteSplitter.h"
 #include "../../Utils/NoteAmplitude.h"
 #include "../../Utils/Constants.h"
+#include "../../Utils/NotePitch.h"
 #include <algorithm>
 #include <cmath>
 
@@ -122,7 +123,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
                                                srcStartFrame, srcEndFrame);
     secondNote.setSrcStartFrame(srcSplitFrame);
     secondNote.setSrcEndFrame(srcEndFrame);
-    secondNote.setMidiNote(note->getMidiNote());
+    NotePitch::restore(secondNote, note->getMidiNote(), note->getLastNonMacroMidiNote());
     secondNote.setLyric(note->getLyric());
     secondNote.setPhoneme(note->getPhoneme());
     secondNote.setVolumeDb(note->getVolumeDb());
@@ -216,12 +217,10 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     rebasePitchDeviation(*note, previousPitchCenter - leftPitchCenter);
     rebasePitchDeviation(secondNote, previousPitchCenter - rightPitchCenter);
-    note->setMidiNote(leftPitchCenter);
-    note->setLastNonMacroMidiNote(leftPitchCenter + correctionOffset);
+    NotePitch::restore(*note, leftPitchCenter, leftPitchCenter + correctionOffset);
     note->setOriginalMidiNote(leftPitchCenter);
     note->setPitchOffset(0.0f);
-    secondNote.setMidiNote(rightPitchCenter);
-    secondNote.setLastNonMacroMidiNote(rightPitchCenter + correctionOffset);
+    NotePitch::restore(secondNote, rightPitchCenter, rightPitchCenter + correctionOffset);
     secondNote.setOriginalMidiNote(rightPitchCenter);
     secondNote.setPitchOffset(0.0f);
 
@@ -398,11 +397,11 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
             firstActive, firstNote.getAdjustedMidiNote(),
             secondActive, secondNote.getAdjustedMidiNote()));
     }
-    mergedNote.setMidiNote(mergedPitchCenter);
     // Merging is pitch-neutral: keep the first segment's gap between the
     // Correct Pitch reference (the sung pitch) and the pitch.
-    mergedNote.setLastNonMacroMidiNote(
-        mergedPitchCenter + firstNote.getLastNonMacroMidiNote() - firstNote.getMidiNote());
+    NotePitch::restore(mergedNote, mergedPitchCenter,
+                       mergedPitchCenter + firstNote.getLastNonMacroMidiNote() -
+                           firstNote.getMidiNote());
     mergedNote.setOriginalMidiNote(mergedPitchCenter);
     mergedNote.setPitchOffset(0.0f);
     const bool isDirty = firstNote.isDirty() || secondNote.isDirty();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Models/Note.h"
+#include "NotePitch.h"
 
 /**
  * Stores pitch tool transformation parameters for a single note.
@@ -46,8 +47,7 @@ struct TransformParams
     /** Apply all transformation params back to a note. */
     void applyToNote(Note& note) const
     {
-        note.setMidiNote(midiNote);
-        note.setLastNonMacroMidiNote(correctionSource);
+        NotePitch::restore(note, midiNote, correctionSource);
         note.setTiltLeft(tiltLeft);
         note.setTiltRight(tiltRight);
         note.setVibrato(vibrato);

@@ -90,3 +90,8 @@ add_executable(VariAudioInspectorTests VariAudioInspectorTests.cpp)
 target_link_libraries(VariAudioInspectorTests PRIVATE pitchnet_ui)
 target_compile_features(VariAudioInspectorTests PRIVATE cxx_std_17)
 add_test(NAME VariAudioInspectorTests COMMAND VariAudioInspectorTests)
+
+# Every pitch write goes through Source/Utils/NotePitch.h (see there).
+add_test(NAME PitchWriteGuard
+         COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/PitchWriteGuard.cmake)

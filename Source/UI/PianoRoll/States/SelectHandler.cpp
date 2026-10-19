@@ -2,6 +2,7 @@
 #include "../../PianoRollComponent.h"
 #include "../../../Utils/PitchCurveProcessor.h"
 #include "../../../Utils/ScaleUtils.h"
+#include "../../../Utils/NotePitch.h"
 #include "../../../Utils/BasePitchPreview.h"
 #include "../../../Utils/TransformParams.h"
 #include "../../../Undo/PitchToolAction.h"
@@ -660,15 +661,11 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       int f0Size = static_cast<int>(audioData.f0.size());
 
       // Update note's midiNote with final offset, keeping the Correct Pitch
-      // reference (see ScaleUtils::carriedCorrectionSource).
+      // reference (see NotePitch).
       const float oldSource = draggedNote->getLastNonMacroMidiNote();
       const float finalMidiNote = originalMidiNote + newOffset;
-      draggedNote->setMidiNote(finalMidiNote);
-      draggedNote->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-          *project, oldSource, draggedNote->getOriginalMidiNote(), originalMidiNote,
-          finalMidiNote,
-          project->getPitchReferenceHz()));
-      const float newSource = draggedNote->getLastNonMacroMidiNote();
+      const float newSource = NotePitch::applyEdit(
+          *draggedNote, *project, oldSource, originalMidiNote, finalMidiNote);
       draggedNote->setPitchOffset(0.0f);
       draggedNote->markSynthDirty();
 
@@ -961,12 +958,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             const float newTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
-            note->setMidiNote(baseline + newTiltMean);
-            // Keep the Correct Pitch reference (ScaleUtils::carriedCorrectionSource).
-            note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-                *project, oldSources.back(), note->getOriginalMidiNote(),
-                oldMidiNotes.back(), note->getMidiNote(), project->getPitchReferenceHz()));
-            newSources.push_back(note->getLastNonMacroMidiNote());
+            // Keep the Correct Pitch reference (see NotePitch).
+            newSources.push_back(NotePitch::applyEdit(
+                *note, *project, oldSources.back(), oldMidiNotes.back(),
+                baseline + newTiltMean));
             note->markDirty();
           }
         }
@@ -1009,12 +1004,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             const float newTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
-            note->setMidiNote(baseline + newTiltMean);
-            // Keep the Correct Pitch reference (ScaleUtils::carriedCorrectionSource).
-            note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-                *project, oldSources.back(), note->getOriginalMidiNote(),
-                oldMidiNotes.back(), note->getMidiNote(), project->getPitchReferenceHz()));
-            newSources.push_back(note->getLastNonMacroMidiNote());
+            // Keep the Correct Pitch reference (see NotePitch).
+            newSources.push_back(NotePitch::applyEdit(
+                *note, *project, oldSources.back(), oldMidiNotes.back(),
+                baseline + newTiltMean));
             note->markDirty();
           }
         }
@@ -1079,10 +1072,9 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           oldOffsets.push_back(oldOffset);
           newMidis.push_back(snappedMidi);
           oldSources.push_back(selected->getLastNonMacroMidiNote());
-          newSources.push_back(ScaleUtils::carriedCorrectionSource(
-              *project, selected->getLastNonMacroMidiNote(),
-              selected->getOriginalMidiNote(), oldMidi, snappedMidi,
-              project->getPitchReferenceHz()));
+          newSources.push_back(NotePitch::sourceAfterEdit(
+              *project, *selected, selected->getLastNonMacroMidiNote(), oldMidi,
+              snappedMidi));
         }
 
         if (!notesToSnap.empty())
@@ -1102,8 +1094,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
           for (size_t i = 0; i < notesToSnap.size(); ++i)
           {
-            notesToSnap[i]->setMidiNote(newMidis[i]);
-            notesToSnap[i]->setLastNonMacroMidiNote(newSources[i]);
+            NotePitch::restore(*notesToSnap[i], newMidis[i], newSources[i]);
             notesToSnap[i]->setPitchOffset(0.0f);
             notesToSnap[i]->markDirty();
           }
@@ -1123,9 +1114,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
     if (std::abs(snappedMidi - adjustedMidi) > 0.001f)
     {
       const float oldSource = note->getLastNonMacroMidiNote();
-      const float newSource = ScaleUtils::carriedCorrectionSource(
-          *project, oldSource, note->getOriginalMidiNote(), oldMidi, snappedMidi,
-          project->getPitchReferenceHz());
+      const float newSource =
+          NotePitch::sourceAfterEdit(*project, *note, oldSource, oldMidi, snappedMidi);
       if (owner_.undoManager)
       {
         auto action =
@@ -1137,8 +1127,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         owner_.undoManager->addAction(std::move(action));
       }
 
-      note->setMidiNote(snappedMidi);
-      note->setLastNonMacroMidiNote(newSource);
+      NotePitch::restore(*note, snappedMidi, newSource);
       note->setPitchOffset(0.0f);
       note->markDirty();
       rebuildAndNotify();

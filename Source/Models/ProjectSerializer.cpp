@@ -3,6 +3,7 @@
 #include "../Utils/Constants.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
+#include "../Utils/NotePitch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -882,15 +883,15 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setSrcEndFrame(static_cast<int>(json.getProperty("srcEndFrame", endFrame)));
     const float midiNote =
         static_cast<float>(json.getProperty("midiNote", 60.0));
-    note.setMidiNote(midiNote);
     const float originalMidiNote = static_cast<float>(
         json.getProperty("originalMidiNote", midiNote));
     note.setOriginalMidiNote(originalMidiNote);
     // Projects written before lastNonMacroMidiNote existed used the analyzed
     // pitch as the macro source after any correction had been applied.
     const float legacySourceMidi = hadPitchCorrection ? originalMidiNote : midiNote;
-    note.setLastNonMacroMidiNote(static_cast<float>(
-        json.getProperty("lastNonMacroMidiNote", legacySourceMidi)));
+    NotePitch::restore(note, midiNote,
+                       static_cast<float>(json.getProperty("lastNonMacroMidiNote",
+                                                           legacySourceMidi)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));

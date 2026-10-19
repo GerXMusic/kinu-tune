@@ -2,6 +2,7 @@
 #include "../../Undo/AmplitudeAction.h"
 #include "../../Utils/PitchCurveProcessor.h"
 #include "../../Utils/ScaleUtils.h"
+#include "../../Utils/NotePitch.h"
 
 #include <algorithm>
 #include <limits>
@@ -221,6 +222,12 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     }
     origParams.applyToNote(*note);
 
+    // The pitch when the gesture began, and the pitch this handle moves the
+    // segment to (written through NotePitch after the switch).
+    const float origLiveMidi =
+        origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f;
+    float liveMidi = origLiveMidi;
+
     // Apply new transformation by updating the appropriate parameter
     switch (type)
     {
@@ -232,7 +239,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + newTiltMean);
+        liveMidi = origParams.midiNote + newTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::TiltRight:
@@ -242,19 +249,17 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + newTiltMean);
+        liveMidi = origParams.midiNote + newTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::Formant:
       {
         note->setFormantShift(std::round((origParams.formantShift + semitoneDelta) * 10.0f) / 10.0f);
-        note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
       case PitchToolHandles::HandleType::PitchDrift:
       {
         note->setPitchDrift(origParams.pitchDrift - dragDeltaY / 100.0f);
-        note->setMidiNote(origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f);
         break;
       }
       case PitchToolHandles::HandleType::Vibrato:
@@ -267,7 +272,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         
         // Preserve tilt offset when adjusting vibrato.
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + currentTiltMean);
+        liveMidi = origParams.midiNote + currentTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::CorrectPitch:
@@ -286,7 +291,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // never jumps.
         if (!ScaleUtils::correctionShare(*project, source, startMidi, referenceHz))
           source = startMidi;
-        note->setLastNonMacroMidiNote(source);
+        NotePitch::setCorrectionSource(*note, source);
         const float target = ScaleUtils::correctionTargetFor(*project, source, referenceHz);
         const float deviation = source - target;
         const float startShare =
@@ -295,7 +300,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
                 : juce::jlimit(0.0f, 1.0f, 1.0f - (startMidi - target) / deviation);
         const float share =
             juce::jlimit(0.0f, 1.0f, startShare - dragDeltaY / 60.0f);
-        note->setMidiNoteFromPitchCorrection(target + deviation * (1.0f - share));
+        NotePitch::applyCorrection(*note, target + deviation * (1.0f - share));
         break;
       }
       case PitchToolHandles::HandleType::SmoothLeft:
@@ -307,7 +312,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         
         // Preserve tilt offset when adjusting smoothing
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + currentTiltMean);
+        liveMidi = origParams.midiNote + currentTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::SmoothRight:
@@ -319,7 +324,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         
         // Preserve tilt offset when adjusting smoothing
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + currentTiltMean);
+        liveMidi = origParams.midiNote + currentTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::None:
@@ -327,17 +332,11 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         continue;  // Skip this note
     }
 
-    // The other handles write midiNote through setMidiNote, which would make
-    // the current pitch the Correct Pitch reference; keep it instead.
+    // The other handles move the segment as an edit, which keeps the Correct
+    // Pitch reference by the shared rule (see NotePitch).
     if (type != PitchToolHandles::HandleType::CorrectPitch)
-    {
-      const float origLiveMidi =
-          origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f;
-      note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-          *project, origParams.correctionSource, note->getOriginalMidiNote(),
-          origLiveMidi, note->getMidiNote(),
-          project->getPitchReferenceHz()));
-    }
+      NotePitch::applyEdit(*note, *project, origParams.correctionSource,
+                           origLiveMidi, liveMidi);
 
     note->markDirty();
   }
@@ -385,8 +384,8 @@ void PitchToolController::cancel()
       
       // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
       const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;
-      affectedNotes[i]->setMidiNote(params.midiNote + tiltMean);
-      affectedNotes[i]->setLastNonMacroMidiNote(params.correctionSource);
+      NotePitch::restore(*affectedNotes[i], params.midiNote + tiltMean,
+                         params.correctionSource);
     }
   }
 

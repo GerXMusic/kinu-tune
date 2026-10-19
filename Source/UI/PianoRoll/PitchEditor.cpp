@@ -1,5 +1,6 @@
 #include "PitchEditor.h"
 #include "../../Utils/ScaleUtils.h"
+#include "../../Utils/NotePitch.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -176,8 +177,11 @@ void PitchEditor::endNoteDrag()
     auto &audioData = project->getAudioData();
     int f0Size = static_cast<int>(audioData.f0.size());
 
-    // Bake pitchOffset into midiNote
-    draggedNote->setMidiNote(originalMidiNote + newOffset);
+    // Bake pitchOffset into midiNote, keeping the Correct Pitch reference
+    // (see NotePitch).
+    const float oldSource = draggedNote->getLastNonMacroMidiNote();
+    const float newSource = NotePitch::applyEdit(
+        *draggedNote, *project, oldSource, originalMidiNote, originalMidiNote + newOffset);
     draggedNote->setPitchOffset(0.0f);
     draggedNote->markSynthDirty();
 
@@ -221,7 +225,8 @@ void PitchEditor::endNoteDrag()
               if (n)
                 n->markSynthDirty();
             }
-          });
+          },
+          oldSource, newSource);
       undoManager->addAction(std::move(action));
     }
 
@@ -371,19 +376,16 @@ void PitchEditor::endMultiNoteDrag()
     int expandedEnd = std::numeric_limits<int>::min();
 
     // Bake pitchOffset into midiNote for all notes, keeping the Correct Pitch
-    // reference (see ScaleUtils::carriedCorrectionSource).
+    // reference (see NotePitch).
     std::vector<float> oldSources, newSources;
     for (size_t i = 0; i < draggedNotes.size(); ++i)
     {
       auto *note = draggedNotes[i];
       const float oldSource = note->getLastNonMacroMidiNote();
-      const float newMidi = originalMidiNotes[i] + newOffset;
-      note->setMidiNote(newMidi);
-      note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-          *project, oldSource, note->getOriginalMidiNote(), originalMidiNotes[i], newMidi,
-          project->getPitchReferenceHz()));
       oldSources.push_back(oldSource);
-      newSources.push_back(note->getLastNonMacroMidiNote());
+      newSources.push_back(NotePitch::applyEdit(*note, *project, oldSource,
+                                                originalMidiNotes[i],
+                                                originalMidiNotes[i] + newOffset));
       note->setPitchOffset(0.0f);
       note->markSynthDirty();
 

@@ -3,6 +3,7 @@
 #include "UndoableAction.h"
 #include "F0FrameEdit.h"
 #include "../Models/Note.h"
+#include "../Utils/NotePitch.h"
 #include <cmath>
 #include <vector>
 #include <functional>
@@ -14,12 +15,12 @@ class NotePitchDragAction : public UndoableAction
 {
 public:
     // oldSource/newSource: the Correct Pitch reference before and after the
-    // drag (NaN: leave it to setMidiNote, as before).
+    // drag (see NotePitch).
     NotePitchDragAction(Note *note, std::vector<float> *f0Array,
                         float oldMidi, float newMidi,
                         std::vector<F0FrameEdit> f0Edits,
-                        std::function<void(Note *)> onNoteChanged = nullptr,
-                        float oldSource = NAN, float newSource = NAN)
+                        std::function<void(Note *)> onNoteChanged,
+                        float oldSource, float newSource)
         : note(note), f0Array(f0Array), oldMidi(oldMidi), newMidi(newMidi),
           f0Edits(std::move(f0Edits)), onNoteChanged(onNoteChanged),
           oldSource(oldSource), newSource(newSource) {}
@@ -28,9 +29,7 @@ public:
     {
         if (note)
         {
-            note->setMidiNote(oldMidi);
-            if (!std::isnan(oldSource))
-                note->setLastNonMacroMidiNote(oldSource);
+            NotePitch::restore(*note, oldMidi, oldSource);
             note->markDirty();
             note->markSynthDirty();
         }
@@ -52,9 +51,7 @@ public:
     {
         if (note)
         {
-            note->setMidiNote(newMidi);
-            if (!std::isnan(newSource))
-                note->setLastNonMacroMidiNote(newSource);
+            NotePitch::restore(*note, newMidi, newSource);
             note->markDirty();
             note->markSynthDirty();
         }
@@ -92,26 +89,24 @@ class MultiNotePitchDragAction : public UndoableAction
 {
 public:
     // oldSources/newSources: Correct Pitch references before and after the
-    // drag (empty: leave them to setMidiNote, as before).
+    // drag, one per note (see NotePitch).
     MultiNotePitchDragAction(std::vector<Note *> notes, std::vector<float> *f0Array,
                              std::vector<float> oldMidis, float pitchDelta,
                              std::vector<F0FrameEdit> f0Edits,
-                             std::function<void(const std::vector<Note *> &)> onNotesChanged = nullptr,
-                             std::vector<float> oldSources = {},
-                             std::vector<float> newSources = {})
+                             std::function<void(const std::vector<Note *> &)> onNotesChanged,
+                             std::vector<float> oldSources,
+                             std::vector<float> newSources)
         : notes(std::move(notes)), f0Array(f0Array), oldMidis(std::move(oldMidis)),
           pitchDelta(pitchDelta), f0Edits(std::move(f0Edits)), onNotesChanged(onNotesChanged),
           oldSources(std::move(oldSources)), newSources(std::move(newSources)) {}
 
     void undo() override
     {
-        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size() && i < oldSources.size(); ++i)
         {
             if (notes[i])
             {
-                notes[i]->setMidiNote(oldMidis[i]);
-                if (i < oldSources.size())
-                    notes[i]->setLastNonMacroMidiNote(oldSources[i]);
+                NotePitch::restore(*notes[i], oldMidis[i], oldSources[i]);
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
             }
@@ -130,13 +125,11 @@ public:
 
     void redo() override
     {
-        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size() && i < newSources.size(); ++i)
         {
             if (notes[i])
             {
-                notes[i]->setMidiNote(oldMidis[i] + pitchDelta);
-                if (i < newSources.size())
-                    notes[i]->setLastNonMacroMidiNote(newSources[i]);
+                NotePitch::restore(*notes[i], oldMidis[i] + pitchDelta, newSources[i]);
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
             }
@@ -173,13 +166,13 @@ class MultiNoteMidiNudgeAction : public UndoableAction
 {
 public:
     // oldSources/newSources: Correct Pitch references before and after the
-    // move (empty: leave them to setMidiNote).
+    // move, one per note (see NotePitch).
     MultiNoteMidiNudgeAction(std::vector<Note *> notes,
                              std::vector<float> oldMidis,
                              std::vector<float> newMidis,
-                             std::function<void(const std::vector<Note *> &)> onNotesChanged = nullptr,
-                             std::vector<float> oldSources = {},
-                             std::vector<float> newSources = {})
+                             std::function<void(const std::vector<Note *> &)> onNotesChanged,
+                             std::vector<float> oldSources,
+                             std::vector<float> newSources)
         : notes(std::move(notes)),
           oldMidis(std::move(oldMidis)),
           newMidis(std::move(newMidis)),
@@ -189,13 +182,11 @@ public:
 
     void undo() override
     {
-        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size() && i < oldSources.size(); ++i)
         {
             if (!notes[i])
                 continue;
-            notes[i]->setMidiNote(oldMidis[i]);
-            if (i < oldSources.size())
-                notes[i]->setLastNonMacroMidiNote(oldSources[i]);
+            NotePitch::restore(*notes[i], oldMidis[i], oldSources[i]);
             notes[i]->markDirty();
             notes[i]->markSynthDirty();
         }
@@ -205,13 +196,11 @@ public:
 
     void redo() override
     {
-        for (size_t i = 0; i < notes.size() && i < newMidis.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < newMidis.size() && i < newSources.size(); ++i)
         {
             if (!notes[i])
                 continue;
-            notes[i]->setMidiNote(newMidis[i]);
-            if (i < newSources.size())
-                notes[i]->setLastNonMacroMidiNote(newSources[i]);
+            NotePitch::restore(*notes[i], newMidis[i], newSources[i]);
             notes[i]->markDirty();
             notes[i]->markSynthDirty();
         }
@@ -262,7 +251,7 @@ private:
         for (size_t i = 0; i < notes.size() && i < midis.size(); ++i)
         {
             if (!notes[i]) continue;
-            notes[i]->setMidiNoteFromPitchCorrection(midis[i]);
+            NotePitch::applyCorrection(*notes[i], midis[i]);
             notes[i]->setPitchDrift(drifts[i]);
             notes[i]->markDirty();
             notes[i]->markSynthDirty();

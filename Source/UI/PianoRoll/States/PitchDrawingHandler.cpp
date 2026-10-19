@@ -2,6 +2,7 @@
 #include "../../../Undo/PitchDrawingAction.h"
 #include "../../../Utils/Constants.h"
 #include "../../../Utils/PitchCurveProcessor.h"
+#include "../../../Utils/NotePitch.h"
 #include "../../../Utils/TransformParams.h"
 #include "../../../Utils/UI/Theme.h"
 
@@ -459,7 +460,7 @@ void PitchDrawingHandler::updateAffectedNotePositions()
     }
 
     if (count > 0)
-      note.setMidiNote(static_cast<float>(sum / static_cast<double>(count)));
+      NotePitch::setSungPitch(note, static_cast<float>(sum / static_cast<double>(count)));
   }
 
   if (owner_.onPitchEdited)

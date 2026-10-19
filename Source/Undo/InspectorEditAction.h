@@ -8,6 +8,7 @@
 #include "../Models/Project.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/TransformParams.h"
+#include "../Utils/NotePitch.h"
 #include <algorithm>
 #include <limits>
 #include <vector>
@@ -48,7 +49,7 @@ private:
                 continue;
             params[i].applyToNote(*note);
             if (i < sourceMidi.size())
-                note->setLastNonMacroMidiNote(sourceMidi[i]);
+                NotePitch::setCorrectionSource(*note, sourceMidi[i]);
             note->markDirty();
             note->markSynthDirty();
             minFrame = std::min(minFrame, note->getStartFrame());

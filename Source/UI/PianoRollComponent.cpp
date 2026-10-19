@@ -12,6 +12,7 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
+#include "../Utils/NotePitch.h"
 #include "../Utils/HarmonyUtils.h"
 #include "../Utils/TimingRegionUtils.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
@@ -136,8 +137,7 @@ namespace
 
     void applyTo(Note& note) const
     {
-      note.setMidiNote(midiNote);
-      note.setLastNonMacroMidiNote(correctionSource);
+      NotePitch::restore(note, midiNote, correctionSource);
       note.setPitchOffset(pitchOffset);
       note.setVolumeDb(volumeDb);
       note.setFormantShift(formantShift);
@@ -710,7 +710,7 @@ void PianoRollComponent::endMacroCurvePreview()
   pitchCurveRenderer->endMacroPreview();
   for (auto& preview : inactiveMacroPreviews)
     for (const auto& binding : preview.bindings) {
-      binding.display->setMidiNoteFromPitchCorrection(binding.originalMidi);
+      NotePitch::applyCorrection(*binding.display, binding.originalMidi);
       binding.display->setPitchDrift(binding.originalDrift);
     }
   inactiveMacroPreviews.clear();
@@ -960,7 +960,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
           macro->renderer->beginMacroPreview(notes);
         }
         for (const auto& binding : macro->bindings) {
-          binding.display->setMidiNoteFromPitchCorrection(binding.source->getMidiNote());
+          NotePitch::applyCorrection(*binding.display, binding.source->getMidiNote());
           binding.display->setPitchDrift(binding.source->getPitchDrift());
         }
         curveRenderer = macro->renderer.get();
@@ -1823,12 +1823,9 @@ void PianoRollComponent::updateTrackGesture(const juce::MouseEvent& e)
       auto target = std::find_if(trackGestureTargets.begin(), trackGestureTargets.end(),
           [&](const auto& target) { return target.project == item.owner; });
       if (target != trackGestureTargets.end() && (!target->isValid || target->isValid())) {
-        item.note->setMidiNote(item.midi + delta);
-        // Keep the Correct Pitch reference (see ScaleUtils::carriedCorrectionSource).
-        item.note->setLastNonMacroMidiNote(ScaleUtils::carriedCorrectionSource(
-            *item.owner, item.source, item.note->getOriginalMidiNote(), item.midi,
-            item.midi + delta,
-            item.owner->getPitchReferenceHz()));
+        // Keep the Correct Pitch reference (see NotePitch).
+        NotePitch::applyEdit(*item.note, *item.owner, item.source, item.midi,
+                             item.midi + delta);
       }
     }
     repaint();
@@ -1861,8 +1858,8 @@ void PianoRollComponent::finishTrackGesture()
       int first = std::numeric_limits<int>::max(), last = -1;
       for (const auto& item : notes) {
         if (item.owner != target.project) continue;
-        item.note->setMidiNote(redo ? item.finalMidi : item.midi);
-        item.note->setLastNonMacroMidiNote(redo ? item.finalSource : item.source);
+        NotePitch::restore(*item.note, redo ? item.finalMidi : item.midi,
+                           redo ? item.finalSource : item.source);
         item.note->markDirty(); item.note->markSynthDirty();
         first = std::min(first, item.note->getStartFrame());
         last = std::max(last, item.note->getEndFrame());
@@ -3239,7 +3236,7 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
     if (param == InspectorParam::CorrectPitch && project != nullptr &&
         !ScaleUtils::correctionShare(*project, note->getLastNonMacroMidiNote(),
                                      note->getMidiNote(), pitchReferenceHz))
-      note->setLastNonMacroMidiNote(note->getMidiNote());
+      NotePitch::setCorrectionSource(*note, note->getMidiNote());
     inspectorEditSourceMidi.push_back(note->getLastNonMacroMidiNote());
   }
 }
@@ -3260,8 +3257,8 @@ void PianoRollComponent::setInspectorEditValue(float value)
       {
         const float source = inspectorEditSourceMidi[i];
         const float target = correctionTargetFor(source);
-        note->setMidiNoteFromPitchCorrection(
-            target + (source - target) * (1.0f - value / 100.0f));
+        NotePitch::applyCorrection(
+            *note, target + (source - target) * (1.0f - value / 100.0f));
         break;
       }
       case InspectorParam::FlattenCurve:
@@ -3345,7 +3342,7 @@ void PianoRollComponent::endInspectorEdit()
   if (!changed)
   {
     for (size_t i = 0; i < notes.size(); ++i)
-      notes[i]->setLastNonMacroMidiNote(oldParams[i].correctionSource);
+      NotePitch::setCorrectionSource(*notes[i], oldParams[i].correctionSource);
     return;
   }
 
@@ -3647,7 +3644,7 @@ bool PianoRollComponent::shiftNotesBySemitones(
   std::vector<float> oldMidis;
   std::vector<float> newMidis;
   // Harmony and arrow-key moves keep the Correct Pitch reference (see
-  // ScaleUtils::carriedCorrectionSource).
+  // NotePitch).
   std::vector<float> oldSources;
   std::vector<float> newSources;
   notesToMove.reserve(selectedNotes.size());
@@ -3681,10 +3678,8 @@ bool PianoRollComponent::shiftNotesBySemitones(
     oldMidis.push_back(oldMidi);
     newMidis.push_back(movedMidi);
     oldSources.push_back(note->getLastNonMacroMidiNote());
-    newSources.push_back(ScaleUtils::carriedCorrectionSource(
-        *project, note->getLastNonMacroMidiNote(), note->getOriginalMidiNote(), oldMidi,
-        movedMidi,
-        project->getPitchReferenceHz()));
+    newSources.push_back(NotePitch::sourceAfterEdit(
+        *project, *note, note->getLastNonMacroMidiNote(), oldMidi, movedMidi));
     dirtyStartFrame = std::min(dirtyStartFrame, note->getStartFrame());
     dirtyEndFrame = std::max(dirtyEndFrame, note->getEndFrame());
   }
@@ -3733,8 +3728,7 @@ bool PianoRollComponent::shiftNotesBySemitones(
 
   for (size_t i = 0; i < notesToMove.size(); ++i)
   {
-    notesToMove[i]->setMidiNote(newMidis[i]);
-    notesToMove[i]->setLastNonMacroMidiNote(newSources[i]);
+    NotePitch::restore(*notesToMove[i], newMidis[i], newSources[i]);
     notesToMove[i]->markDirty();
     notesToMove[i]->markSynthDirty();
   }

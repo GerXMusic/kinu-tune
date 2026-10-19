@@ -5,6 +5,7 @@
 #include "UndoableAction.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
+#include "../Utils/NotePitch.h"
 #include <vector>
 #include <functional>
 
@@ -123,14 +124,15 @@ public:
         Right
     };
 
-    // oldSources/newSources: Correct Pitch references before and after.
+    // oldSources/newSources: Correct Pitch references before and after, one
+    // per note (see NotePitch).
     TiltResetAction(const std::vector<Note *> &notes,
                     TiltSide side,
                     const std::vector<float> &oldTilts,
                     const std::vector<float> &oldMidiNotes,
-                    std::function<void()> onChanged = nullptr,
-                    std::vector<float> oldSources = {},
-                    std::vector<float> newSources = {})
+                    std::function<void()> onChanged,
+                    std::vector<float> oldSources,
+                    std::vector<float> newSources)
         : notes(notes), side(side), oldTilts(oldTilts),
           oldMidiNotes(oldMidiNotes), onChanged(onChanged),
           oldSources(std::move(oldSources)), newSources(std::move(newSources)) {}
@@ -146,10 +148,8 @@ public:
                 else
                     notes[i]->setTiltRight(oldTilts[i]);
 
-                if (i < oldMidiNotes.size())
-                    notes[i]->setMidiNote(oldMidiNotes[i]);
-                if (i < oldSources.size())
-                    notes[i]->setLastNonMacroMidiNote(oldSources[i]);
+                if (i < oldMidiNotes.size() && i < oldSources.size())
+                    NotePitch::restore(*notes[i], oldMidiNotes[i], oldSources[i]);
 
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
@@ -171,16 +171,14 @@ public:
                     notes[i]->setTiltRight(0.0f);
 
                 const float newTiltMean = (notes[i]->getTiltLeft() + notes[i]->getTiltRight()) / 2.0f;
-                if (i < oldMidiNotes.size())
+                if (i < oldMidiNotes.size() && i < newSources.size())
                 {
                     const float oldTiltLeft = (side == TiltSide::Left) ? oldTilts[i] : notes[i]->getTiltLeft();
                     const float oldTiltRight = (side == TiltSide::Right) ? oldTilts[i] : notes[i]->getTiltRight();
                     const float oldTiltMean = (oldTiltLeft + oldTiltRight) / 2.0f;
                     const float baseline = oldMidiNotes[i] - oldTiltMean;
-                    notes[i]->setMidiNote(baseline + newTiltMean);
+                    NotePitch::restore(*notes[i], baseline + newTiltMean, newSources[i]);
                 }
-                if (i < newSources.size())
-                    notes[i]->setLastNonMacroMidiNote(newSources[i]);
 
                 notes[i]->markDirty();
                 notes[i]->markSynthDirty();
@@ -212,13 +210,13 @@ private:
 class NoteSnapToSemitoneAction : public UndoableAction
 {
 public:
-    // oldSource/newSource: Correct Pitch reference before and after (NaN:
-    // leave it to setMidiNote).
+    // oldSource/newSource: Correct Pitch reference before and after (see
+    // NotePitch).
     NoteSnapToSemitoneAction(Note *note,
                              float oldMidi, float oldOffset,
                              float newMidi,
-                             std::function<void(Note *)> onNoteChanged = nullptr,
-                             float oldSource = NAN, float newSource = NAN)
+                             std::function<void(Note *)> onNoteChanged,
+                             float oldSource, float newSource)
         : note(note), oldMidi(oldMidi), oldOffset(oldOffset),
           newMidi(newMidi), onNoteChanged(onNoteChanged),
           oldSource(oldSource), newSource(newSource) {}
@@ -227,9 +225,7 @@ public:
     {
         if (note)
         {
-            note->setMidiNote(oldMidi);
-            if (!std::isnan(oldSource))
-                note->setLastNonMacroMidiNote(oldSource);
+            NotePitch::restore(*note, oldMidi, oldSource);
             note->setPitchOffset(oldOffset);
             note->markDirty();
             note->markSynthDirty();
@@ -242,9 +238,7 @@ public:
     {
         if (note)
         {
-            note->setMidiNote(newMidi);
-            if (!std::isnan(newSource))
-                note->setLastNonMacroMidiNote(newSource);
+            NotePitch::restore(*note, newMidi, newSource);
             note->setPitchOffset(0.0f);
             note->markDirty();
             note->markSynthDirty();
@@ -275,9 +269,9 @@ public:
                                   std::vector<float> oldMidis,
                                   std::vector<float> oldOffsets,
                                   std::vector<float> newMidis,
-                                  std::function<void(const std::vector<Note *> &)> onNotesChanged = nullptr,
-                                  std::vector<float> oldSources = {},
-                                  std::vector<float> newSources = {})
+                                  std::function<void(const std::vector<Note *> &)> onNotesChanged,
+                                  std::vector<float> oldSources,
+                                  std::vector<float> newSources)
         : notes(notes),
           oldMidis(std::move(oldMidis)),
           oldOffsets(std::move(oldOffsets)),
@@ -288,14 +282,12 @@ public:
 
     void undo() override
     {
-        for (size_t i = 0; i < notes.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < oldSources.size(); ++i)
         {
             auto *note = notes[i];
             if (!note)
                 continue;
-            note->setMidiNote(oldMidis[i]);
-            if (i < oldSources.size())
-                note->setLastNonMacroMidiNote(oldSources[i]);
+            NotePitch::restore(*note, oldMidis[i], oldSources[i]);
             note->setPitchOffset(oldOffsets[i]);
             note->markDirty();
             note->markSynthDirty();
@@ -306,14 +298,12 @@ public:
 
     void redo() override
     {
-        for (size_t i = 0; i < notes.size(); ++i)
+        for (size_t i = 0; i < notes.size() && i < newSources.size(); ++i)
         {
             auto *note = notes[i];
             if (!note)
                 continue;
-            note->setMidiNote(newMidis[i]);
-            if (i < newSources.size())
-                note->setLastNonMacroMidiNote(newSources[i]);
+            NotePitch::restore(*note, newMidis[i], newSources[i]);
             note->setPitchOffset(0.0f);
             note->markDirty();
             note->markSynthDirty();

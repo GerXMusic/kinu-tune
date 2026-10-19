@@ -6,6 +6,7 @@
 #include "Dialogs/QuantizePitchDialog.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/ScaleUtils.h"
+#include "../Utils/NotePitch.h"
 #include "../Utils/PitchMacroScope.h"
 #include "../Undo/UndoActions.h"
 #include <algorithm>
@@ -396,7 +397,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       for (const auto& center : state.notes) {
         if (std::abs(center.finalMidi - center.midiNote) <= 0.0001f &&
             std::abs(center.finalDrift - center.pitchDrift) <= 0.0001f) continue;
-        center.note->setMidiNoteFromPitchCorrection(redo ? center.finalMidi : center.midiNote);
+        NotePitch::applyCorrection(*center.note, redo ? center.finalMidi : center.midiNote);
         center.note->setPitchDrift(redo ? center.finalDrift : center.pitchDrift);
         center.note->markDirty();
         center.note->markSynthDirty();
@@ -483,15 +484,15 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
               // Scale mode interpolates every note toward its closest scale tone:
               // 100% reaches it, while lower values retain that fraction of the
               // note's original scale-distance.
-              center.note->setMidiNoteFromPitchCorrection(
+              NotePitch::applyCorrection(*center.note, 
                   corrected + signedDeviation *
                   ((100.0f - amount) / 100.0f));
             }
             else if (std::abs(signedDeviation) > maximumDeviation)
-              center.note->setMidiNoteFromPitchCorrection(
+              NotePitch::applyCorrection(*center.note, 
                   corrected + std::copysign(maximumDeviation, signedDeviation));
             else
-              center.note->setMidiNoteFromPitchCorrection(sourceMidi);
+              NotePitch::applyCorrection(*center.note, sourceMidi);
           }
         }
         pianoRoll.repaint();
@@ -510,7 +511,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
             changed |= std::abs(center.finalMidi - center.midiNote) > 0.0001f ||
                        std::abs(center.finalDrift - center.pitchDrift) > 0.0001f;
             if (!accepted) {
-              center.note->setMidiNoteFromPitchCorrection(center.midiNote);
+              NotePitch::applyCorrection(*center.note, center.midiNote);
               center.note->setPitchDrift(center.pitchDrift);
             }
           }
