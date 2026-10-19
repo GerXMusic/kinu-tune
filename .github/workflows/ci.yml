@@ -1,0 +1,58 @@
+# Checks every push and pull request: builds Kinu Tune with the unit tests on
+# macOS (Apple silicon) and runs them, and builds the Windows VST3 so code that
+# only one compiler accepts is caught before a release.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-tests:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      # The Core ML vocoder is not in the repository and the tests load no
+      # model, so the model check only warns here.
+      - name: Configure
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DPITCHNET_BUILD_TESTS=ON
+          -DPITCHNET_REQUIRE_MODELS=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run the unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure
+        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=OFF
+
+      - name: Build the VST3
+        run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
