@@ -159,7 +159,7 @@ Other options from PitchNet:
 - `-DUSE_BUNDLED_CUDA_RUNTIME=ON`, `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` (Windows)
 - ONNX Runtime 1.19.2 is downloaded during configure
 
-VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it takes the model files from that release's `*-models.zip`). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
+VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository and the GAME models that CMake downloads). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
 
 ### Project structure
 
