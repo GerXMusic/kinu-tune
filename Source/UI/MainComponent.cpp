@@ -558,33 +558,55 @@ MainComponent::MainComponent(bool enableAudioDevice)
           auditionSampleRate = project->getAudioData().sampleRate > 0
               ? static_cast<double>(project->getAudioData().sampleRate)
               : auditionSampleRate;
-        if (safeThis->isPluginMode())
+        constexpr auto source = AuditionOutput::Source::DraggedSegment;
+        if (safeThis->isPluginMode() &&
+            !safeThis->noteDragAuditionBackendPreviewStarted)
         {
           // Start the host/ARA preview using the established transport path.
-          // The callback below then replaces that path's source with the
+          // The loop below then replaces that path's source with the
           // resampled audition buffer.
-          if (!safeThis->noteDragAuditionBackendPreviewStarted)
-          {
-            if (auto *project = safeThis->getProject(); project &&
-                safeThis->onRequestBackendPreview)
-            {
-              safeThis->onRequestBackendPreview(
-                  *project, safeThis->noteDragAuditionStartFrame,
-                  safeThis->noteDragAuditionEndFrame);
-            }
-            safeThis->noteDragAuditionBackendPreviewStarted = true;
-          }
-          // Whole segment, repeated from its start until mouse up.
-          if (safeThis->onRequestDragAudition)
-            safeThis->onRequestDragAudition(preview, auditionSampleRate, true);
-          return;
+          if (auto *project = safeThis->getProject())
+            safeThis->auditionOutput.startHostPreview(
+                source, *project, safeThis->noteDragAuditionStartFrame,
+                safeThis->noteDragAuditionEndFrame);
+          safeThis->noteDragAuditionBackendPreviewStarted = true;
         }
-        if (auto *engine = safeThis->editorController->getAudioEngine())
-        {
-          engine->beginAuditionLoop(preview, auditionSampleRate,
-                                    /*seamless*/ false);
-        }
+        // Whole segment, repeated from its start until mouse up.
+        safeThis->auditionOutput.playLoop(source, preview, auditionSampleRate,
+                                          /*wholeSegment*/ true);
       });
+  auditionOutput.setEngine(
+      [safeThis]() -> AudioEngine *
+      {
+        return safeThis && safeThis->editorController
+                   ? safeThis->editorController->getAudioEngine()
+                   : nullptr;
+      },
+      [safeThis] { return safeThis && safeThis->isPluginMode(); });
+  // What each source does when another one (stopSound false) or a transport
+  // command (stopSound true) takes the output.
+  auditionOutput.setOnTakenOver(AuditionOutput::Source::DraggedSegment,
+                                [safeThis](bool stopSound)
+                                {
+                                  if (safeThis)
+                                    safeThis->abandonDragAudition(stopSound);
+                                });
+  auditionOutput.setOnTakenOver(AuditionOutput::Source::PianoKey,
+                                [safeThis](bool stopSound)
+                                {
+                                  if (!safeThis)
+                                    return;
+                                  if (stopSound)
+                                    safeThis->finishPianoKeyAudition();
+                                  else // the new sound replaced the tone
+                                    safeThis->pianoKeyAuditionActive = false;
+                                });
+  auditionOutput.setOnTakenOver(AuditionOutput::Source::RegionPreview,
+                                [safeThis](bool)
+                                {
+                                  if (safeThis)
+                                    safeThis->finishPreviewRegion(false);
+                                });
   if (!isPluginMode())
   {
     ownedUndoManager = std::make_unique<PitchUndoManager>(100);
@@ -2300,7 +2322,7 @@ void MainComponent::exportMidiFile()
 
 void MainComponent::play()
 {
-  abandonDragAudition(true); // the user's transport choice wins
+  auditionOutput.yieldToTransport(); // the user's transport choice wins
   auto *project = getProject();
 
   // In plugin mode, playback is controlled by the host. Update immediately for
@@ -2348,7 +2370,7 @@ void MainComponent::play()
 
 void MainComponent::pause()
 {
-  abandonDragAudition(true); // the user's transport choice wins
+  auditionOutput.yieldToTransport(); // the user's transport choice wins
   if (previewRegionActive)
   {
     finishPreviewRegion(true);
@@ -2378,7 +2400,7 @@ void MainComponent::pause()
 
 void MainComponent::stop()
 {
-  abandonDragAudition(true); // the user's transport choice wins
+  auditionOutput.yieldToTransport(); // the user's transport choice wins
   if (previewRegionActive)
   {
     finishPreviewRegion(false);
@@ -2462,7 +2484,7 @@ void MainComponent::previewNoteRegion(int startFrame, int endFrame)
 {
   if (endFrame <= startFrame)
     return;
-  abandonDragAudition(false); // the region preview replaces it
+  auditionOutput.claim(AuditionOutput::Source::RegionPreview);
 
   const double startTime = framesToSeconds(startFrame);
   const double endTime = framesToSeconds(endFrame);
@@ -2480,8 +2502,9 @@ void MainComponent::previewNoteRegion(int startFrame, int endFrame)
     pianoRoll.setPreviewPlaybackState(true, startFrame, endFrame);
     pianoRoll.setPreviewPlaybackPosition(startTime);
 
-    if (auto *project = getProject(); project && onRequestBackendPreview)
-      onRequestBackendPreview(*project, startFrame, endFrame);
+    if (auto *project = getProject())
+      auditionOutput.startHostPreview(AuditionOutput::Source::RegionPreview,
+                                      *project, startFrame, endFrame);
 
     return;
   }
@@ -2508,6 +2531,7 @@ void MainComponent::finishPreviewRegion(bool restorePosition)
   if (!previewRegionActive)
     return;
 
+  auditionOutput.release(AuditionOutput::Source::RegionPreview);
   const double returnTime = previewRegionReturnTime;
   const bool shouldResumeProjectPlayback =
       previewRegionWasProjectPlaying && restorePosition;
@@ -2519,8 +2543,7 @@ void MainComponent::finishPreviewRegion(bool restorePosition)
 
   if (isPluginMode())
   {
-    if (onStopBackendPreview)
-      onStopBackendPreview();
+    auditionOutput.stopHostPreview();
 
     juce::ignoreUnused(shouldResumeProjectPlayback);
     hasPendingCursorUpdate.store(false);
@@ -2591,12 +2614,14 @@ void MainComponent::auditionDraggedNote(const Note &note)
   {
     noteDragAuditionActive = true;
     noteDragAuditionBackendPreviewStarted = false;
+    auditionOutput.claim(AuditionOutput::Source::DraggedSegment);
     if (!isPluginMode())
     {
       auto *engine = editorController ? editorController->getAudioEngine() : nullptr;
       if (!engine)
       {
         noteDragAuditionActive = false;
+        auditionOutput.release(AuditionOutput::Source::DraggedSegment);
         return;
       }
       noteDragAuditionWasPlaying = engine->isPlaying();
@@ -2639,18 +2664,9 @@ void MainComponent::abandonDragAudition(bool stopSound)
   // means a drag is in progress: keep it silent for the rest of that drag
   // (otherwise the next mouse move would start it again over the transport).
   noteDragAuditionSuppressed = true;
+  auditionOutput.release(AuditionOutput::Source::DraggedSegment);
   if (stopSound)
-  {
-    if (isPluginMode())
-    {
-      if (onStopDragAudition)
-        onStopDragAudition();
-    }
-    else if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
-    {
-      engine->endAuditionLoop();
-    }
-  }
+    auditionOutput.stopLoop();
   if (resampledLoopAudition)
     resampledLoopAudition->cancel();
   noteDragAuditionActive = false;
@@ -2673,16 +2689,16 @@ void MainComponent::cancelDraggedNoteAudition()
   if (!noteDragAuditionActive)
     return;
   lastAuditionedNote = nullptr;
+  auditionOutput.release(AuditionOutput::Source::DraggedSegment);
 
   if (resampledLoopAudition)
     resampledLoopAudition->cancel();
   noteDragAuditionPending = false;
   pendingNoteDragAuditionSource.clear();
 
+  auditionOutput.stopLoop();
   if (isPluginMode())
   {
-    if (onStopDragAudition)
-      onStopDragAudition();
     noteDragAuditionActive = false;
     noteDragAuditionBackendPreviewStarted = false;
     return;
@@ -2690,7 +2706,6 @@ void MainComponent::cancelDraggedNoteAudition()
 
   if (auto *engine = editorController ? editorController->getAudioEngine() : nullptr)
   {
-    engine->endAuditionLoop();
     if (noteDragAuditionWasPlaying)
       engine->play();
     else
@@ -2734,26 +2749,27 @@ void MainComponent::auditionPianoKey(int midiNote)
   // transport state rather than reading the audition's own "playing" flag.
   const bool takeOverDrag = noteDragAuditionActive;
   const bool dragWasPlaying = noteDragAuditionWasPlaying;
-  abandonDragAudition(false);
+  constexpr auto source = AuditionOutput::Source::PianoKey;
+  auditionOutput.claim(source);
 
   if (isPluginMode())
   {
     // ARA starts the host preview signal flow for a range; the temporary tone
     // buffer then replaces that source in the established audition path.
-    if (auto *project = getProject(); project && onRequestBackendPreview)
-      onRequestBackendPreview(*project, 0, 1);
-    if (onRequestDragAudition)
-      onRequestDragAudition(tone, sampleRate, false);
+    if (auto *project = getProject())
+      auditionOutput.startHostPreview(source, *project, 0, 1);
+    auditionOutput.playLoop(source, tone, sampleRate, /*wholeSegment*/ false);
   }
   else if (auto *engine = editorController ? editorController->getAudioEngine()
                                             : nullptr)
   {
     pianoKeyAuditionWasPlaying = takeOverDrag ? dragWasPlaying : engine->isPlaying();
     pianoKeyAuditionReturnTime = engine->getPosition();
-    engine->beginAuditionLoop(tone, sampleRate);
+    auditionOutput.playLoop(source, tone, sampleRate, /*wholeSegment*/ false);
   }
   else
   {
+    auditionOutput.release(source);
     return;
   }
 
@@ -2764,16 +2780,13 @@ void MainComponent::finishPianoKeyAudition()
 {
   if (!pianoKeyAuditionActive)
     return;
+  auditionOutput.release(AuditionOutput::Source::PianoKey);
 
-  if (isPluginMode())
+  auditionOutput.stopLoop();
+  if (auto *engine = !isPluginMode() && editorController
+                         ? editorController->getAudioEngine()
+                         : nullptr)
   {
-    if (onStopDragAudition)
-      onStopDragAudition();
-  }
-  else if (auto *engine = editorController ? editorController->getAudioEngine()
-                                            : nullptr)
-  {
-    engine->endAuditionLoop();
     if (pianoKeyAuditionWasPlaying)
       engine->play();
     else

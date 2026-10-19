@@ -91,7 +91,20 @@ target_link_libraries(VariAudioInspectorTests PRIVATE pitchnet_ui)
 target_compile_features(VariAudioInspectorTests PRIVATE cxx_std_17)
 add_test(NAME VariAudioInspectorTests COMMAND VariAudioInspectorTests)
 
-# Every pitch write goes through Source/Utils/NotePitch.h (see there).
-add_test(NAME PitchWriteGuard
-         COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/PitchWriteGuard.cmake)
+add_executable(AuditionOutputTests AuditionOutputTests.cpp)
+target_link_libraries(AuditionOutputTests PRIVATE pitchnet_ui)
+target_compile_features(AuditionOutputTests PRIVATE cxx_std_17)
+add_test(NAME AuditionOutputTests COMMAND AuditionOutputTests)
+
+add_executable(AuditionHandoffTests AuditionHandoffTests.cpp)
+target_link_libraries(AuditionHandoffTests PRIVATE pitchnet_ui)
+target_compile_features(AuditionHandoffTests PRIVATE cxx_std_17)
+add_test(NAME AuditionHandoffTests COMMAND AuditionHandoffTests)
+
+# Calls that must go through one entry point (see SourceGuard.cmake).
+foreach(guard_rule IN ITEMS pitch-writes audition-output)
+    add_test(NAME SourceGuard_${guard_rule}
+             COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
+                     -DRULE=${guard_rule}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceGuard.cmake)
+endforeach()

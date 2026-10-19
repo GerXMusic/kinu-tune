@@ -1,0 +1,171 @@
+// Kinu Tune - Copyright (C) 2026 Keinoaza
+// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
+#pragma once
+
+#include "../../JuceHeader.h"
+#include "../../Audio/AudioEngine.h"
+#include "../../Models/Project.h"
+#include <array>
+#include <functional>
+
+// The only way the editor sounds anything besides normal playback. The dragged
+// segment's feedback, the piano key tone and the region preview share one
+// output: the host's preview path in the plug-in, the AudioEngine's audition
+// loop in the standalone app. Starting a source here takes the output from the
+// source that had it, so a new kind of audition cannot leave the previous one
+// sounding. The host callbacks live only here (MainComponent forwards its
+// setters), and the AuditionOutputGuard test fails when code outside this file
+// calls the engine's audition loop directly.
+class AuditionOutput
+{
+public:
+    enum class Source
+    {
+        None,
+        DraggedSegment,
+        PianoKey,
+        RegionPreview
+    };
+
+    // Called on a source when another one takes the output (stopSound false:
+    // the new sound replaces it) or when a transport command does (stopSound
+    // true: silence it).
+    using TakenOver = std::function<void(bool stopSound)>;
+
+    void setOnTakenOver(Source source, TakenOver handler)
+    {
+        handlers[index(source)] = std::move(handler);
+    }
+
+    // Plug-in backends (set by the plug-in editor through MainComponent).
+    void setStartHostPreview(std::function<void(const Project &, int, int)> start)
+    {
+        startHostPreviewRange = std::move(start);
+    }
+    void setStopHostPreview(std::function<void()> stop)
+    {
+        stopHostPreviewRange = std::move(stop);
+    }
+    // (buffer, sample rate, wholeSegment): true repeats the whole buffer from
+    // its start (drag feedback), false loops it seamlessly (key tone).
+    void setPlayHostLoop(std::function<void(const juce::AudioBuffer<float> &, double, bool)> play)
+    {
+        playHostLoop = std::move(play);
+    }
+    void setStopHostLoop(std::function<void()> stop) { stopHostLoop = std::move(stop); }
+    // Standalone backend and the mode switch (set by MainComponent).
+    void setEngine(std::function<AudioEngine *()> engineGetter,
+                   std::function<bool()> pluginModeGetter)
+    {
+        engine = std::move(engineGetter);
+        isPluginMode = std::move(pluginModeGetter);
+    }
+
+    Source owner() const { return current; }
+
+    // A source is about to sound: the output is taken from its current owner,
+    // whose own sound is replaced rather than stopped.
+    void claim(Source source)
+    {
+        if (source == current)
+            return;
+        const Source previous = current;
+        current = source;
+        notify(previous, false);
+    }
+
+    // Play, pause and stop: the user's transport choice wins over the dragged
+    // segment and the piano key, which go silent. The region preview is a
+    // transport preview; pause() and stop() finish it themselves.
+    void yieldToTransport()
+    {
+        const Source previous = current;
+        if (previous != Source::DraggedSegment && previous != Source::PianoKey)
+            return;
+        current = Source::None;
+        notify(previous, true);
+    }
+
+    // The source stopped by itself (mouse up, the preview ended).
+    void release(Source source)
+    {
+        if (current == source)
+            current = Source::None;
+    }
+
+    // --- Sound paths. Each one claims the output first.
+
+    // Plug-in: opens the host preview path for a timeline range.
+    void startHostPreview(Source source, const Project &project, int startFrame,
+                          int endFrame)
+    {
+        claim(source);
+        if (startHostPreviewRange)
+            startHostPreviewRange(project, startFrame, endFrame);
+    }
+    void stopHostPreview()
+    {
+        if (stopHostPreviewRange)
+            stopHostPreviewRange();
+    }
+
+    // Loops `buffer`: through the host preview path in the plug-in (after
+    // startHostPreview), through the AudioEngine in the standalone app.
+    // wholeSegment: repeat it from its start (drag feedback); otherwise loop it
+    // seamlessly (key tone). Returns false when there is no output.
+    bool playLoop(Source source, const juce::AudioBuffer<float> &buffer,
+                  double sampleRate, bool wholeSegment)
+    {
+        claim(source);
+        if (pluginMode())
+        {
+            if (!playHostLoop)
+                return false;
+            playHostLoop(buffer, sampleRate, wholeSegment);
+            return true;
+        }
+        if (auto *audioEngine = engine ? engine() : nullptr)
+        {
+            audioEngine->beginAuditionLoop(buffer, static_cast<int>(sampleRate),
+                                           /*seamless*/ !wholeSegment);
+            return true;
+        }
+        return false;
+    }
+
+    // Stops the loop (the transport state is the caller's to restore).
+    void stopLoop()
+    {
+        if (pluginMode())
+        {
+            if (stopHostLoop)
+                stopHostLoop();
+            return;
+        }
+        if (auto *audioEngine = engine ? engine() : nullptr)
+            audioEngine->endAuditionLoop();
+    }
+
+private:
+    static size_t index(Source source) { return static_cast<size_t>(source); }
+
+    bool pluginMode() const { return isPluginMode && isPluginMode(); }
+
+    void notify(Source source, bool stopSound)
+    {
+        if (source == Source::None)
+            return;
+        if (auto &handler = handlers[index(source)])
+            handler(stopSound);
+    }
+
+    Source current = Source::None;
+    std::array<TakenOver, 4> handlers;
+    std::function<void(const Project &, int, int)> startHostPreviewRange;
+    std::function<void()> stopHostPreviewRange;
+    std::function<void(const juce::AudioBuffer<float> &, double, bool)> playHostLoop;
+    std::function<void()> stopHostLoop;
+    std::function<AudioEngine *()> engine;
+    std::function<bool()> isPluginMode;
+};

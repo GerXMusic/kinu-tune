@@ -11,6 +11,7 @@
 #include "CustomTitleBar.h"
 #include "Commands.h"
 #include "Components/AppFont.h"
+#include "Main/AuditionOutput.h"
 #include "Main/MenuHandler.h"
 #include "Main/SettingsManager.h"
 #include "ParameterPanel.h"
@@ -162,19 +163,21 @@ public:
       std::function<void(const Project &)> callback) override {
     onRequestBackendRender = std::move(callback);
   }
+  // The host preview and audition callbacks go straight to AuditionOutput,
+  // the only code allowed to sound them (see there).
   void setOnRequestBackendPreview(
       std::function<void(const Project &, int, int)> callback) override {
-    onRequestBackendPreview = std::move(callback);
+    auditionOutput.setStartHostPreview(std::move(callback));
   }
   void setOnStopBackendPreview(std::function<void()> callback) override {
-    onStopBackendPreview = std::move(callback);
+    auditionOutput.setStopHostPreview(std::move(callback));
   }
   void setOnRequestDragAudition(
       std::function<void(const juce::AudioBuffer<float> &, double, bool)> callback) override {
-    onRequestDragAudition = std::move(callback);
+    auditionOutput.setPlayHostLoop(std::move(callback));
   }
   void setOnStopDragAudition(std::function<void()> callback) override {
-    onStopDragAudition = std::move(callback);
+    auditionOutput.setStopHostLoop(std::move(callback));
   }
   void setOnRequestHostPlayState(
       std::function<void(bool)> callback) override {
@@ -256,12 +259,9 @@ public:
       onPitchEditFinished; // Called when pitch editing is finished
                            // (Melodyne-style: triggers real-time update)
   std::function<void(const Project &)> onRequestBackendRender;
-  std::function<void(const Project &, int, int)> onRequestBackendPreview;
-  std::function<void()> onStopBackendPreview;
-  // (buffer, sample rate, wholeSegment): true repeats the whole buffer from its
-  // start (drag feedback), false loops it seamlessly (sustained key tone).
-  std::function<void(const juce::AudioBuffer<float> &, double, bool)> onRequestDragAudition;
-  std::function<void()> onStopDragAudition;
+  // Everything that sounds besides playback goes through here; it holds the
+  // host preview and audition callbacks (see AuditionOutput).
+  AuditionOutput auditionOutput;
 
   // Plugin mode - request host transport control (optional; only works if host
   // supports it)
@@ -285,6 +285,8 @@ public:
   void triggerResynthesis() override; // Triggered by DAW parameter automation
 
 private:
+  // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
+  friend struct MainComponentTestAccess;
   void openFile();
   void exportFile();
   void exportMidiFile();

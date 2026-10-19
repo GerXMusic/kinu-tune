@@ -82,6 +82,17 @@ The full history of the changes is in the git log of this repository.
 - Drag-end code reads the f0 size after rebuilding the pitch curves.
 - A right/Ctrl click on the cycle ruler no longer arms a cycle drag that took
   over the next drag anywhere in the editor.
+- Every write of a note's pitch and its Correct Pitch reference goes through
+  Source/Utils/NotePitch.h; the undo actions take the references as required
+  arguments.
+
+### Audition output
+- The dragged segment's feedback, the piano key tone and the region preview
+  sound through one owner (Source/UI/Main/AuditionOutput.h), which holds the
+  host preview and audition callbacks. A source that starts takes the output
+  from the previous one; play, pause and stop silence the dragged segment and
+  the piano key. A piano key or a drag now also finishes a running region
+  preview, and a transport command now also stops a held piano key.
 
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano
@@ -99,24 +110,34 @@ The full history of the changes is in the git log of this repository.
   builds the Windows release; packaging/INSTALL-*.txt are the install notes in
   the release zips.
 
-### Tests
+### Tests and checks
 - New unit tests: HarmonyIntervalTests, HarmonyApplyTests,
-  VariAudioControlTests, VariAudioInspectorTests, and RenderSnapshots (renders
-  the piano roll and inspector to PNG files).
+  VariAudioControlTests, VariAudioInspectorTests, AuditionOutputTests,
+  AuditionHandoffTests, and RenderSnapshots (renders the piano roll and
+  inspector to PNG files).
+- tests/SourceGuard.cmake: fails when code outside the allowed files writes a
+  note's pitch directly or calls the engine's audition loop directly.
+- `.github/workflows/ci.yml` runs the unit tests on macOS and builds the Windows
+  VST3 on every push; `PITCHNET_REQUIRE_MODELS=OFF` lets it configure without
+  the macOS Core ML vocoder.
+- dev-rules.md lists the design rules to keep when changing the code.
 
 ## Files
 
 New files:
 
 - `MODIFICATIONS.md`, `licenses/*`, `Resources/fonts/*-OFL.txt`
-- `.github/workflows/windows-release.yml`, `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`
+- `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
+  `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`
 - `Source/Undo/InspectorEditAction.h`
-- `Source/Utils/HarmonyUtils.h`
+- `Source/Utils/HarmonyUtils.h`, `Source/Utils/NotePitch.h`
+- `Source/UI/Main/AuditionOutput.h`
 - `tests/HarmonyApplyTests.cpp`, `tests/HarmonyIntervalTests.cpp`,
   `tests/RenderSnapshots.cpp`, `tests/VariAudioControlTests.cpp`,
-  `tests/VariAudioInspectorTests.cpp`
+  `tests/VariAudioInspectorTests.cpp`, `tests/AuditionOutputTests.cpp`,
+  `tests/AuditionHandoffTests.cpp`, `tests/SourceGuard.cmake`
 
 Removed files:
 
@@ -132,7 +153,7 @@ Modified files (changed by Keinoaza on or after 2026-10-19):
 - `Source/Audio/AudioEngine.h/.cpp`, `Source/Audio/ResampledLoopAudition.h/.cpp`
 - `Source/Audio/FCPEPitchDetector.cpp`, `Source/Audio/GAMEDetector.cpp`,
   `Source/Audio/RMVPEPitchDetector.cpp`, `Source/Audio/Vocoder.cpp`
-- `Source/Models/Note.h`, `Source/Models/Project.h`
+- `Source/Models/Note.h`, `Source/Models/Project.h`, `Source/Models/ProjectSerializer.cpp`
 - `Source/Plugin/ARADocumentController.h/.cpp`, `Source/Plugin/PluginEditor.cpp`,
   `Source/Plugin/PluginProcessor.h/.cpp`
 - `Source/UI/Commands.h`, `Source/UI/IMainView.h`, `Source/UI/MainComponent.h/.cpp`,
@@ -142,7 +163,8 @@ Modified files (changed by Keinoaza on or after 2026-10-19):
 - `Source/UI/PianoRoll/GridRenderer.cpp`, `NoteRenderer.h/.cpp`,
   `PianoRollInteractionContext.h/.cpp`, `PitchEditor.h/.cpp`,
   `NoteSplitter.cpp`, `PitchToolController.cpp`, `PitchToolHandles.h/.cpp`,
-  `States/LoopDragHandler.cpp`, `States/SelectHandler.h/.cpp`, `TimelineRenderer.cpp`,
+  `States/LoopDragHandler.cpp`, `States/PitchDrawingHandler.cpp`,
+  `States/SelectHandler.h/.cpp`, `TimelineRenderer.cpp`,
   `WaveformBackgroundRenderer.h/.cpp`
 - `Source/Plugin/AraDiagnostics.h`, `Source/Utils/AppLogger.h` (comments)
 - `Source/Utils/Constants.h`, `Source/Utils/Localization.h`, `Source/Utils/OnnxRuntime.cpp`,
