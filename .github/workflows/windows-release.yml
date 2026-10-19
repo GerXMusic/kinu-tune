@@ -17,6 +17,7 @@ permissions:
 jobs:
   windows-x64:
     runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout the tagged source with submodules
         uses: actions/checkout@v4
