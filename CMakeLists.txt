@@ -852,6 +852,22 @@ if(ONNXRUNTIME_FOUND)
                 add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
                     COMMAND install_name_tool -add_rpath "@loader_path/../Frameworks" "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/MacOS/${PITCHNET_PRODUCT_NAME}" 2>/dev/null || true)
             endif()
+            # Linking records the build tree's ONNX Runtime folder (an absolute
+            # path of the build machine) as an rpath; drop it from the bundles
+            # and fail if any absolute rpath is left (re-signed below).
+            add_custom_command(TARGET PitchNet POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:PitchNet>
+                        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/StripBuildRpaths.cmake
+                VERBATIM)
+            foreach(pitchnet_bundle_target PitchNetPlugin_VST3 PitchNetPlugin_AU PitchNetPlugin_AAX)
+                if(TARGET ${pitchnet_bundle_target})
+                    add_custom_command(TARGET ${pitchnet_bundle_target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND}
+                                -DBINARY=$<TARGET_BUNDLE_DIR:${pitchnet_bundle_target}>/Contents/MacOS/${PITCHNET_PRODUCT_NAME}
+                                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/StripBuildRpaths.cmake
+                        VERBATIM)
+                endif()
+            endforeach()
         endif()
     endif()
 endif()

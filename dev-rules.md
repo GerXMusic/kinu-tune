@@ -51,7 +51,13 @@
 
 - `THIRD_PARTY_NOTICES.txt` と `Resources/lang/*.json` はプラグイン本体に埋め込まれる。変えたら Mac 版・Windows 版を作り直して配布物を差し替える
 
-## 9. 変更の進め方
+## 9. 配布するバイナリにビルドした Mac のパスを残さない
+
+- リンクの時に、ビルドフォルダー内の ONNX Runtime の場所(ユーザー名を含む絶対パス)が、ライブラリを探す場所(rpath)として記録される。Mac のバンドルは `cmake/StripBuildRpaths.cmake` が絶対パスの rpath を消し、残っていればビルドを失敗させる
+- 新しい Mac 用のターゲット(バンドル)を足したら、同じ処理を POST_BUILD に足す
+- 確かめ方: `otool -l <バイナリ> | grep -A2 LC_RPATH` に `/` で始まるパスが無いこと。`strings` では rpath が出ないので、これで確かめる
+
+## 10. 変更の進め方
 
 - 不具合を直す時は、直す前に失敗するテストを足す
 - コミットの前に、テスト全部(`ctest --test-dir build`)と pluginval(厳しさ 5)を通す。`pitchnet_ui` にリンクするテストは、UI を変えたら全体をビルドしてから流す

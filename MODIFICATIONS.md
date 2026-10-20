@@ -124,6 +124,9 @@ The full history of the changes is in the git log of this repository.
   VST3 on every push; `PITCHNET_REQUIRE_MODELS=OFF` lets it configure without
   the macOS Core ML vocoder.
 - dev-rules.md lists the design rules to keep when changing the code.
+- cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
+  ONNX Runtime folder) from the macOS bundles after linking and fails the build
+  if one is left.
 
 ## Files
 
@@ -137,6 +140,7 @@ New files:
 - `Source/Undo/InspectorEditAction.h`
 - `Source/Utils/HarmonyUtils.h`, `Source/Utils/NotePitch.h`
 - `Source/UI/Main/AuditionOutput.h`
+- `cmake/StripBuildRpaths.cmake`
 - `tests/HarmonyApplyTests.cpp`, `tests/HarmonyIntervalTests.cpp`,
   `tests/RenderSnapshots.cpp`, `tests/VariAudioControlTests.cpp`,
   `tests/VariAudioInspectorTests.cpp`, `tests/AuditionOutputTests.cpp`,
