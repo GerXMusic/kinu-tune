@@ -23,10 +23,10 @@ also carries a source archive that includes the git submodules (JUCE, ARA SDK,
 r8brain-free-src).
 
 Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune
-contributors, OpenVPI, Steinberg or Celemony. Cubase and VariAudio are
+contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are
 trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark
 of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of
-Celemony Software GmbH.
+Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
 
 Kinu Tune binary releases include the FCPE, GAME and PC-NSF-HiFiGAN model
 files described below. They do NOT include rmvpe.onnx (see "RMVPE model

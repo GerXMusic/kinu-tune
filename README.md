@@ -18,7 +18,7 @@ Kinu Tune is a modified version of [PitchNet](https://github.com/SessionLoops/Pi
 
 Kinu Tune is free software, distributed under the [GNU Affero General Public License, version 3](LICENSE) (AGPLv3), WITHOUT ANY WARRANTY. When you convey copies or modified versions, keep all copyright, license and attribution notices and make the corresponding source available, as the AGPLv3 requires. Third-party components and model files keep their own licenses: see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
-Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune contributors, OpenVPI, Steinberg or Celemony. Cubase and VariAudio are trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of Celemony Software GmbH.
+Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
 
 ---
 
@@ -38,17 +38,23 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 
 - macOS 13 以降、Apple シリコン(arm64)。配布している Mac 版は Intel Mac では動きません
 - Windows 10/11(x64)。Windows 版は GitHub Actions で自動ビルドしたもので、Windows 上での動作はまだ確認していません
-- Cubase など ARA 2 に対応したホスト(ARA なしでも、通常のインサートとして録り込み方式で使えます)
+- Cubase など ARA 2 に対応したホスト(ARA なしでも、通常のインサートとして録り込み方式で使えます)。Mac 版は VST3 と AU(Logic Pro など向け)の両方を同梱しています。Logic Pro では動作を確認していません
 
 ### インストール(配布版)
 
 1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
-2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます
+2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
 3. `models` フォルダーを `~/Library/Application Support/Keinoaza/Kinu Tune/` の中に入れます(`.../Kinu Tune/models/fcpe.onnx` などになる配置)
 4. 配布版は Apple の公証を受けていないため、ターミナルで次を実行して「開発元未確認」の制限を外します
 
    ```bash
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+   ```
+
+   AU 版を入れた場合は、続けて次も実行します
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
    ```
 
 5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
@@ -109,17 +115,23 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 
 - macOS 13 or later on Apple silicon (arm64). The released macOS build does not run on Intel Macs.
 - Windows 10/11 (x64). The Windows build is made automatically on GitHub Actions and has not been tested on Windows yet.
-- An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode.
+- An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
 
 ### Installing a release
 
 1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
-2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`.
+2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
 3. Copy the `models` folder into `~/Library/Application Support/Keinoaza/Kinu Tune/` (so that `.../Kinu Tune/models/fcpe.onnx` exists).
 4. The release is not notarized. Remove the quarantine flag in Terminal:
 
    ```bash
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+   ```
+
+   If you installed the Audio Unit, also run:
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
    ```
 
 5. Restart your DAW and rescan plugins.

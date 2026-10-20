@@ -3,6 +3,9 @@ Kinu Tune - macOS (Apple silicon) インストール / Install
 1. "Kinu Tune.vst3" を次の場所にコピーします。
    Copy "Kinu Tune.vst3" to:
      ~/Library/Audio/Plug-Ins/VST3/
+   Logic Pro などで AU 版を使う場合は、"Kinu Tune.component" を次の場所にコピーします。
+   For the Audio Unit (Logic Pro and other AU hosts), copy "Kinu Tune.component" to:
+     ~/Library/Audio/Plug-Ins/Components/
 
 2. "models" フォルダーを次の場所にコピーします(フォルダーが無ければ作ります)。
    Copy the "models" folder into (create the folders if needed):
@@ -13,6 +16,8 @@ Kinu Tune - macOS (Apple silicon) インストール / Install
 3. Apple の公証を受けていないため、ターミナルで次を実行します。
    The build is not notarized; run this in Terminal:
      xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+   AU 版を入れた場合は、次も実行します。 / If you installed the Audio Unit, also run:
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
 
 4. DAW を起動し直し、プラグインを再スキャンします。
    Restart your DAW and rescan plugins.
