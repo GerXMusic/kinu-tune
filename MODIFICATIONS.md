@@ -7,7 +7,7 @@ modification required by section 5(a) of the GNU Affero General Public License,
 version 3.
 
 - Modified by: Keinoaza
-- Date of modification: 2026-10-19 (first release, Kinu Tune 0.1.0); continued through 2026-10-20 (Kinu Tune 0.1.1)
+- Date of modification: 2026-10-19 (first release, Kinu Tune 0.1.0); continued through 2026-10-21 (Kinu Tune 0.1.2)
 - Based on: SessionLoops/PitchNet commit `8787321` ("Disable file logging in release builds")
 - License of the modified work: GNU Affero General Public License, version 3 (see [LICENSE](LICENSE))
 
@@ -21,7 +21,7 @@ The full history of the changes is in the git log of this repository.
 - Settings folder `~/Library/Kinu Tune/` (macOS), logs `~/Library/Logs/Kinu Tune/`, models
   `~/Library/Application Support/Keinoaza/Kinu Tune/models/`.
 - New icon and logo images.
-- Version number set to 0.1.0, then 0.1.1.
+- Version number set to 0.1.0, then 0.1.1 and 0.1.2.
 
 ### Privacy
 - The online update check of PitchNet is disabled.
