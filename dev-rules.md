@@ -46,6 +46,8 @@
 
 - キャプチャなしのラムダ `[]` の中でローカルの `constexpr` を読まない(Windows のコンパイラ MSVC が通さない)。`[&]` にする
 - 破ると: GitHub の自動チェック(CI)の `windows-build` が落ちる
+- Windows のプラグインは C++ の実行時ライブラリ(MSVC ランタイム)を静的にリンクする(`CMakeLists.txt` の `CMAKE_MSVC_RUNTIME_LIBRARY`。ターゲットを作る前に設定する)。共有のランタイムだと、DAW が自分のフォルダーに持っている古い `msvcp140.dll` を使うことになり、新しいコンパイラーで作った `std::mutex` が最初のロックで落ちる(一覧には出るが、挿した瞬間に落ちる)。ONNX Runtime の DLL は共有のランタイムのままだが、Microsoft が古いランタイムでも動くように作っている
+- 破ると: CI の `windows-build` で `tools/windows/check-vst3.ps1` が落ちる(プラグインが `msvcp140.dll`・`vcruntime140.dll` を読み込む指定を持っている、または Visual C++ 14.29 のランタイムで作成できない)。Windows 版のリリース用ワークフローも、同じ検査に通らなければ zip を付けない
 
 ## 8. 文面を変えたらバイナリも作り直す
 

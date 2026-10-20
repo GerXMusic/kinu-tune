@@ -11,8 +11,15 @@
 // itself; when the plug-in imports MSVCP140.dll, Windows looks in this
 // program's folder first. Copying an old msvcp140.dll next to this program
 // therefore gives the plug-in exactly what a DAW that ships an old app-local
-// runtime gives it. (pluginval cannot do this: it uses the shared runtime and
-// is itself built with a toolset that needs MSVCP140 14.40 or later.)
+// runtime gives it. Such a DAW has loaded its runtime long before any plug-in,
+// so runtime DLLs found next to this program are loaded first, too. On a
+// machine without any Visual C++ runtime this program still runs, which
+// pluginval cannot: it uses the shared runtime and is itself built with a
+// toolset that needs MSVCP140 14.40 or later.
+//
+// After the run, onnxruntime.dll must have come from the plug-in's own folder.
+// Windows ships an older onnxruntime.dll in System32, and the delay-load
+// helper falls back to it when the bundled one cannot be loaded.
 //
 // Usage: vst3_instantiate <path to the DLL inside Contents\x86_64-win>
 // Exit codes: 0 = every stage passed, 1 = usage, 2 = the DLL or its factory
@@ -22,6 +29,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
+#include <string>
 
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -123,15 +132,52 @@ bool runStage (const char* name, void (*stage) (Context&), Context& c)
     return c.ok;
 }
 
+const wchar_t* const runtimeDlls[] = { L"vcruntime140.dll", L"vcruntime140_1.dll",
+                                       L"msvcp140.dll", L"msvcp140_1.dll" };
+
+std::wstring loadedPath (const wchar_t* name)
+{
+    wchar_t path[MAX_PATH] {};
+    if (auto* module = GetModuleHandleW (name))
+        GetModuleFileNameW (module, path, MAX_PATH);
+
+    return path;
+}
+
+std::wstring directoryOf (const std::wstring& path)
+{
+    const auto slash = path.find_last_of (L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr (0, slash);
+}
+
 void printLoadedRuntime()
 {
-    for (const auto* name : { L"msvcp140.dll", L"vcruntime140.dll", L"onnxruntime.dll" })
+    for (const auto* name : runtimeDlls)
     {
-        wchar_t path[MAX_PATH] {};
-        if (auto* module = GetModuleHandleW (name))
-            GetModuleFileNameW (module, path, MAX_PATH);
+        const auto path = loadedPath (name);
+        std::printf ("  %ls: %ls\n", name, path.empty() ? L"(not loaded)" : path.c_str());
+    }
 
-        std::printf ("  %ls: %ls\n", name, path[0] != 0 ? path : L"(not loaded)");
+    const auto path = loadedPath (L"onnxruntime.dll");
+    std::printf ("  onnxruntime.dll: %ls\n", path.empty() ? L"(not loaded)" : path.c_str());
+}
+
+// Loads the runtime DLLs that sit next to this program, as a DAW with an
+// app-local runtime has done by the time it loads a plug-in.
+void preloadLocalRuntime()
+{
+    wchar_t self[MAX_PATH] {};
+    GetModuleFileNameW (nullptr, self, MAX_PATH);
+    const auto folder = directoryOf (self);
+
+    for (const auto* name : runtimeDlls)
+    {
+        const auto path = folder + L"\\" + name;
+        if (GetFileAttributesW (path.c_str()) != INVALID_FILE_ATTRIBUTES)
+        {
+            const bool loaded = LoadLibraryW (path.c_str()) != nullptr;
+            std::printf ("preloaded %ls: %s\n", path.c_str(), loaded ? "ok" : "FAILED");
+        }
     }
 }
 } // namespace
@@ -143,6 +189,8 @@ int wmain (int argc, wchar_t** argv)
         std::printf ("usage: vst3_instantiate <plug-in DLL>\n");
         return 1;
     }
+
+    preloadLocalRuntime();
 
     std::printf ("loading %ls\n", argv[1]);
     auto* module = LoadLibraryW (argv[1]);
@@ -186,13 +234,20 @@ int wmain (int argc, wchar_t** argv)
         return 2;
     }
 
-    const bool passed = runStage ("create the audio component", createComponent, c)
-                     && runStage ("initialise", initialiseComponent, c)
-                     && runStage ("set up processing and activate", activate, c)
-                     && runStage ("tear down", tearDown, c);
+    bool passed = runStage ("create the audio component", createComponent, c)
+               && runStage ("initialise", initialiseComponent, c)
+               && runStage ("set up processing and activate", activate, c)
+               && runStage ("tear down", tearDown, c);
 
     std::printf ("runtime after the run:\n");
     printLoadedRuntime();
+
+    const auto onnxRuntimeFolder = directoryOf (loadedPath (L"onnxruntime.dll"));
+    if (_wcsicmp (onnxRuntimeFolder.c_str(), directoryOf (argv[1]).c_str()) != 0)
+    {
+        std::printf ("  onnxruntime.dll was not loaded from the plug-in's folder\n");
+        passed = false;
+    }
     std::printf (passed ? "RESULT: PASS\n" : "RESULT: FAIL\n");
     return passed ? 0 : 3;
 }

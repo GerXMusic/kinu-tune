@@ -29,6 +29,16 @@ if(CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
         "compiler is cached.")
 endif()
 
+# Link the Visual C++ runtime statically on Windows. With the shared runtime
+# the plug-in uses whatever msvcp140.dll the host process has, and many DAWs
+# ship an older copy in their own folder. Code built with the 14.40+ toolset
+# relies on the constexpr std::mutex constructor, so under an older
+# msvcp140.dll the first lock dereferences null: the plug-in is listed but
+# crashes when it is inserted. ONNX Runtime keeps its own (shared) runtime;
+# Microsoft builds it to work with older ones. Set before any target exists.
+# Checked by tools/windows/check-vst3.ps1 in CI.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 include(FetchContent)
 include(cmake/Asio.cmake)
 

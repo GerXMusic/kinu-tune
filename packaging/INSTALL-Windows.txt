@@ -16,6 +16,10 @@ This build is made automatically on GitHub Actions and has not been tested on Wi
 3. DAW を起動し直し、プラグインを再スキャンします。
    Restart your DAW and rescan plugins.
 
+プラグインを挿すと落ちる・解析が始まらない場合は、Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)をインストールしてから、DAW を起動し直してください。
+If the plug-in crashes when inserted or never starts analysing, install the latest Microsoft Visual C++ Redistributable (x64), then restart your DAW:
+  https://aka.ms/vc14/vc_redist.x64.exe
+
 ダウンロードした zip の中身がブロックされて読み込めない場合は、zip のプロパティで「許可する(ブロック解除)」にしてから展開してください。
 If Windows blocks the downloaded files, open the zip's Properties, tick "Unblock", then extract again.
 

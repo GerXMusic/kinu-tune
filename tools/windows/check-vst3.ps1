@@ -3,30 +3,39 @@
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
 # Checks a built Windows VST3 the way a host uses it. Run from the repository
-# root on a Windows runner after building PitchNetPlugin_VST3:
+# root on a Windows runner after building PitchNetPlugin_VST3 (configuring
+# also downloads the GAME models into Resources/models/GAME):
 #
 #   pwsh tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
 #
-# 1. Creates and activates the plug-in in a minimal host on the runner's own
-#    Visual C++ runtime (the control).
+# 0. The plug-in DLL must not import the shared Visual C++ runtime.
+# 1. Creates and activates the plug-in in a minimal host (tools/windows/
+#    vst3-instantiate) on the runner's own Visual C++ runtime (the control).
 # 2. Does the same with the Visual C++ 14.29 runtime (Visual Studio 2019) next
 #    to the host. A DAW that ships an older app-local runtime loads the plug-in
 #    like this. The runner always has the newest runtime installed, so without
 #    this step CI cannot see the problem.
-# 3. Runs pluginval at strictness 5, editor tests included.
+# 3. pluginval at strictness 5 with the models installed. GUI tests are
+#    skipped: the runner has no interactive desktop.
+# 4. Unless -SkipCleanMachine: the minimal host again, inside a Windows Server
+#    container that has no Visual C++ runtime and no developer tools. pluginval
+#    cannot run there (it needs the runtime itself, and shipping one next to it
+#    would hand that runtime to the plug-in too), so this is the host only.
 #
 # Every check runs even if an earlier one fails; the script fails at the end
 # if any of them did.
 param(
-    [Parameter(Mandatory = $true)][string] $Vst3
+    [Parameter(Mandatory = $true)][string] $Vst3,
+    [switch] $SkipCleanMachine
 )
 
 $ErrorActionPreference = "Stop"
 $failures = @()
+$modelFiles = "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifigan.onnx"
 
-$dll = Join-Path $Vst3 "Contents/x86_64-win/Kinu Tune.vst3"
+$Vst3 = (Resolve-Path $Vst3).Path
+$dll = Join-Path $Vst3 "Contents\x86_64-win\Kinu Tune.vst3"
 if (-not (Test-Path $dll)) { throw "plug-in DLL not found at $dll" }
-$dll = (Resolve-Path $dll).Path
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "kinu-vst3-check"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Path $work | Out-Null
@@ -39,6 +48,34 @@ function Run-Host([string] $label, [string] $exe) {
     Write-Host "::endgroup::"
     Write-Host "$label -> exit code $code"
     return $code
+}
+
+function Install-Models([string] $destination) {
+    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+    foreach ($f in $modelFiles) { Copy-Item "Resources/models/$f" $destination }
+    Copy-Item -Recurse "Resources/models/GAME" $destination
+}
+
+# --- 0. The plug-in must not import the Visual C++ runtime -------------------
+# CMakeLists.txt links it statically (CMAKE_MSVC_RUNTIME_LIBRARY). Check 2
+# below shows why; this check names the cause directly if that setting is lost.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+if (-not $dumpbin) { throw "dumpbin.exe not found" }
+
+function Get-Imports([string] $path) {
+    $lines = & $dumpbin /nologo /dependents $path
+    Write-Host "::group::DLLs $(Split-Path -Leaf $path) imports"
+    $lines | Out-Host
+    Write-Host "::endgroup::"
+    return @($lines | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() })
+}
+
+$pluginImports = Get-Imports $dll
+$runtimeImports = @($pluginImports | Where-Object { $_ -match '^(msvcp140|vcruntime140)' })
+if ($runtimeImports.Count -gt 0) {
+    Write-Host "The plug-in imports the shared Visual C++ runtime: $($runtimeImports -join ', ')"
+    $failures += "the plug-in links the Visual C++ runtime statically"
 }
 
 # --- The minimal host --------------------------------------------------------
@@ -79,14 +116,76 @@ if ((Run-Host "Create the plug-in (Visual C++ 14.29 runtime next to the host)" (
 }
 
 # --- 3. pluginval ------------------------------------------------------------
+Install-Models (Join-Path $env:APPDATA "Keinoaza\Kinu Tune\models")
 Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" -OutFile "$work/pluginval.zip"
 Expand-Archive "$work/pluginval.zip" -DestinationPath "$work/pluginval"
-Write-Host "::group::pluginval (strictness 5)"
-& "$work/pluginval/pluginval.exe" --strictness-level 5 --timeout-ms 600000 --validate $Vst3
+Write-Host "::group::pluginval (strictness 5, no GUI tests)"
+# pluginval.exe is a GUI-subsystem program: without the pipe PowerShell does
+# not wait for it, and $LASTEXITCODE would be the previous command's.
+& "$work/pluginval/pluginval.exe" --strictness-level 5 --skip-gui-tests --timeout-ms 600000 --validate $Vst3 2>&1 | Out-Host
 $pluginvalCode = $LASTEXITCODE
 Write-Host "::endgroup::"
 Write-Host "pluginval -> exit code $pluginvalCode"
 if ($pluginvalCode -ne 0) { $failures += "pluginval" }
+
+# --- 4. A clean Windows without any Visual C++ runtime -----------------------
+if (-not $SkipCleanMachine) {
+    # Process isolation needs the container's Windows build to match the
+    # runner's. The full "server" image is used rather than Server Core because
+    # the plug-in imports Direct2D, DXGI and DirectComposition, which Server
+    # Core lacks; neither image has a Visual C++ runtime.
+    $build = [System.Environment]::OSVersion.Version.Build
+    $tag = switch ($build) { 20348 { "ltsc2022" } 26100 { "ltsc2025" } default { throw "no container tag for Windows build $build" } }
+    $image = "mcr.microsoft.com/windows/server:$tag"
+
+    $stage = "C:\kinu-clean"
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    Copy-Item -Recurse $Vst3 $stage
+    Copy-Item $hostExe $stage
+    Install-Models (Join-Path $stage "models")
+    $bundleDir = Join-Path $stage "Kinu Tune.vst3\Contents\x86_64-win"
+
+    # Everything the plug-in and the DLLs shipped next to it import, so the
+    # container can say which ones it does not have.
+    $imports = @($pluginImports)
+    foreach ($shipped in Get-ChildItem $bundleDir -Filter *.dll) { $imports += Get-Imports $shipped.FullName }
+    $imports | Sort-Object -Unique | Set-Content (Join-Path $stage "imports.txt")
+
+    @'
+$ErrorActionPreference = "Stop"
+$bundle = "C:\kinu\Kinu Tune.vst3\Contents\x86_64-win"
+Write-Host "Windows $([System.Environment]::OSVersion.Version)"
+$missing = @()
+foreach ($name in Get-Content C:\kinu\imports.txt) {
+    if ($name -like "api-ms-*" -or $name -like "ext-ms-*") { continue }
+    $found = (Test-Path (Join-Path $env:SystemRoot "System32\$name")) -or (Test-Path (Join-Path $bundle $name))
+    if (-not $found) { $missing += $name }
+}
+if ($missing.Count -gt 0) { Write-Host "Imported DLLs that are neither in System32 nor in the bundle: $($missing -join ', ')" }
+else { Write-Host "Every imported DLL is in System32 or in the bundle." }
+foreach ($name in "msvcp140.dll", "vcruntime140.dll", "onnxruntime.dll") {
+    Write-Host "System32\$name present: $(Test-Path (Join-Path $env:SystemRoot "System32\$name"))"
+}
+$models = Join-Path $env:APPDATA "Keinoaza\Kinu Tune"
+New-Item -ItemType Directory -Force -Path $models | Out-Null
+Copy-Item -Recurse C:\kinu\models $models
+& C:\kinu\vst3_instantiate.exe "$bundle\Kinu Tune.vst3"
+$code = $LASTEXITCODE
+if ($missing.Count -gt 0 -and $code -eq 0) { $code = 4 }
+exit $code
+'@ | Set-Content (Join-Path $stage "in-container.ps1")
+
+    Write-Host "::group::Pull $image"
+    docker pull $image | Out-Host
+    Write-Host "::endgroup::"
+    Write-Host "::group::Create the plug-in in a clean $image container"
+    docker run --rm --isolation=process -v "${stage}:C:\kinu" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\kinu\in-container.ps1 | Out-Host
+    $cleanCode = $LASTEXITCODE
+    Write-Host "::endgroup::"
+    Write-Host "Clean machine -> exit code $cleanCode"
+    if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows (no Visual C++ runtime)" }
+}
 
 if ($failures.Count -gt 0) {
     Write-Host "FAILED:"
