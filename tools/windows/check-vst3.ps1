@@ -16,7 +16,8 @@
 #    like this. The runner always has the newest runtime installed, so without
 #    this step CI cannot see the problem.
 # 3. pluginval at strictness 5 with the models installed. GUI tests are
-#    skipped: the runner has no interactive desktop.
+#    skipped: the runner is not a real user desktop, so an editor result
+#    there would prove little either way.
 # 4. Unless -SkipCleanMachine: the minimal host again, inside a Windows Server
 #    container that has no Visual C++ runtime and no developer tools. pluginval
 #    cannot run there (it needs the runtime itself, and shipping one next to it
@@ -74,6 +75,8 @@ function Get-Imports([string] $path) {
 }
 
 $pluginImports = Get-Imports $dll
+# A positive control, so an empty or unreadable listing cannot pass.
+if ($pluginImports -notcontains "KERNEL32.dll") { throw "dumpbin did not list the plug-in's imports" }
 $runtimeImports = @($pluginImports | Where-Object { $_ -match '^(msvcp140|vcruntime140)' })
 if ($runtimeImports.Count -gt 0) {
     Write-Host "The plug-in imports the shared Visual C++ runtime: $($runtimeImports -join ', ')"

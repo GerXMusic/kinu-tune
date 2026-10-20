@@ -163,12 +163,16 @@ void printLoadedRuntime()
 }
 
 // Loads the runtime DLLs that sit next to this program, as a DAW with an
-// app-local runtime has done by the time it loads a plug-in.
-void preloadLocalRuntime()
+// app-local runtime has done by the time it loads a plug-in. Returns the
+// folder they came from, or an empty string when there were none. A DLL that
+// is there but fails to load makes the whole run fail, so a check that is
+// meant to use an old runtime cannot pass on the system one instead.
+std::wstring preloadLocalRuntime (bool& ok)
 {
     wchar_t self[MAX_PATH] {};
     GetModuleFileNameW (nullptr, self, MAX_PATH);
     const auto folder = directoryOf (self);
+    bool any = false;
 
     for (const auto* name : runtimeDlls)
     {
@@ -177,8 +181,12 @@ void preloadLocalRuntime()
         {
             const bool loaded = LoadLibraryW (path.c_str()) != nullptr;
             std::printf ("preloaded %ls: %s\n", path.c_str(), loaded ? "ok" : "FAILED");
+            ok = ok && loaded;
+            any = true;
         }
     }
+
+    return any ? folder : std::wstring();
 }
 } // namespace
 
@@ -190,7 +198,8 @@ int wmain (int argc, wchar_t** argv)
         return 1;
     }
 
-    preloadLocalRuntime();
+    bool preloadOk = true;
+    const auto localRuntimeFolder = preloadLocalRuntime (preloadOk);
 
     std::printf ("loading %ls\n", argv[1]);
     auto* module = LoadLibraryW (argv[1]);
@@ -247,6 +256,16 @@ int wmain (int argc, wchar_t** argv)
     {
         std::printf ("  onnxruntime.dll was not loaded from the plug-in's folder\n");
         passed = false;
+    }
+
+    if (! localRuntimeFolder.empty())
+    {
+        const auto runtimeFolder = directoryOf (loadedPath (L"msvcp140.dll"));
+        if (! preloadOk || _wcsicmp (runtimeFolder.c_str(), localRuntimeFolder.c_str()) != 0)
+        {
+            std::printf ("  the runtime next to this program was not the one in use\n");
+            passed = false;
+        }
     }
     std::printf (passed ? "RESULT: PASS\n" : "RESULT: FAIL\n");
     return passed ? 0 : 3;
