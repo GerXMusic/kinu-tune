@@ -522,18 +522,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
 {
   // Without the bundled ONNX Runtime analysis is off (see OnnxRuntime.h).
-  // Say so once per process when the first editor opens; analyzeAudio says
-  // it again whenever analysis is attempted.
+  // Say so when the first editor opens (or analysis is first attempted).
   if (!OnnxRuntime::isAvailable())
-  {
-    static std::atomic<bool> unavailableMessageShown{false};
-    if (!unavailableMessageShown.exchange(true))
-      juce::MessageManager::callAsync([] {
-        juce::AlertWindow::showMessageBoxAsync(
-            juce::AlertWindow::WarningIcon, TR("error.onnx_runtime_unavailable_title"),
-            OnnxRuntime::getUnavailableMessage());
-      });
-  }
+    OnnxRuntime::showUnavailableMessageOnce();
 
   LOG("MainComponent: constructor start");
   setSize(WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight);

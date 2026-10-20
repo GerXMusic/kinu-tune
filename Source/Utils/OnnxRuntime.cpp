@@ -149,6 +149,19 @@ juce::String getUnavailableMessage()
   return message;
 }
 
+void showUnavailableMessageOnce()
+{
+  static std::atomic<bool> shown{false};
+  if (shown.exchange(true))
+    return;
+
+  juce::MessageManager::callAsync([] {
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon, TR("error.onnx_runtime_unavailable_title"),
+        getUnavailableMessage());
+  });
+}
+
 void forceUnavailableForTesting(const juce::String &reason)
 {
   forcedReason = reason;
@@ -179,6 +192,7 @@ bool initialise(juce::String *) { return true; }
 bool isAvailable() { return true; }
 juce::String getUnavailableReason() { return {}; }
 juce::String getUnavailableMessage() { return TR("error.onnx_runtime_unavailable"); }
+void showUnavailableMessageOnce() {}
 void forceUnavailableForTesting(const juce::String &) {}
 bool useLinkedRuntimeForTesting() { return true; }
 } // namespace OnnxRuntime

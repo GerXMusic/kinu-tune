@@ -673,11 +673,7 @@ void EditorController::analyzeAudio(
   // Abort like a missing model does, with the reason and the fix.
   if (!OnnxRuntime::isAvailable())
   {
-    juce::MessageManager::callAsync([]
-                                    { juce::AlertWindow::showMessageBoxAsync(
-                                          juce::AlertWindow::WarningIcon,
-                                          TR("error.onnx_runtime_unavailable_title"),
-                                          OnnxRuntime::getUnavailableMessage()); });
+    OnnxRuntime::showUnavailableMessageOnce();
     return;
   }
 

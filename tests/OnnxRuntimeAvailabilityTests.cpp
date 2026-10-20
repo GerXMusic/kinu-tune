@@ -15,6 +15,8 @@
 #include "../Source/Audio/RMVPEPitchDetector.h"
 #include "../Source/Audio/Vocoder.h"
 #include "../Source/Models/Project.h"
+#include "../Source/UI/GpuDeviceList.h"
+#include "../Source/UI/SettingsComponent.h"
 #include "../Source/Utils/Localization.h"
 #include "../Source/Utils/OnnxRuntime.h"
 #include "TestAssert.h"
@@ -70,10 +72,22 @@ int main()
         CHECK(rmvpe.getLastError() == reason);
     }
     {
+        // A readable config.json, so that without the guard loadModels would
+        // go on to create its Ort::Env.
+        const auto gameDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                 .getChildFile("OnnxRuntimeAvailabilityTests-GAME");
+        gameDir.createDirectory();
+        CHECK(gameDir.getChildFile("config.json")
+                  .replaceWithText(R"({"samplerate": 44100, "timestep": 0.01, "loop": true, "embedding_dim": 256})"));
         GAMEDetector game;
-        CHECK(!game.loadModels(juce::File::getSpecialLocation(juce::File::tempDirectory)));
+        CHECK(!game.loadModels(gameDir));
         CHECK(!game.isLoaded());
+        gameDir.deleteRecursively();
     }
+
+    // The device lists ask ONNX Runtime for its providers.
+    CHECK(SettingsComponent::getAvailableDevices().contains("CPU"));
+    GpuDeviceList::hasGpuInference();
     {
         Vocoder vocoder;
         CHECK(!Vocoder::isOnnxRuntimeAvailable());

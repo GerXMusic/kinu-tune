@@ -30,6 +30,11 @@ juce::String getUnavailableReason();
 /** Localised text for the user: what is off, how to fix it, and the reason. */
 juce::String getUnavailableMessage();
 
+/** Shows getUnavailableMessage() in a warning box, at most once per process
+    (an ARA host analyses every clip, which would otherwise stack one box per
+    clip). Safe to call from any thread. */
+void showUnavailableMessageOnce();
+
 /** Tests only: makes isAvailable() report false with this reason; an empty
     reason restores the real state. */
 void forceUnavailableForTesting(const juce::String &reason);

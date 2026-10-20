@@ -198,8 +198,9 @@ std::wstring preloadLocalRuntime (bool& ok)
 
     return any ? folder : std::wstring();
 }
-// Collects OutputDebugString text from this process while no debugger is
-// attached: Windows hands it to whoever owns the DBWIN events and buffer.
+// Collects OutputDebugString text while no debugger is attached: Windows
+// hands every process's text to whoever owns the DBWIN events and buffer, so
+// only this process's (the plug-in runs in it) is kept.
 class DebugOutputCapture
 {
 public:
@@ -225,9 +226,14 @@ public:
                 if (WaitForSingleObject (dataReady, 100) == WAIT_OBJECT_0)
                 {
                     // The buffer starts with the writer's process id.
-                    const auto* message = static_cast<const char*> (view) + sizeof (DWORD);
-                    std::lock_guard<std::mutex> lock (mutex);
-                    text.append (message, strnlen (message, 4096 - sizeof (DWORD)));
+                    DWORD writer = 0;
+                    std::memcpy (&writer, view, sizeof (writer));
+                    if (writer == GetCurrentProcessId())
+                    {
+                        const auto* message = static_cast<const char*> (view) + sizeof (DWORD);
+                        std::lock_guard<std::mutex> lock (mutex);
+                        text.append (message, strnlen (message, 4096 - sizeof (DWORD)));
+                    }
                 }
             }
         });
@@ -335,14 +341,16 @@ int wmain (int argc, wchar_t** argv)
     const bool reportedMissing = output.find ("ONNX Runtime is unavailable") != std::string::npos;
     const auto onnxRuntimePath = loadedPath (L"onnxruntime.dll");
 
+    // Both modes judge what the plug-in said, so both need the capture.
+    if (! debugOutput.isCapturing())
+    {
+        std::printf ("  cannot tell what the plug-in reported about ONNX Runtime\n");
+        passed = false;
+    }
+
     if (expectOnnxRuntimeMissing)
     {
-        if (! debugOutput.isCapturing())
-        {
-            std::printf ("  cannot tell whether the plug-in reported the missing runtime\n");
-            passed = false;
-        }
-        else if (! reportedMissing)
+        if (! reportedMissing)
         {
             std::printf ("  the plug-in did not report that ONNX Runtime is unavailable\n");
             passed = false;

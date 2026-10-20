@@ -68,7 +68,7 @@
 
 ## 11. ONNX Runtime は読み込めた時だけ呼ぶ
 
-- ONNX Runtime(AI の推論エンジン)は、プラグインに同梱したものだけを、`OnnxRuntime::initialise` が場所を指定して読み込む(macOS は `Frameworks/libonnxruntime.dylib`、Windows はプラグインと同じフォルダーの `onnxruntime.dll`)。`ORT_API_MANUAL_INIT` は全プラットフォームで定義してある。Windows の System32 にある古い `onnxruntime.dll` には決して切り替えない(遅延読み込みの補助処理は、読み込みに失敗すると既定でそれを探しに行くので、`OnnxRuntimeLoader.cpp` のフックで止めている)
-- 読み込めない時(Windows ではたいてい Visual C++ 再頒布可能パッケージが入っていない)は、API のポインターが空のままになる。この状態で `Ort::` を1つでも呼ぶと落ちる。`Ort::Env` を作る所・`Ort::GetAvailableProviders` など ONNX Runtime を呼ぶ所は、先に `OnnxRuntime::isAvailable()` を確かめる(今は FCPE・RMVPE・GAME・声の合成・GPU の一覧・設定画面の6か所)。解析の入口 `EditorController::analyzeAudio` と、最初に開いたエディターは `OnnxRuntime::getUnavailableMessage()` で直し方を見せる。理由は記録(Windows はデバッガー出力)に出る
+- ONNX Runtime(AI の推論エンジン)は、プラグインに同梱したものだけを、`OnnxRuntime::initialise` が場所を指定して読み込む(macOS は `Frameworks/libonnxruntime.dylib`、Windows はプラグインと同じフォルダーの `onnxruntime.dll`)。`ORT_API_MANUAL_INIT` は全プラットフォームで定義してある。Windows の System32 にある古い `onnxruntime.dll` には決して切り替えない。プラグインは `onnxruntime.dll` から読み込み指定(import)を1つも持たない作りで、Windows のリンク時に出る LNK4199(遅延読み込みの対象が無い)はそのため。それでも遅延読み込みが起きた時に備えて、`OnnxRuntimeLoader.cpp` のフックが補助処理に DLL を探させない(探させると System32 の古いものを読む)
+- 読み込めない時(Windows ではたいてい Visual C++ 再頒布可能パッケージが入っていない)は、API のポインターが空のままになる。この状態で `Ort::` を1つでも呼ぶと落ちる。`Ort::Env` を作る所・`Ort::GetAvailableProviders` など ONNX Runtime を呼ぶ所は、先に `OnnxRuntime::isAvailable()` を確かめる(今は FCPE・RMVPE・GAME・声の合成・GPU の一覧・設定画面の6か所)。解析の入口 `EditorController::analyzeAudio` と、最初に開いたエディターは `OnnxRuntime::showUnavailableMessageOnce()` で直し方を見せる(1プロセスに1回だけ。ARA のホストはクリップごとに解析するので、毎回出すと何枚も重なる)。理由は記録(Windows はデバッガー出力)に出る
 - 新しく ONNX Runtime を呼ぶ所を足したら、同じく先に確かめ、`tests/OnnxRuntimeAvailabilityTests.cpp` にその入口を足す
-- 破ると: `OnnxRuntimeAvailabilityTests` が落ちる(API を空にした状態で各入口を通すので、確かめ忘れた所でテストが落ちる)。Windows では CI の `tools/windows/check-vst3.ps1` の、ランタイムの無いコンテナーでの検査が落ちる
+- 破ると: `OnnxRuntimeAvailabilityTests` が落ちる(API を空にした状態で各入口を通すので、確かめ忘れた所でテストが落ちる。ただし GPU の一覧の DirectML の判定は Windows の DirectML 版でしか通らず、macOS のテストでは通らない)。Windows では CI の `tools/windows/check-vst3.ps1` の、ランタイムの無いコンテナーでの検査が落ちる
