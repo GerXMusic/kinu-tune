@@ -37,7 +37,7 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 ### 動作環境
 
 - macOS 13 以降、Apple シリコン(arm64)。配布している Mac 版は Intel Mac では動きません
-- Windows 10/11(x64)。Windows 版は GitHub Actions で自動ビルドしたもので、Windows 上での動作はまだ確認していません
+- Windows 10/11(x64)。Windows 版は GitHub Actions で自動ビルドし、Windows 上で DAW と同じ手順で読み込めることを検査しています。実際の DAW での操作はまだ確認していません
 - Cubase など ARA 2 に対応したホスト(ARA なしでも、通常のインサートとして録り込み方式で使えます)。Mac 版は VST3 と AU(Logic Pro など向け)の両方を同梱しています。Logic Pro では動作を確認していません
 
 ### インストール(配布版)
@@ -64,6 +64,8 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 1. `Kinu Tune.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
 2. `models` フォルダーを `%APPDATA%\Keinoaza\Kinu Tune\` の中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
 3. DAW を起動し直してプラグインを再スキャンします
+
+挿すと落ちる、または解析が始まらない場合は、[Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)](https://aka.ms/vc14/vc_redist.x64.exe)をインストールしてから DAW を起動し直してください。AI の部品(ONNX Runtime)がこれを必要とします。足りない時は、プラグインが画面で知らせて解析を止めます。
 
 ### Cubase でハモリを作る
 
@@ -114,7 +116,7 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 ### Requirements
 
 - macOS 13 or later on Apple silicon (arm64). The released macOS build does not run on Intel Macs.
-- Windows 10/11 (x64). The Windows build is made automatically on GitHub Actions and has not been tested on Windows yet.
+- Windows 10/11 (x64). The Windows build is made on GitHub Actions and checked there by creating it the way a host does; it has not been used in a real DAW on Windows yet.
 - An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
 
 ### Installing a release
@@ -141,6 +143,8 @@ Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
 2. Copy the `models` folder into `%APPDATA%\Keinoaza\Kinu Tune\` (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
 3. Restart your DAW and rescan plugins.
+
+If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
 
 ### Model files
 

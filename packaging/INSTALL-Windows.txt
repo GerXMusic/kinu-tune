@@ -1,7 +1,7 @@
 Kinu Tune - Windows (x64) インストール / Install
 
-このビルドは GitHub Actions で自動ビルドしたもので、Windows 上での動作はまだ確認していません。
-This build is made automatically on GitHub Actions and has not been tested on Windows yet.
+このビルドは GitHub Actions で自動ビルドし、Windows 上で DAW と同じ手順で読み込めることを検査しています。実際の DAW での操作はまだ確認していません。
+This build is made on GitHub Actions and checked there by creating it the way a host does; it has not been used in a real DAW on Windows yet.
 
 1. "Kinu Tune.vst3" フォルダーを次の場所にコピーします。
    Copy the "Kinu Tune.vst3" folder to:
