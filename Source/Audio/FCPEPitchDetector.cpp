@@ -1,5 +1,6 @@
 #include "FCPEPitchDetector.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/OnnxRuntime.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -155,6 +156,13 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 {
 #ifdef HAVE_ONNXRUNTIME
   lastError.clear();
+  // Any Ort:: call without a loaded runtime dereferences a null API.
+  if (!OnnxRuntime::isAvailable())
+  {
+    lastError = OnnxRuntime::getUnavailableReason();
+    return false;
+  }
+
   try
   {
     // Load mel filterbank from file if provided (dense binary → sparse)

@@ -1,5 +1,6 @@
 #include "RMVPEPitchDetector.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/OnnxRuntime.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,13 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 {
 #ifdef HAVE_ONNXRUNTIME
   lastError.clear();
+  // Any Ort:: call without a loaded runtime dereferences a null API.
+  if (!OnnxRuntime::isAvailable())
+  {
+    lastError = OnnxRuntime::getUnavailableReason();
+    return false;
+  }
+
   try
   {
     // Initialize ONNX Runtime

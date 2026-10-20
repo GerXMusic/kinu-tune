@@ -1,6 +1,7 @@
 #include "GAMEDetector.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntime.h"
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -223,6 +224,13 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
                               int deviceId)
 {
 #ifdef HAVE_ONNXRUNTIME
+    // Any Ort:: call without a loaded runtime dereferences a null API.
+    if (!OnnxRuntime::isAvailable())
+    {
+        LOG("GAME: " + OnnxRuntime::getUnavailableReason());
+        return false;
+    }
+
     if (!gameDir.isDirectory())
     {
         LOG("GAME model directory not found: " + gameDir.getFullPathName());

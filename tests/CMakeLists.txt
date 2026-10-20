@@ -101,6 +101,11 @@ target_link_libraries(AuditionHandoffTests PRIVATE pitchnet_ui)
 target_compile_features(AuditionHandoffTests PRIVATE cxx_std_17)
 add_test(NAME AuditionHandoffTests COMMAND AuditionHandoffTests)
 
+add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
+target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)
+target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)
+add_test(NAME OnnxRuntimeAvailabilityTests COMMAND OnnxRuntimeAvailabilityTests)
+
 # Calls that must go through one entry point (see SourceGuard.cmake).
 foreach(guard_rule IN ITEMS pitch-writes audition-output)
     add_test(NAME SourceGuard_${guard_rule}

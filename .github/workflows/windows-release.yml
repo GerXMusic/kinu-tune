@@ -43,6 +43,12 @@ jobs:
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
 
+      # Nothing is attached if the plug-in cannot be created like a host does
+      # it, including under an older Visual C++ runtime. See the script.
+      - name: Check the VST3 like a host does
+        shell: pwsh
+        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
+
       - name: Package
         shell: pwsh
         run: |

@@ -1,5 +1,6 @@
 #include "Vocoder.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/Constants.h"
 #include "../Utils/PlatformPaths.h"
 #include <algorithm>
@@ -62,8 +63,15 @@ Vocoder::Vocoder()
 #endif
 
 #ifdef HAVE_ONNXRUNTIME
-  // Initialize ONNX Runtime environment
-  try
+  // Initialize ONNX Runtime environment. Without a loaded runtime any Ort::
+  // call dereferences a null API, so onnxEnv stays null and loadModel()
+  // refuses the ONNX model.
+  if (!OnnxRuntime::isAvailable())
+  {
+    log("ONNX Runtime unavailable: " +
+        OnnxRuntime::getUnavailableReason().toStdString());
+  }
+  else try
   {
     onnxEnv =
         std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "PitchNet");
@@ -210,7 +218,7 @@ void Vocoder::log(const std::string &message)
 bool Vocoder::isOnnxRuntimeAvailable()
 {
 #ifdef HAVE_ONNXRUNTIME
-  return true;
+  return OnnxRuntime::isAvailable();
 #else
   return false;
 #endif

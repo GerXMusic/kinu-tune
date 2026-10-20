@@ -236,14 +236,10 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   // entry point, so the saved (or system) language is applied here instead.
   Localization::loadFromSettings();
 
-  OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
-
-  juce::String onnxRuntimeError;
-  if (!OnnxRuntime::initialise(&onnxRuntimeError))
-  {
-    DBG("PitchNet: failed to initialise ONNX Runtime: " + onnxRuntimeError);
-    jassertfalse;
-  }
+  // Loads the bundled ONNX Runtime once. If it cannot be loaded (on Windows
+  // usually a missing Visual C++ Redistributable), the reason is logged,
+  // analysis stays off and the editor tells the user; nothing may crash.
+  OnnxRuntime::initialise();
 
   // Cache raw parameter pointers for lock-free audio-thread access
   bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);

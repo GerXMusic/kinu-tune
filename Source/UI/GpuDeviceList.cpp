@@ -1,4 +1,5 @@
 #include "GpuDeviceList.h"
+#include "../Utils/OnnxRuntime.h"
 
 #include <cstring>
 #include <map>
@@ -231,6 +232,9 @@ bool hasGpuInference()
 #if JUCE_MAC
   return true;
 #elif defined(_WIN32) && defined(USE_DIRECTML) && defined(HAVE_ONNXRUNTIME)
+  if (!OnnxRuntime::isAvailable())
+    return false;
+
   try
   {
     for (const auto &provider : Ort::GetAvailableProviders())

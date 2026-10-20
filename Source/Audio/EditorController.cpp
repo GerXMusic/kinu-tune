@@ -6,6 +6,7 @@
 #include "../Utils/Constants.h"
 #include "../Utils/F0Smoother.h"
 #include "../Utils/Localization.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/PlatformPaths.h"
@@ -667,6 +668,14 @@ void EditorController::analyzeAudio(
   auto &audioData = targetProject.getAudioData();
   if (audioData.waveform.getNumSamples() == 0)
     return;
+
+  // Without the bundled ONNX Runtime no detector can load (OnnxRuntime.h).
+  // Abort like a missing model does, with the reason and the fix.
+  if (!OnnxRuntime::isAvailable())
+  {
+    OnnxRuntime::showUnavailableMessageOnce();
+    return;
+  }
 
   auto showMissingModelAndAbort = [](const juce::String &modelName,
                                      const juce::File &path)

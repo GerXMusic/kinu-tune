@@ -46,6 +46,8 @@
 
 - キャプチャなしのラムダ `[]` の中でローカルの `constexpr` を読まない(Windows のコンパイラ MSVC が通さない)。`[&]` にする
 - 破ると: GitHub の自動チェック(CI)の `windows-build` が落ちる
+- Windows のプラグインは C++ の実行時ライブラリ(MSVC ランタイム)を静的にリンクする(`CMakeLists.txt` の `CMAKE_MSVC_RUNTIME_LIBRARY`。ターゲットを作る前に設定する)。共有のランタイムだと、DAW が自分のフォルダーに持っている古い `msvcp140.dll` を使うことになり、新しいコンパイラーで作った `std::mutex` が最初のロックで落ちる(一覧には出るが、挿した瞬間に落ちる)。ONNX Runtime の DLL は共有のランタイムのままだが、Microsoft が古いランタイムでも動くように作っている
+- 破ると: CI の `windows-build` で `tools/windows/check-vst3.ps1` が落ちる(プラグインが `msvcp140.dll`・`vcruntime140.dll` を読み込む指定を持っている、または Visual C++ 14.29 のランタイムで作成できない)。Windows 版のリリース用ワークフローも、同じ検査に通らなければ zip を付けない
 
 ## 8. 文面を変えたらバイナリも作り直す
 
@@ -63,3 +65,10 @@
 - コミットの前に、テスト全部(`ctest --test-dir build`)と pluginval(厳しさ 5)を通す。`pitchnet_ui` にリンクするテストは、UI を変えたら全体をビルドしてから流す
 - GitHub に送ったら、自動チェック(CI)が通ったことを確かめる
 - 新しく作るソースファイルの先頭には、Kinu Tune の著作権とライセンスの3行を書く(既存の新規ファイルと同じ文面)
+
+## 11. ONNX Runtime は読み込めた時だけ呼ぶ
+
+- ONNX Runtime(AI の推論エンジン)は、プラグインに同梱したものだけを、`OnnxRuntime::initialise` が場所を指定して読み込む(macOS は `Frameworks/libonnxruntime.dylib`、Windows はプラグインと同じフォルダーの `onnxruntime.dll`)。`ORT_API_MANUAL_INIT` は全プラットフォームで定義してある。Windows の System32 にある古い `onnxruntime.dll` には決して切り替えない。プラグインは `onnxruntime.dll` から読み込み指定(import)を1つも持たない作りで、Windows のリンク時に出る LNK4199(遅延読み込みの対象が無い)はそのため。それでも遅延読み込みが起きた時に備えて、`OnnxRuntimeLoader.cpp` のフックが補助処理に DLL を探させない(探させると System32 の古いものを読む)
+- 読み込めない時(Windows ではたいてい Visual C++ 再頒布可能パッケージが入っていない)は、API のポインターが空のままになる。この状態で `Ort::` を1つでも呼ぶと落ちる。`Ort::Env` を作る所・`Ort::GetAvailableProviders` など ONNX Runtime を呼ぶ所は、先に `OnnxRuntime::isAvailable()` を確かめる(今は FCPE・RMVPE・GAME・声の合成・GPU の一覧・設定画面の6か所)。解析の入口 `EditorController::analyzeAudio` と、最初に開いたエディターは `OnnxRuntime::showUnavailableMessageOnce()` で直し方を見せる(1プロセスに1回だけ。ARA のホストはクリップごとに解析するので、毎回出すと何枚も重なる)。理由は記録(Windows はデバッガー出力)に出る
+- 新しく ONNX Runtime を呼ぶ所を足したら、同じく先に確かめ、`tests/OnnxRuntimeAvailabilityTests.cpp` にその入口を足す
+- 破ると: `OnnxRuntimeAvailabilityTests` が落ちる(API を空にした状態で各入口を通すので、確かめ忘れた所でテストが落ちる。ただし GPU の一覧の DirectML の判定は Windows の DirectML 版でしか通らず、macOS のテストでは通らない)。Windows では CI の `tools/windows/check-vst3.ps1` の、ランタイムの無いコンテナーでの検査が落ちる

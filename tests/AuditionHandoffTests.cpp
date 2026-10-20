@@ -10,6 +10,7 @@
 #include "../Source/Audio/EditorController.h"
 #include "../Source/UI/MainComponent.h"
 #include "../Source/Undo/PitchUndoManager.h"
+#include "../Source/Utils/OnnxRuntime.h"
 #include "TestAssert.h"
 #include <onnxruntime_cxx_api.h>
 #include <cmath>
@@ -113,7 +114,7 @@ int main()
     juce::ScopedJuceInitialiser_GUI gui;
     // The detectors the editor owns need the ONNX Runtime API; the plug-in
     // loads it from its bundle, a test from the library it links.
-    Ort::InitApi(OrtGetApiBase()->GetApi(ORT_API_VERSION));
+    CHECK(OnnxRuntime::useLinkedRuntimeForTesting());
     using Source = AuditionOutput::Source;
 
     auto run = [](const char *name, auto scenario)
