@@ -21,16 +21,26 @@
 // Windows ships an older onnxruntime.dll in System32, and the delay-load
 // helper falls back to it when the bundled one cannot be loaded.
 //
-// Usage: vst3_instantiate <path to the DLL inside Contents\x86_64-win>
+// With --expect-onnx-runtime-missing (a machine without the Visual C++
+// Redistributable, which the bundled onnxruntime.dll needs) the plug-in must
+// still be created without crashing, must not load any onnxruntime.dll, and
+// must report "ONNX Runtime is unavailable". It reports through the debugger
+// output (OutputDebugString), which this program reads the way DebugView
+// does, through the DBWIN buffer.
+//
+// Usage: vst3_instantiate [--expect-onnx-runtime-missing] <path to the DLL inside Contents\x86_64-win>
 // Exit codes: 0 = every stage passed, 1 = usage, 2 = the DLL or its factory
 // could not be loaded, 3 = a stage crashed or failed.
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -188,21 +198,87 @@ std::wstring preloadLocalRuntime (bool& ok)
 
     return any ? folder : std::wstring();
 }
+// Collects OutputDebugString text from this process while no debugger is
+// attached: Windows hands it to whoever owns the DBWIN events and buffer.
+class DebugOutputCapture
+{
+public:
+    DebugOutputCapture()
+    {
+        bufferReady = CreateEventW (nullptr, FALSE, FALSE, L"DBWIN_BUFFER_READY");
+        dataReady = CreateEventW (nullptr, FALSE, FALSE, L"DBWIN_DATA_READY");
+        buffer = CreateFileMappingW (INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, L"DBWIN_BUFFER");
+        view = buffer != nullptr ? MapViewOfFile (buffer, FILE_MAP_READ, 0, 0, 4096) : nullptr;
+
+        if (bufferReady == nullptr || dataReady == nullptr || view == nullptr)
+        {
+            std::printf ("  could not set up debugger-output capture (error %lu)\n", GetLastError());
+            return;
+        }
+
+        running = true;
+        reader = std::thread ([this]
+        {
+            while (running)
+            {
+                SetEvent (bufferReady);
+                if (WaitForSingleObject (dataReady, 100) == WAIT_OBJECT_0)
+                {
+                    // The buffer starts with the writer's process id.
+                    const auto* message = static_cast<const char*> (view) + sizeof (DWORD);
+                    std::lock_guard<std::mutex> lock (mutex);
+                    text.append (message, strnlen (message, 4096 - sizeof (DWORD)));
+                }
+            }
+        });
+    }
+
+    ~DebugOutputCapture()
+    {
+        running = false;
+        if (reader.joinable())
+            reader.join();
+        if (view != nullptr) UnmapViewOfFile (view);
+        for (auto* handle : { buffer, dataReady, bufferReady })
+            if (handle != nullptr) CloseHandle (handle);
+    }
+
+    bool isCapturing() const { return reader.joinable(); }
+
+    std::string get()
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        return text;
+    }
+
+private:
+    HANDLE bufferReady = nullptr, dataReady = nullptr, buffer = nullptr;
+    void* view = nullptr;
+    std::atomic<bool> running { false };
+    std::thread reader;
+    std::mutex mutex;
+    std::string text;
+};
 } // namespace
 
 int wmain (int argc, wchar_t** argv)
 {
-    if (argc != 2)
+    const bool expectOnnxRuntimeMissing =
+        argc == 3 && std::wcscmp (argv[1], L"--expect-onnx-runtime-missing") == 0;
+    if (argc != 2 && ! expectOnnxRuntimeMissing)
     {
-        std::printf ("usage: vst3_instantiate <plug-in DLL>\n");
+        std::printf ("usage: vst3_instantiate [--expect-onnx-runtime-missing] <plug-in DLL>\n");
         return 1;
     }
+
+    const wchar_t* pluginPath = argv[argc - 1];
+    DebugOutputCapture debugOutput;
 
     bool preloadOk = true;
     const auto localRuntimeFolder = preloadLocalRuntime (preloadOk);
 
-    std::printf ("loading %ls\n", argv[1]);
-    auto* module = LoadLibraryW (argv[1]);
+    std::printf ("loading %ls\n", pluginPath);
+    auto* module = LoadLibraryW (pluginPath);
     if (module == nullptr)
     {
         std::printf ("  LoadLibrary failed with error %lu\n", GetLastError());
@@ -251,11 +327,46 @@ int wmain (int argc, wchar_t** argv)
     std::printf ("runtime after the run:\n");
     printLoadedRuntime();
 
-    const auto onnxRuntimeFolder = directoryOf (loadedPath (L"onnxruntime.dll"));
-    if (_wcsicmp (onnxRuntimeFolder.c_str(), directoryOf (argv[1]).c_str()) != 0)
+    // Give the reader a moment for the last message, then look at what the
+    // plug-in said.
+    Sleep (300);
+    const auto output = debugOutput.get();
+    std::printf ("debugger output from the plug-in:\n%s\n", output.empty() ? "  (none)" : output.c_str());
+    const bool reportedMissing = output.find ("ONNX Runtime is unavailable") != std::string::npos;
+    const auto onnxRuntimePath = loadedPath (L"onnxruntime.dll");
+
+    if (expectOnnxRuntimeMissing)
     {
-        std::printf ("  onnxruntime.dll was not loaded from the plug-in's folder\n");
-        passed = false;
+        if (! debugOutput.isCapturing())
+        {
+            std::printf ("  cannot tell whether the plug-in reported the missing runtime\n");
+            passed = false;
+        }
+        else if (! reportedMissing)
+        {
+            std::printf ("  the plug-in did not report that ONNX Runtime is unavailable\n");
+            passed = false;
+        }
+
+        if (! onnxRuntimePath.empty())
+        {
+            std::printf ("  an onnxruntime.dll was loaded although none can work here\n");
+            passed = false;
+        }
+    }
+    else
+    {
+        if (_wcsicmp (directoryOf (onnxRuntimePath).c_str(), directoryOf (pluginPath).c_str()) != 0)
+        {
+            std::printf ("  onnxruntime.dll was not loaded from the plug-in's folder\n");
+            passed = false;
+        }
+
+        if (reportedMissing)
+        {
+            std::printf ("  the plug-in reported ONNX Runtime as unavailable\n");
+            passed = false;
+        }
     }
 
     if (! localRuntimeFolder.empty())

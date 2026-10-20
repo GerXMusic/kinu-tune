@@ -521,13 +521,18 @@ private:
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
 {
-  OnnxRuntimeLoader::ensureLoadedFromLocalDirectory();
-
-  juce::String onnxRuntimeError;
-  if (!OnnxRuntime::initialise(&onnxRuntimeError))
+  // Without the bundled ONNX Runtime analysis is off (see OnnxRuntime.h).
+  // Say so once per process when the first editor opens; analyzeAudio says
+  // it again whenever analysis is attempted.
+  if (!OnnxRuntime::isAvailable())
   {
-    DBG("PitchNet: failed to initialise ONNX Runtime: " + onnxRuntimeError);
-    jassertfalse;
+    static std::atomic<bool> unavailableMessageShown{false};
+    if (!unavailableMessageShown.exchange(true))
+      juce::MessageManager::callAsync([] {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon, TR("error.onnx_runtime_unavailable_title"),
+            OnnxRuntime::getUnavailableMessage());
+      });
   }
 
   LOG("MainComponent: constructor start");

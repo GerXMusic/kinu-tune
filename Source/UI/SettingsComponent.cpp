@@ -1,5 +1,6 @@
 #include "SettingsComponent.h"
 #include "GpuDeviceList.h"
+#include "../Utils/OnnxRuntime.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
@@ -850,7 +851,7 @@ juce::StringArray SettingsComponent::getAvailableDevices()
   devices.add("CPU");
 
 #ifdef HAVE_ONNXRUNTIME
-  try
+  if (OnnxRuntime::isAvailable()) try
   {
     // Get providers that are compiled into the ONNX Runtime library
     auto availableProviders = Ort::GetAvailableProviders();

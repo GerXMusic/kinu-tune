@@ -534,9 +534,11 @@ if(ONNXRUNTIME_FOUND)
     target_include_directories(pitchnet_core PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
     target_link_libraries(pitchnet_core PUBLIC ${ONNXRUNTIME_LIBRARY})
     target_compile_definitions(pitchnet_core PUBLIC HAVE_ONNXRUNTIME=1)
-    if(APPLE)
-        target_compile_definitions(pitchnet_core PUBLIC ORT_API_MANUAL_INIT=1)
-    endif()
+    # OnnxRuntime::initialise resolves the API from the bundled runtime on
+    # every platform. Without this the C++ header calls OrtGetApiBase while
+    # the plug-in DLL is still loading, which on Windows silently loads the
+    # older onnxruntime.dll from System32 when the bundled one cannot load.
+    target_compile_definitions(pitchnet_core PUBLIC ORT_API_MANUAL_INIT=1)
 
     if(WIN32 AND MSVC)
         foreach(PITCHNET_TARGET PitchNet PitchNetPlugin_VST3 PitchNetPlugin_AAX)

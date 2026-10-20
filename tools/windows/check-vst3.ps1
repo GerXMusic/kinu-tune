@@ -19,11 +19,14 @@
 #    skipped: the runner is not a real user desktop, so an editor result
 #    there would prove little either way.
 # 4. Unless -SkipCleanMachine: the minimal host again, inside a Windows Server
-#    container that has no Visual C++ runtime and no developer tools. pluginval
+#    container that has no Visual C++ runtime and no developer tools. The
+#    bundled onnxruntime.dll cannot load there; the plug-in must still be
+#    created and activated without crashing, load no onnxruntime.dll (not the
+#    older one in System32 either) and report the missing runtime. pluginval
 #    cannot run there (it needs the runtime itself, and shipping one next to it
 #    would hand that runtime to the plug-in too), so this is the host only.
 #    Then once more in a fresh container after installing the Visual C++
-#    Redistributable, as INSTALL.txt asks users to.
+#    Redistributable, as INSTALL.txt asks users to: there it must fully work.
 #
 # Every check runs even if an earlier one fails; the script fails at the end
 # if any of them did.
@@ -177,15 +180,24 @@ foreach ($name in Get-Content C:\kinu\imports.txt) {
 }
 if ($missing.Count -gt 0) { Write-Host "Imported DLLs that are neither in System32 nor in the bundle: $($missing -join ', ')" }
 else { Write-Host "Every imported DLL is in System32 or in the bundle." }
+# Without the redistributable only the Visual C++ runtime may be missing
+# (onnxruntime.dll needs it; the plug-in itself links it statically). With
+# it, nothing may be.
+$unexpected = @($missing | Where-Object { $InstallRedist -or $_ -notmatch '^(msvcp140|vcruntime140)' })
+if ($unexpected.Count -gt 0) { Write-Host "Missing and not explained by the Visual C++ runtime: $($unexpected -join ', ')" }
 foreach ($name in "msvcp140.dll", "vcruntime140.dll", "onnxruntime.dll") {
     Write-Host "System32\$name present: $(Test-Path (Join-Path $env:SystemRoot "System32\$name"))"
 }
 $models = Join-Path $env:APPDATA "Keinoaza\Kinu Tune"
 New-Item -ItemType Directory -Force -Path $models | Out-Null
 Copy-Item -Recurse C:\kinu\models $models
-& C:\kinu\vst3_instantiate.exe "$bundle\Kinu Tune.vst3"
+# Without the redistributable the plug-in must still be created, must not
+# load any onnxruntime.dll, and must report the missing runtime.
+$hostArgs = @()
+if (-not $InstallRedist) { $hostArgs += "--expect-onnx-runtime-missing" }
+& C:\kinu\vst3_instantiate.exe @hostArgs "$bundle\Kinu Tune.vst3"
 $code = $LASTEXITCODE
-if ($missing.Count -gt 0 -and $code -eq 0) { $code = 4 }
+if ($unexpected.Count -gt 0 -and $code -eq 0) { $code = 4 }
 exit $code
 '@ | Set-Content (Join-Path $stage "in-container.ps1")
 
@@ -197,7 +209,7 @@ exit $code
     $cleanCode = $LASTEXITCODE
     Write-Host "::endgroup::"
     Write-Host "Clean machine -> exit code $cleanCode"
-    if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows (no Visual C++ runtime)" }
+    if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows (no Visual C++ runtime) and have it report the missing runtime" }
 
     # The same clean machine after installing the Visual C++ Redistributable,
     # as INSTALL.txt asks. Each run starts from a fresh container.

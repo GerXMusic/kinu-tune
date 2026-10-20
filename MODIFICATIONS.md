@@ -36,6 +36,17 @@ The full history of the changes is in the git log of this repository.
   event-tracing session enables them again later (until Kinu Tune next
   creates an environment). ONNX Runtime has no telemetry on other platforms.
 
+### Windows loading
+- The Windows plug-in links the Visual C++ runtime statically, so it no longer
+  depends on the msvcp140.dll a host ships (an older one made it crash on
+  insert).
+- ONNX Runtime is loaded only from the copy bundled next to the plug-in, on
+  every platform through `OnnxRuntime::initialise` (`ORT_API_MANUAL_INIT`);
+  the older onnxruntime.dll Windows has in System32 is never used. When the
+  bundled copy cannot be loaded (on Windows usually because the Microsoft
+  Visual C++ Redistributable is missing), analysis and AI resynthesis are
+  turned off instead of crashing, and the editor says how to fix it.
+
 ### Cubase VariAudio-style editing
 - Notes drawn as rectangular segments with the pitch name on hover; the
   original pitch curve of an edited segment stays visible in grey.
@@ -127,6 +138,12 @@ The full history of the changes is in the git log of this repository.
 - cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
   ONNX Runtime folder) from the macOS bundles after linking and fails the build
   if one is left.
+- tools/windows/check-vst3.ps1 (run by both workflows) creates the Windows
+  plug-in in a minimal host (tools/windows/vst3-instantiate) on the runner's
+  runtime, on an older Visual C++ runtime and in clean Windows containers with
+  and without the redistributable, and runs pluginval.
+  OnnxRuntimeAvailabilityTests checks that nothing calls ONNX Runtime when it
+  could not be loaded.
 
 ## Files
 
@@ -141,10 +158,12 @@ New files:
 - `Source/Utils/HarmonyUtils.h`, `Source/Utils/NotePitch.h`
 - `Source/UI/Main/AuditionOutput.h`
 - `cmake/StripBuildRpaths.cmake`
+- `tools/windows/check-vst3.ps1`, `tools/windows/vst3-instantiate/*`
 - `tests/HarmonyApplyTests.cpp`, `tests/HarmonyIntervalTests.cpp`,
   `tests/RenderSnapshots.cpp`, `tests/VariAudioControlTests.cpp`,
   `tests/VariAudioInspectorTests.cpp`, `tests/AuditionOutputTests.cpp`,
-  `tests/AuditionHandoffTests.cpp`, `tests/SourceGuard.cmake`
+  `tests/AuditionHandoffTests.cpp`, `tests/SourceGuard.cmake`,
+  `tests/OnnxRuntimeAvailabilityTests.cpp`
 
 Removed files:
 
@@ -174,6 +193,9 @@ Modified files (changed by Keinoaza on or after 2026-10-19):
   `States/SelectHandler.h/.cpp`, `TimelineRenderer.cpp`,
   `WaveformBackgroundRenderer.h/.cpp`
 - `Source/Plugin/AraDiagnostics.h`, `Source/Utils/AppLogger.h` (comments)
+- `Source/Audio/EditorController.cpp`, `Source/UI/GpuDeviceList.cpp`,
+  `Source/UI/SettingsComponent.cpp`
+- `Source/Utils/OnnxRuntime.h`, `Source/Utils/OnnxRuntimeLoader.h/.cpp`
 - `Source/Utils/Constants.h`, `Source/Utils/Localization.h`, `Source/Utils/OnnxRuntime.cpp`,
   `Source/Utils/PitchMacroScope.h`, `Source/Utils/PlatformPaths.h`, `Source/Utils/ScaleUtils.h`,
   `Source/Utils/TransformParams.h`

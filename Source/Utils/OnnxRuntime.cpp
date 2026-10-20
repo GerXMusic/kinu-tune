@@ -1,10 +1,16 @@
 #include "OnnxRuntime.h"
+#include "Localization.h"
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
 
-#if JUCE_MAC
+#include <atomic>
 #include <mutex>
+
+#include "AppLogger.h"
+#include "OnnxRuntimeLoader.h"
+
+#if JUCE_MAC
 #include <dlfcn.h>
 #endif
 
@@ -12,11 +18,15 @@ namespace OnnxRuntime
 {
 namespace
 {
-#if JUCE_MAC
 std::once_flag initialisationFlag;
 bool initialised = false;
 juce::String initialisationError;
 
+// Set by tests to exercise the unavailable path; see the header.
+std::atomic<bool> forcedUnavailable{false};
+juce::String forcedReason;
+
+#if JUCE_MAC
 const OrtApiBase *getApiBase()
 {
   Dl_info imageInfo{};
@@ -53,12 +63,36 @@ const OrtApiBase *getApiBase()
 
   return getApiBase();
 }
+#elif JUCE_WINDOWS
+// Resolved from the onnxruntime.dll next to the plug-in, never through the
+// delay-load import: that would fall back to the older copy in System32.
+const OrtApiBase *getApiBase()
+{
+  if (OnnxRuntimeLoader::ensureLoadedFromLocalDirectory() == nullptr)
+  {
+    initialisationError = "Could not load Kinu Tune's ONNX Runtime: " +
+                          juce::String(OnnxRuntimeLoader::getLoadFailure());
+    return nullptr;
+  }
+
+  using GetApiBaseFunction = const OrtApiBase *(ORT_API_CALL *)();
+  auto *getApiBase = reinterpret_cast<GetApiBaseFunction>(
+      OnnxRuntimeLoader::findExport("OrtGetApiBase"));
+  if (getApiBase == nullptr)
+  {
+    initialisationError = "Kinu Tune's ONNX Runtime has no OrtGetApiBase symbol";
+    return nullptr;
+  }
+
+  return getApiBase();
+}
+#else
+const OrtApiBase *getApiBase() { return OrtGetApiBase(); }
 #endif
 } // namespace
 
 bool initialise(juce::String *errorMessage)
 {
-#if JUCE_MAC
   std::call_once(initialisationFlag, [] {
     const auto *apiBase = getApiBase();
     const auto *api = apiBase == nullptr ? nullptr : apiBase->GetApi(ORT_API_VERSION);
@@ -68,6 +102,13 @@ bool initialise(juce::String *errorMessage)
       if (initialisationError.isEmpty())
         initialisationError = "Kinu Tune's ONNX Runtime does not support API version " +
                               juce::String(ORT_API_VERSION);
+
+      // The release build writes no log file; on Windows this still reaches
+      // the debugger output, which CI reads (tools/windows/vst3-instantiate).
+      const auto line = "Kinu Tune: ONNX Runtime is unavailable, analysis is off: " +
+                        initialisationError;
+      juce::Logger::writeToLog(line);
+      LOG(line);
       return;
     }
 
@@ -75,19 +116,70 @@ bool initialise(juce::String *errorMessage)
     initialised = true;
   });
 
+  if (forcedUnavailable.load())
+  {
+    if (errorMessage != nullptr)
+      *errorMessage = forcedReason;
+    return false;
+  }
+
   if (!initialised && errorMessage != nullptr)
     *errorMessage = initialisationError;
 
   return initialised;
+}
+
+bool isAvailable() { return initialise(nullptr); }
+
+juce::String getUnavailableReason()
+{
+  juce::String reason;
+  initialise(&reason);
+  return reason;
+}
+
+juce::String getUnavailableMessage()
+{
+  auto message = TR("error.onnx_runtime_unavailable");
+#if JUCE_WINDOWS
+  message << "\n\n" << TR("error.install_vc_redist") << "\n"
+          << "https://aka.ms/vc14/vc_redist.x64.exe";
+#endif
+  message << "\n\n" << TR("error.details") << " " << getUnavailableReason();
+  return message;
+}
+
+void forceUnavailableForTesting(const juce::String &reason)
+{
+  forcedReason = reason;
+  forcedUnavailable.store(reason.isNotEmpty());
+}
+
+bool useLinkedRuntimeForTesting()
+{
+#if JUCE_WINDOWS
+  return initialise();
 #else
-  juce::ignoreUnused(errorMessage);
-  return true;
+  std::call_once(initialisationFlag, [] {
+    if (const auto *api = OrtGetApiBase()->GetApi(ORT_API_VERSION))
+    {
+      Ort::InitApi(api);
+      initialised = true;
+    }
+  });
+  return initialised;
 #endif
 }
 } // namespace OnnxRuntime
 #else
+// Built without ONNX Runtime: there is nothing to initialise or guard.
 namespace OnnxRuntime
 {
 bool initialise(juce::String *) { return true; }
+bool isAvailable() { return true; }
+juce::String getUnavailableReason() { return {}; }
+juce::String getUnavailableMessage() { return TR("error.onnx_runtime_unavailable"); }
+void forceUnavailableForTesting(const juce::String &) {}
+bool useLinkedRuntimeForTesting() { return true; }
 } // namespace OnnxRuntime
 #endif
