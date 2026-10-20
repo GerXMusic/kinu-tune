@@ -21,6 +21,8 @@
 #    container that has no Visual C++ runtime and no developer tools. pluginval
 #    cannot run there (it needs the runtime itself, and shipping one next to it
 #    would hand that runtime to the plug-in too), so this is the host only.
+#    Then once more in a fresh container after installing the Visual C++
+#    Redistributable, as INSTALL.txt asks users to.
 #
 # Every check runs even if an earlier one fails; the script fails at the end
 # if any of them did.
@@ -153,9 +155,17 @@ if (-not $SkipCleanMachine) {
     $imports | Sort-Object -Unique | Set-Content (Join-Path $stage "imports.txt")
 
     @'
+param([switch] $InstallRedist)
 $ErrorActionPreference = "Stop"
 $bundle = "C:\kinu\Kinu Tune.vst3\Contents\x86_64-win"
 Write-Host "Windows $([System.Environment]::OSVersion.Version)"
+if ($InstallRedist) {
+    # What INSTALL.txt tells a user to do.
+    Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.x64.exe" -OutFile C:\vc_redist.x64.exe
+    $installer = Start-Process C:\vc_redist.x64.exe -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+    Write-Host "vc_redist.x64.exe -> exit code $($installer.ExitCode)"
+    Write-Host "System32\msvcp140.dll: $((Get-Item (Join-Path $env:SystemRoot "System32\msvcp140.dll")).VersionInfo.FileVersion)"
+}
 $missing = @()
 foreach ($name in Get-Content C:\kinu\imports.txt) {
     if ($name -like "api-ms-*" -or $name -like "ext-ms-*") { continue }
@@ -185,6 +195,15 @@ exit $code
     Write-Host "::endgroup::"
     Write-Host "Clean machine -> exit code $cleanCode"
     if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows (no Visual C++ runtime)" }
+
+    # The same clean machine after installing the Visual C++ Redistributable,
+    # as INSTALL.txt asks. Each run starts from a fresh container.
+    Write-Host "::group::Create the plug-in in a clean $image container with the Visual C++ Redistributable installed"
+    docker run --rm --isolation=process -v "${stage}:C:\kinu" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\kinu\in-container.ps1 -InstallRedist | Out-Host
+    $redistCode = $LASTEXITCODE
+    Write-Host "::endgroup::"
+    Write-Host "Clean machine with the redistributable -> exit code $redistCode"
+    if ($redistCode -ne 0) { $failures += "create the plug-in on a clean Windows with the Visual C++ Redistributable installed" }
 }
 
 if ($failures.Count -gt 0) {
