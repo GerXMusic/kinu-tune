@@ -147,7 +147,7 @@ public:
 
   const juce::String getApplicationName() override { return "Kinu Tune"; }
 
-  const juce::String getApplicationVersion() override { return "0.1.2"; }
+  const juce::String getApplicationVersion() override { return "0.1.3"; }
 
   bool moreThanOneInstanceAllowed() override { return true; }
 
