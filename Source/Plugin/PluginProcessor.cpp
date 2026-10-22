@@ -5,6 +5,7 @@
 #include "../Models/ProjectModificationRanges.h"
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
+#include "../UI/Main/SettingsManager.h"
 #include "../Utils/Localization.h"
 #include "../Utils/Constants.h"
 #include "../Utils/MelSpectrogram.h"
@@ -247,7 +248,13 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
-  araAnalysisController = std::make_unique<EditorController>(false);
+  {
+    // Same file the editor reads, so a render that runs before the editor is
+    // opened (restoring a saved project) uses the engine the editor will show.
+    SettingsManager savedSettings;
+    renderEngine->value.store(savedSettings.getSynthesisEngineType());
+  }
+  araAnalysisController = makeRenderController();
   undoManager = std::make_unique<PitchUndoManager>(100);
 }
 
@@ -1116,7 +1123,7 @@ void PitchNetAudioProcessor::requestCapturedAudioAnalysis(
   undoManager->clear();
 
   if (!araAnalysisController)
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeRenderController();
 
   araAnalysisSourceKey = 0;
   araAnalysisLoading = true;
@@ -1342,9 +1349,9 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
 
   if (renderActiveAraRegion) {
     if (!regionCanvasController)
-      regionCanvasController = std::make_unique<EditorController>(false);
+      regionCanvasController = makeRenderController();
   } else if (!araAnalysisController) {
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeRenderController();
   }
 
   auto *controller = renderActiveAraRegion ? regionCanvasController.get()
@@ -1354,7 +1361,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (target != nullptr) {
     targetKey = pitchnetModificationKey(*target);
     auto& state = modificationRenders[targetKey];
-    if (!state.controller) state.controller = std::make_unique<EditorController>(false);
+    if (!state.controller) state.controller = makeRenderController();
     controller = state.controller.get();
   }
 #endif
@@ -1905,7 +1912,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
       !restoredProject->getAudioData().f0.empty();
 
   if (!araAnalysisController)
-    araAnalysisController = std::make_unique<EditorController>(false);
+    araAnalysisController = makeRenderController();
   araAnalysisController->setProject(std::move(restoredProject));
   if (araAnalysisProjectSnapshot)
     publishPersistentProjectSnapshot(*araAnalysisProjectSnapshot);
@@ -1934,7 +1941,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     cachedFormantShift = restoredProject->getFormantShift();
 
     if (!araAnalysisController)
-      araAnalysisController = std::make_unique<EditorController>(false);
+      araAnalysisController = makeRenderController();
     araAnalysisController->setProject(
         std::make_unique<Project>(*restoredProject));
     publishPersistentProjectSnapshot(*restoredProject);
@@ -2017,7 +2024,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
   mainComponent = mc;
   if (mc) {
     if (!araAnalysisController)
-      araAnalysisController = std::make_unique<EditorController>(false);
+      araAnalysisController = makeRenderController();
     mc->bindBackendController(araAnalysisController.get());
     mc->bindUndoManager(undoManager.get());
     mc->bindRealtimeProcessor(realtimeProcessor);
@@ -2745,7 +2752,7 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
   // modification so Cubase can archive it using the same object-level model as
   // JUCE's ARAPluginDemo/VocalNet.
   if (!regionCanvasController)
-    regionCanvasController = std::make_unique<EditorController>(false);
+    regionCanvasController = makeRenderController();
 
   const bool backgroundAnalysis = regionKey != activeRegionKey;
   const auto analysisGeneration =

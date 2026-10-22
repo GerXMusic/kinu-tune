@@ -48,17 +48,16 @@ public:
     pitchDetectorType = type;
   }
 
-  void setSynthesisEngineType(SynthesisEngineType type)
-  {
-    synthesisEngineType = type;
-    if (incrementalSynth)
-      incrementalSynth->setSynthesisEngine(type);
-  }
+  // The rendering engine. A controller either owns its setting (the
+  // standalone app) or shares one with every other controller of its plug-in
+  // instance (SynthesisEnginePreference). All reads and writes go through
+  // these two, so a shared value cannot be bypassed by a stale copy.
+  void setSynthesisEngineType(SynthesisEngineType type);
+  SynthesisEngineType getSynthesisEngineType() const;
 
-  SynthesisEngineType getSynthesisEngineType() const
-  {
-    return synthesisEngineType;
-  }
+  // From now on read and write the engine in @p shared instead of the own
+  // member. Pass the same object to every controller of one plug-in instance.
+  void shareSynthesisEngine(std::shared_ptr<SynthesisEnginePreference> shared);
 
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
   {
@@ -128,7 +127,9 @@ private:
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
+  // Own setting, read only while sharedSynthesisEngine is null.
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
+  std::shared_ptr<SynthesisEnginePreference> sharedSynthesisEngine;
   juce::String device = "CPU";
   int deviceId = 0;
 

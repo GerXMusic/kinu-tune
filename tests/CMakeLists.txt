@@ -25,6 +25,7 @@ set(PITCHNET_TEST_SOURCES
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
     ProjectModificationRangeTests.cpp
+    SynthesisEngineShareTests.cpp
     TimelineCoordinateTests.cpp
     VisualWaveformEnvelopeTests.cpp)
 
@@ -107,7 +108,7 @@ target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)
 add_test(NAME OnnxRuntimeAvailabilityTests COMMAND OnnxRuntimeAvailabilityTests)
 
 # Calls that must go through one entry point (see SourceGuard.cmake).
-foreach(guard_rule IN ITEMS pitch-writes audition-output)
+foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
     add_test(NAME SourceGuard_${guard_rule}
              COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
                      -DRULE=${guard_rule}

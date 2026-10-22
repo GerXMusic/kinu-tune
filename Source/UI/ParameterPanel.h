@@ -42,6 +42,14 @@ public:
     // Disables the AI Resynthesis radio on CPU-only machines.
     void setAiResynthesisAvailable(bool available);
 
+    // ===== Rendering card: status line under the engine radios =====
+    // Names the engine the running or last render was started with. The
+    // controllers share that engine (SynthesisEnginePreference), so this is
+    // what produced the audio, not merely which radio is selected - the two
+    // used to differ in the plug-in. Written by MainComponent::showRenderStatus.
+    enum class RenderStatus { None, Rendering, Done, Failed };
+    void setRenderStatus(RenderStatus status, SynthesisEngineType engine);
+
     // ===== Rendering card: inference device =====
     // The row only earns its space when there is a choice to make, so it shows
     // only while AI Resynthesis is the engine and the execution provider
@@ -181,6 +189,11 @@ private:
     juce::StringArray renderDeviceNames;
     int renderDeviceIndex = 0;
     bool renderDeviceRowVisible = false;
+
+    juce::Label renderStatusLabel;
+    RenderStatus renderStatus = RenderStatus::None;
+    SynthesisEngineType renderStatusEngine = defaultSynthesisEngineType();
+    void refreshRenderStatusText();
 
     // Declared last so it is torn down before the widgets it refreshes.
     LocalisationWatcher languageWatcher{[this]

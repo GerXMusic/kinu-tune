@@ -849,6 +849,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
     settingsManager->saveConfig();
     if (editorController)
       editorController->setSynthesisEngineType(type);
+    // Otherwise the switch is only a setting: the audio already rendered by
+    // the previous engine would stay until the user happened to edit again.
+    rerenderEditedNotes();
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
@@ -2852,6 +2855,7 @@ void MainComponent::resynthesizeIncremental()
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
   setToolGroupEnabled(false);
+  showRenderStatus(ParameterPanel::RenderStatus::Rendering);
 
   if (isPluginMode() && onRequestBackendRender)
   {
@@ -2875,6 +2879,8 @@ void MainComponent::resynthesizeIncremental()
 
         safeThis->setToolGroupEnabled(true);
         safeThis->toolbar.hideProgress();
+        safeThis->showRenderStatus(success ? ParameterPanel::RenderStatus::Done
+                                           : ParameterPanel::RenderStatus::Failed);
 
         if (!success)
         {
@@ -2888,6 +2894,27 @@ void MainComponent::resynthesizeIncremental()
       },
       pendingIncrementalResynth,
       isPluginMode());
+}
+
+void MainComponent::rerenderEditedNotes()
+{
+  auto *project = getProject();
+  if (!project || !editorController)
+    return;
+
+  // Marks exactly what an edit of those notes would mark, so the render
+  // window and the splice points are the ones the edits themselves produce.
+  if (project->markEditedNotesDirty() == 0)
+    return;
+
+  resynthesizeIncremental();
+}
+
+void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
+{
+  parameterPanel.setRenderStatus(
+      status, editorController ? editorController->getSynthesisEngineType()
+                               : defaultSynthesisEngineType());
 }
 
 void MainComponent::onNoteSelected(Note *note)
@@ -3055,6 +3082,8 @@ void MainComponent::finishBackendRender(bool success)
 {
   setToolGroupEnabled(true);
   toolbar.hideProgress();
+  showRenderStatus(success ? ParameterPanel::RenderStatus::Done
+                           : ParameterPanel::RenderStatus::Failed);
 
   if (!success)
     return;

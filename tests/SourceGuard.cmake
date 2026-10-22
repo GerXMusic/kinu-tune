@@ -14,6 +14,9 @@
 # audition-output:  the engine's audition loop is sounded only through
 #                   Source/UI/Main/AuditionOutput.h, so a new kind of audition
 #                   takes the output over from the previous one.
+# render-controllers: the plug-in's EditorControllers are created only through
+#                   Source/Plugin/RenderControllers.h, so every one of them
+#                   shares the instance's rendering-engine setting.
 #
 # The check reads one line at a time. A call through a member pointer, or one
 # split across lines, is not caught; dev-rules.md asks not to write them.
@@ -34,6 +37,11 @@ elseif(RULE STREQUAL "audition-output")
                 "${SOURCE_DIR}/Audio/AudioEngine.cpp")
     set(pattern "(beginAuditionLoop|endAuditionLoop)[ \t]*\\(")
     set(hint "Use AuditionOutput::playLoop / stopLoop instead (see Source/UI/Main/AuditionOutput.h).")
+elseif(RULE STREQUAL "render-controllers")
+    set(scan_dir "${SOURCE_DIR}/Plugin")
+    set(allowed "${SOURCE_DIR}/Plugin/RenderControllers.h")
+    set(pattern "make_unique<EditorController>[ \t]*\\([ \t]*false")
+    set(hint "Use makeSharedEngineController / PitchNetAudioProcessor::makeRenderController instead (see Source/Plugin/RenderControllers.h).")
 else()
     message(FATAL_ERROR "SourceGuard: unknown rule '${RULE}'")
 endif()

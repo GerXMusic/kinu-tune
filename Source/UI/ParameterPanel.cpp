@@ -27,13 +27,15 @@ constexpr int kColumnGap = 6;
 constexpr int kSectionLabelHeight = 20;
 constexpr int kSectionLabelGap = kRowGap + 2;
 constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
+constexpr int kRenderStatusRowHeight = 18;  // "Last render: Classic"
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
 constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kInnerPadY;
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
+    kRenderStatusRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
@@ -294,6 +296,14 @@ ParameterPanel::ParameterPanel()
     addChildComponent(renderDeviceButton);
     renderDeviceButton.addListener(this);
 
+    // Status line: which engine the running or last render used.
+    addAndMakeVisible(renderStatusLabel);
+    renderStatusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFB4B4B4u));
+    renderStatusLabel.setFont(AppFont::getFont(13.0f));
+    renderStatusLabel.setJustificationType(juce::Justification::centredLeft);
+    renderStatusLabel.setInterceptsMouseClicks(false, false);
+    refreshRenderStatusText();
+
     for (auto* label : { &referenceLabel, &timelineBeatLabel,
                          &timelineTempoLabel, &timelineGridLabel })
     {
@@ -519,6 +529,9 @@ void ParameterPanel::resized()
     engineRow.removeFromLeft(columnGap);
     vocoderEngineToggle.setBounds(vocoderArea);
     psolaEngineToggle.setBounds(engineRow);
+
+    bounds.removeFromTop(kRowGap);
+    renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
     if (renderDeviceRowVisible)
     {
@@ -817,6 +830,7 @@ void ParameterPanel::refreshLocalisedText()
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
+    refreshRenderStatusText();
 
     referenceLabel.setText(TR("param.reference_a4"), juce::dontSendNotification);
     referenceSlider.setName(TR("param.pitch_reference"));
@@ -1048,6 +1062,30 @@ void ParameterPanel::setAiResynthesisAvailable(bool available)
     vocoderEngineToggle.setEnabled(available);
     vocoderEngineToggle.setTooltip(TR(available ? "tooltip.engine_vocoder"
                                                 : "tooltip.engine_vocoder_unavailable"));
+}
+
+void ParameterPanel::setRenderStatus(RenderStatus status, SynthesisEngineType engine)
+{
+    renderStatus = status;
+    renderStatusEngine = engine;
+    refreshRenderStatusText();
+}
+
+void ParameterPanel::refreshRenderStatusText()
+{
+    const auto engineName = TR(renderStatusEngine == SynthesisEngineType::Psola
+                                   ? "param.engine_psola"
+                                   : "param.engine_vocoder");
+    const char* key = "status.render_none";
+    switch (renderStatus)
+    {
+        case RenderStatus::Rendering: key = "status.rendering"; break;
+        case RenderStatus::Done:      key = "status.rendered"; break;
+        case RenderStatus::Failed:    key = "status.render_failed"; break;
+        case RenderStatus::None:      break;
+    }
+    renderStatusLabel.setText(TR(key).replace("{engine}", engineName),
+                              juce::dontSendNotification);
 }
 
 void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames,

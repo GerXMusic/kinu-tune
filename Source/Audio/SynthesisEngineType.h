@@ -2,6 +2,8 @@
 
 #include "../JuceHeader.h"
 
+#include <atomic>
+
 /**
  * Engines available for resynthesising edited regions.
  */
@@ -36,6 +38,23 @@ SynthesisEngineType defaultSynthesisEngineType();
  * changes during the session remain available.
  */
 SynthesisEngineType synthesisEngineTypeForSavedPreference(SynthesisEngineType type);
+
+/**
+ * One engine setting shared by every EditorController that renders for the
+ * same plug-in instance.
+ *
+ * The plug-in keeps several controllers (the composite analysis, the region on
+ * the canvas, one per modification rendered in the background) and binds the
+ * editor to just one of them. A change made in the editor used to reach that
+ * one controller while the others went on rendering with the default engine.
+ * Controllers that share a preference read and write this single value
+ * (EditorController::shareSynthesisEngine), so there is nothing to keep in
+ * step and nothing a new controller can miss.
+ */
+struct SynthesisEnginePreference
+{
+    std::atomic<SynthesisEngineType> value{defaultSynthesisEngineType()};
+};
 
 /**
  * Convert SynthesisEngineType to string for display/storage.

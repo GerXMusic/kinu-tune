@@ -143,6 +143,32 @@ void Project::clearAllDirty()
     f0DirtyEnd = -1;
 }
 
+int Project::markEditedNotesDirty()
+{
+    const bool wholeProjectEdited =
+        globalPitchOffset != 0.0f || formantShift != 0.0f;
+
+    int marked = 0;
+    int start = -1;
+    int end = -1;
+    for (auto &note : notes)
+    {
+        if (note.isRest())
+            continue;
+        if (!wholeProjectEdited && note.isNeutralForOriginalWaveform())
+            continue;
+
+        note.markDirty();
+        ++marked;
+        start = start < 0 ? note.getStartFrame() : std::min(start, note.getStartFrame());
+        end = end < 0 ? note.getEndFrame() : std::max(end, note.getEndFrame());
+    }
+
+    if (marked > 0)
+        markNoteEditDirtyRange(start, end);
+    return marked;
+}
+
 bool Project::hasDirtyNotes() const
 {
     for (const auto &note : notes)

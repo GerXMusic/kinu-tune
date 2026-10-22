@@ -7,6 +7,7 @@
 #include "../Undo/PitchUndoManager.h"
 #include "HostCompatibility.h"
 #include "NonAraCaptureController.h"
+#include "RenderControllers.h"
 #include <atomic>
 #include <map>
 #include <set>
@@ -386,6 +387,17 @@ private:
   double hostSampleRate = 44100.0;
 
   juce::String pendingStateJson;
+  // The engine every rendering controller of this instance uses. Set from the
+  // saved preference at construction and written by the editor through its
+  // bound controller (EditorController::setSynthesisEngineType), so a render
+  // started before the editor is first opened uses the same engine the
+  // editor would show.
+  std::shared_ptr<SynthesisEnginePreference> renderEngine =
+      std::make_shared<SynthesisEnginePreference>();
+  std::unique_ptr<EditorController> makeRenderController() const
+  {
+    return makeSharedEngineController(renderEngine);
+  }
   std::unique_ptr<EditorController> araAnalysisController;
   std::unique_ptr<EditorController> araIncrementalAnalysisController;
   std::unique_ptr<PitchUndoManager> undoManager;

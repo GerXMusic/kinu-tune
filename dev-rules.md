@@ -59,14 +59,22 @@
 - 新しい Mac 用のターゲット(バンドル)を足したら、同じ処理を POST_BUILD に足す
 - 確かめ方: `otool -l <バイナリ> | grep -A2 LC_RPATH` に `/` で始まるパスが無いこと。`strings` では rpath が出ないので、これで確かめる
 
-## 10. 変更の進め方
+## 10. 合成エンジンの設定はプラグインの中で1つを共有する
+
+- プラグイン(`Source/Plugin`)が持つ `EditorController` は何個あっても、合成エンジン(AI リシンセシス / クラシック)の設定は1つの `SynthesisEnginePreference` を全員で共有する。作る時は必ず `Source/Plugin/RenderControllers.h` の `makeSharedEngineController`(処理側では `PitchNetAudioProcessor::makeRenderController`)を通す。`std::make_unique<EditorController>(false)` を直接書かない
+- エンジンの読み書きは `EditorController::getSynthesisEngineType` / `setSynthesisEngineType` だけ。共有中はメンバー変数ではなく共有値を読み書きする。合成の直前に `IncrementalSynthesizer` へ渡す値もこの getter から取る
+- エンジンを切り替える操作(右パネルのラジオ)は、設定を保存したあと `MainComponent::rerenderEditedNotes` を呼ぶ。編集が音に届いているノートの洗い出しは `Project::markEditedNotesDirty` に任せ、自前で `markDirty` を回さない
+- 合成の開始と完了は `MainComponent::showRenderStatus` に通す(右パネルの状態行)。新しく合成を始める経路を足したら、開始と完了の両方で呼ぶ
+- 破ると: テスト `SourceGuard_render-controllers` が、`Source/Plugin` の中で `std::make_unique<EditorController>(false)` と書いた行(`RenderControllers.h` 以外)を示して落ちる。この検査は `make_unique` にリテラル `false` を渡す綴りしか見ない。`new EditorController(false)`、変数を渡す書き方、`(true)`(プラグインの中で音声デバイス付きを作る誤り)、`(` と `false` を行で分けた書き方は通ってしまうので、そういう書き方をしない。共有の受け渡しは `SynthesisEngineShareTests` が拾う。状態行の呼び忘れは自動テストが無く、「合成中」のまま止まる、または前回の表示のままになる症状で現れる
+
+## 11. 変更の進め方
 
 - 不具合を直す時は、直す前に失敗するテストを足す
 - コミットの前に、テスト全部(`ctest --test-dir build`)と pluginval(厳しさ 5)を通す。`pitchnet_ui` にリンクするテストは、UI を変えたら全体をビルドしてから流す
 - GitHub に送ったら、自動チェック(CI)が通ったことを確かめる
 - 新しく作るソースファイルの先頭には、Kinu Tune の著作権とライセンスの3行を書く(既存の新規ファイルと同じ文面)
 
-## 11. ONNX Runtime は読み込めた時だけ呼ぶ
+## 12. ONNX Runtime は読み込めた時だけ呼ぶ
 
 - ONNX Runtime(AI の推論エンジン)は、プラグインに同梱したものだけを、`OnnxRuntime::initialise` が場所を指定して読み込む(macOS は `Frameworks/libonnxruntime.dylib`、Windows はプラグインと同じフォルダーの `onnxruntime.dll`)。`ORT_API_MANUAL_INIT` は全プラットフォームで定義してある。Windows の System32 にある古い `onnxruntime.dll` には決して切り替えない。プラグインは `onnxruntime.dll` から読み込み指定(import)を1つも持たない作りで、Windows のリンク時に出る LNK4199(遅延読み込みの対象が無い)はそのため。それでも遅延読み込みが起きた時に備えて、`OnnxRuntimeLoader.cpp` のフックが補助処理に DLL を探させない(探させると System32 の古いものを読む)
 - 読み込めない時(Windows ではたいてい Visual C++ 再頒布可能パッケージが入っていない)は、API のポインターが空のままになる。この状態で `Ort::` を1つでも呼ぶと落ちる。`Ort::Env` を作る所・`Ort::GetAvailableProviders` など ONNX Runtime を呼ぶ所は、先に `OnnxRuntime::isAvailable()` を確かめる(今は FCPE・RMVPE・GAME・声の合成・GPU の一覧・設定画面の6か所)。解析の入口 `EditorController::analyzeAudio` と、最初に開いたエディターは `OnnxRuntime::showUnavailableMessageOnce()` で直し方を見せる(1プロセスに1回だけ。ARA のホストはクリップごとに解析するので、毎回出すと何枚も重なる)。理由は記録(Windows はデバッガー出力)に出る

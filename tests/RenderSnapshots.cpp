@@ -4,6 +4,7 @@
 
 #include "../Source/UI/PianoRollComponent.h"
 #include "../Source/UI/VariAudioInspector.h"
+#include "../Source/UI/ParameterPanel.h"
 #include "../Source/Undo/PitchUndoManager.h"
 #include <cmath>
 #include <iostream>
@@ -120,6 +121,14 @@ int main(int argc, char* argv[])
     inspector.refresh();
     inspector.setSize(VariAudioInspector::preferredWidth, 560);
     ok = ok && save(inspector, outDir.getChildFile("inspector_ja.png"));
+
+    // Right panel (Japanese): the Rendering card with the status line under
+    // the engine radios, as it reads after a Classic render.
+    ParameterPanel panel;
+    panel.setPluginMode(true);
+    panel.setSize(280, panel.getPreferredHeight());
+    panel.setRenderStatus(ParameterPanel::RenderStatus::Done, SynthesisEngineType::Psola);
+    ok = ok && save(panel, outDir.getChildFile("parameters_ja.png"));
     std::cout << (ok ? "Snapshots written to " : "Snapshot failed: ")
               << outDir.getFullPathName() << "\n";
     return ok ? 0 : 1;

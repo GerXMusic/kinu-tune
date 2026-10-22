@@ -313,6 +313,12 @@ private:
   void finishPianoKeyAudition();
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
+  // Engine change: the audio was rendered by the previous engine, so every
+  // edited note is rendered again by the new one (Project::markEditedNotesDirty).
+  void rerenderEditedNotes();
+  // Status line under the engine radios (ParameterPanel::setRenderStatus). Fed
+  // from every place a render starts or finishes.
+  void showRenderStatus(ParameterPanel::RenderStatus status);
   void showSettings();
   void openRecentFile(const juce::File &file);
   void addRecentFile(const juce::File &file);

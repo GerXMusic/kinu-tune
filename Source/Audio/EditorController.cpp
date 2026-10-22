@@ -45,9 +45,33 @@ EditorController::EditorController(bool enableAudioDevice)
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   incrementalSynth->setVocoder(vocoder.get());
-  incrementalSynth->setSynthesisEngine(synthesisEngineType);
+  incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
   if (audioEngine)
     playbackController->setAudioEngine(audioEngine.get());
+}
+
+void EditorController::setSynthesisEngineType(SynthesisEngineType type)
+{
+  if (sharedSynthesisEngine)
+    sharedSynthesisEngine->value.store(type);
+  else
+    synthesisEngineType = type;
+  if (incrementalSynth)
+    incrementalSynth->setSynthesisEngine(type);
+}
+
+SynthesisEngineType EditorController::getSynthesisEngineType() const
+{
+  return sharedSynthesisEngine ? sharedSynthesisEngine->value.load()
+                               : synthesisEngineType;
+}
+
+void EditorController::shareSynthesisEngine(
+    std::shared_ptr<SynthesisEnginePreference> shared)
+{
+  sharedSynthesisEngine = std::move(shared);
+  if (incrementalSynth)
+    incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
 }
 
 void EditorController::requestShutdown()
@@ -596,7 +620,7 @@ void EditorController::resynthesizeIncrementalAsync(
 
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
-  synth->setSynthesisEngine(synthesisEngineType);
+  synth->setSynthesisEngine(getSynthesisEngineType());
   pendingRerun.store(false);
 
   if (onProgress)
@@ -854,7 +878,7 @@ void EditorController::analyzeAudio(
       // the user's next edit the slow one. Only reached through the DirectML
       // fallback, which exists on Windows alone - the Core ML path never gets
       // here and keeps the vocoder.
-      if (synthesisEngineType == SynthesisEngineType::Vocoder)
+      if (getSynthesisEngineType() == SynthesisEngineType::Vocoder)
       {
         setSynthesisEngineType(SynthesisEngineType::Psola);
         LOG("Synthesis engine switched to PSOLA for CPU inference");

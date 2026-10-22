@@ -229,6 +229,15 @@ public:
     // Check if any notes are dirty
     bool hasDirtyNotes() const;
 
+    // Mark every note whose edits reach the audio (the inverse of
+    // Note::isNeutralForOriginalWaveform) for re-rendering, and set the F0
+    // dirty range over their span exactly as an edit of those notes would.
+    // Used when the rendering engine changes: the audio was made by the
+    // previous engine, so the same notes must be rendered again by the new
+    // one. A project-wide pitch offset or formant shift reaches every note.
+    // Returns the number of notes marked; nothing is marked when it is 0.
+    int markEditedNotesDirty();
+
     // F0 curve dirty tracking (for pitch tools and undo/redo)
     void setF0DirtyRange(int startFrame, int endFrame);
 

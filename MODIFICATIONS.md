@@ -107,6 +107,19 @@ The full history of the changes is in the git log of this repository.
   region preview now stops a sounding drag or key loop, and a transport
   command now also stops a held piano key.
 
+### Rendering engine (AI Resynthesis / Classic)
+- Switching the engine re-renders every note whose edits reach the audio
+  (Project::markEditedNotesDirty, MainComponent::rerenderEditedNotes). Upstream
+  only stored the setting; the audio rendered by the previous engine stayed
+  until the next edit, and only that edit's range changed.
+- In the plug-in, every EditorController the processor creates shares one
+  SynthesisEnginePreference (Source/Plugin/RenderControllers.h), initialised
+  from the saved preference. Upstream bound the editor to one controller while
+  the controllers that render the canvas region and the background
+  modifications kept the default engine, so Classic never rendered in the host.
+- A status line under the engine radios names the engine of the running or
+  last render ("Last render: Classic"), since release builds write no log.
+
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano
   roll, for new projects. Saved projects keep their saved settings.
@@ -127,10 +140,11 @@ The full history of the changes is in the git log of this repository.
 ### Tests and checks
 - New unit tests: HarmonyIntervalTests, HarmonyApplyTests,
   VariAudioControlTests, VariAudioInspectorTests, AuditionOutputTests,
-  AuditionHandoffTests, and RenderSnapshots (renders the piano roll and
-  inspector to PNG files).
+  AuditionHandoffTests, SynthesisEngineShareTests, and RenderSnapshots (renders
+  the piano roll and inspector to PNG files).
 - tests/SourceGuard.cmake: fails when code outside the allowed files writes a
-  note's pitch directly or calls the engine's audition loop directly.
+  note's pitch directly, calls the engine's audition loop directly, or creates
+  a plug-in EditorController outside Source/Plugin/RenderControllers.h.
 - `.github/workflows/ci.yml` runs the unit tests on macOS and builds the Windows
   VST3 on every push; `PITCHNET_REQUIRE_MODELS=OFF` lets it configure without
   the macOS Core ML vocoder.
