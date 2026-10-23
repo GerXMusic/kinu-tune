@@ -51,14 +51,15 @@ Mac 版(`Kinu-Tune-<版>-macOS-arm64.pkg`):
 3. 「続ける」「インストール」と進めます。管理者のパスワードは要りません。AU 版が要らない場合は「カスタマイズ」で外せます
 4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
 
-消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune` を削除します。
+消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune`(モデルとライセンス文書)を削除します。
 
 Windows 版(`Kinu-Tune-<版>-Windows-x64-Setup.exe`):
 
-1. ダウンロードした exe を開きます
-2. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
-3. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
-4. DAW を起動し直し、プラグインを再スキャンします
+1. 前に zip から手で入れていた場合は、`%APPDATA%\Keinoaza\Kinu Tune` フォルダーを先に削除します(残っていると、プラグインはそちらのモデルを使い続けます)
+2. ダウンロードした exe を開きます
+3. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
+4. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
+5. DAW を起動し直し、プラグインを再スキャンします
 
 消す時は、Windows の「設定 > アプリ」から Kinu Tune をアンインストールします。
 
@@ -106,7 +107,7 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
 - GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。Kinu Tune の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
 - モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
-- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を上記の `models` フォルダーに置くと使えます
+- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/Kinu Tune/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\Kinu Tune\models`、zip から入れた場合 `%APPDATA%\Keinoaza\Kinu Tune\models`)
 
 ### 通信とテレメトリー
 
@@ -150,14 +151,15 @@ macOS (`Kinu-Tune-<version>-macOS-arm64.pkg`):
 3. Click Continue and Install. No administrator password is needed. To leave out the Audio Unit, use Customize.
 4. Restart your DAW and rescan plugins.
 
-To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune`.
+To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune` (the models and licence texts).
 
 Windows (`Kinu-Tune-<version>-Windows-x64-Setup.exe`):
 
-1. Open the downloaded installer.
-2. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
-3. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
-4. Restart your DAW and rescan plugins.
+1. If you installed from the zip before, delete the `%APPDATA%\Keinoaza\Kinu Tune` folder first (while it is there, the plug-in keeps using the models in it).
+2. Open the downloaded installer.
+3. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
+4. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
+5. Restart your DAW and rescan plugins.
 
 To remove it, uninstall Kinu Tune in Windows Settings > Apps.
 
@@ -194,7 +196,7 @@ If the plug-in crashes when inserted or never starts analysing, install the [lat
 | GAME | Note segmentation | Model weights: CC BY-NC-SA 4.0 (source: MIT) |
 | PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder above.
+The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
 
 ### Network and telemetry
 

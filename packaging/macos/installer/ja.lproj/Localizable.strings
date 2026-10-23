@@ -3,5 +3,5 @@
 "VST3_DESCRIPTION" = "Cubase などの VST3 対応 DAW 用です。";
 "AU_TITLE" = "Audio Unit";
 "AU_DESCRIPTION" = "Logic Pro などの AU 対応 DAW 用です。使わない場合は外せます。";
-"MODELS_TITLE" = "AI のモデル";
-"MODELS_DESCRIPTION" = "音程の検出と声の合成に使います。プラグインに必要なので外せません。";
+"MODELS_TITLE" = "AI のモデルとライセンス文書";
+"MODELS_DESCRIPTION" = "AI のモデルは音程の検出と声の合成に使います。プラグインに必要なので外せません。ライセンス文書も同じ場所(~/Library/Application Support/Keinoaza/Kinu Tune)に入ります。";

@@ -15,7 +15,9 @@
 # password:
 #   ~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3
 #   ~/Library/Audio/Plug-Ins/Components/Kinu Tune.component (can be left out)
-#   ~/Library/Application Support/Keinoaza/Kinu Tune/models
+#   ~/Library/Application Support/Keinoaza/Kinu Tune/models, with the licence
+#   texts of the zip next to it (LICENSE, THIRD_PARTY_NOTICES.txt,
+#   MODIFICATIONS.md, licenses/)
 # Files installed by Installer are not quarantined, so the plug-ins need no
 # "Open Anyway" or xattr step; only the unsigned .pkg itself does.
 set -euo pipefail
@@ -29,7 +31,8 @@ version=$2
 out=$3
 here=$(cd "$(dirname "$0")" && pwd)
 
-for item in "Kinu Tune.vst3" "Kinu Tune.component" models; do
+docs=(LICENSE THIRD_PARTY_NOTICES.txt MODIFICATIONS.md licenses)
+for item in "Kinu Tune.vst3" "Kinu Tune.component" models "${docs[@]}"; do
     [ -e "$src/$item" ] || { echo "missing: $src/$item" >&2; exit 1; }
 done
 
@@ -39,17 +42,23 @@ trap 'rm -rf "${work:?}"' EXIT
 # One component package per choice. Each root holds only what goes into its
 # install location.
 component() {
-    local name=$1 item=$2 location=$3
+    local name=$1 location=$2
+    shift 2
     mkdir -p "$work/root-$name"
-    ditto --noextattr --noqtn --noacl "$src/$item" "$work/root-$name/$item"
+    local item
+    for item in "$@"; do
+        ditto --noextattr --noqtn --noacl "$src/$item" "$work/root-$name/$item"
+    done
     # Installer "relocates" a bundle to wherever a bundle with the same
     # identifier already is (a build folder, another disk). Turn that off so
-    # the plug-in always lands in the plug-in folder.
+    # the plug-in always lands in the plug-in folder. Also install it even if
+    # the bundle on disk has a newer version (going back to an older release).
     pkgbuild --analyze --root "$work/root-$name" "$work/$name.plist" >/dev/null
-    local count
-    count=$(plutil -extract @ raw -expect array "$work/$name.plist" 2>/dev/null || plutil -convert json -o - "$work/$name.plist" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
-    for ((i = 0; i < count; i++)); do
+    local i=0
+    while plutil -extract "$i" xml1 -o /dev/null "$work/$name.plist" 2>/dev/null; do
         plutil -replace "$i.BundleIsRelocatable" -bool NO "$work/$name.plist"
+        plutil -replace "$i.BundleIsVersionChecked" -bool NO "$work/$name.plist"
+        i=$((i + 1))
     done
     pkgbuild --root "$work/root-$name" \
         --component-plist "$work/$name.plist" \
@@ -78,16 +87,17 @@ strip_xattrs() {
     files=$(cd "$work/root-$name" && find . | wc -l | tr -d ' ')
     sed -i '' -E "s/numberOfFiles=\"[0-9]+\"/numberOfFiles=\"$files\"/" "$expanded/PackageInfo"
     pkgutil --flatten "$expanded" "$work/pkgs/$name.pkg"
-    if lsbom -s "$expanded/Bom" | grep -q '/\._'; then
-        echo "attribute entries left in $name" >&2
+    # Check what will actually be installed.
+    if gzip -dc "$expanded/Payload" | cpio -it 2>/dev/null | grep -Eq '(^|/)\._'; then
+        echo "attribute entries left in the $name payload" >&2
         exit 1
     fi
 }
 
 mkdir -p "$work/pkgs"
-component vst3 "Kinu Tune.vst3" "/Library/Audio/Plug-Ins/VST3"
-component au "Kinu Tune.component" "/Library/Audio/Plug-Ins/Components"
-component models models "/Library/Application Support/Keinoaza/Kinu Tune"
+component vst3 "/Library/Audio/Plug-Ins/VST3" "Kinu Tune.vst3"
+component au "/Library/Audio/Plug-Ins/Components" "Kinu Tune.component"
+component models "/Library/Application Support/Keinoaza/Kinu Tune" models "${docs[@]}"
 
 mkdir -p "$work/resources"
 for lang in en ja; do

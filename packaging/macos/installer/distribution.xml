@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Kinu Tune macOS installer. Built by packaging/macos/build-pkg.sh, which
-     replaces @VERSION@. Titles and texts are in <lang>.lproj. -->
+     fills in the version. Titles and texts are in <lang>.lproj. -->
 <installer-gui-script minSpecVersion="2">
     <title>TITLE</title>
     <welcome file="welcome.html" mime-type="text/html"/>
@@ -25,7 +25,8 @@
     <choice id="au" title="AU_TITLE" description="AU_DESCRIPTION">
         <pkg-ref id="com.keinoaza.kinutune.au"/>
     </choice>
-    <!-- Both plug-ins need the models, so this one cannot be unticked. -->
+    <!-- Both plug-ins need the models, and the licence texts go with them,
+         so this one cannot be unticked. -->
     <choice id="models" title="MODELS_TITLE" description="MODELS_DESCRIPTION" enabled="false" selected="true">
         <pkg-ref id="com.keinoaza.kinutune.models"/>
     </choice>

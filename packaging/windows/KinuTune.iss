@@ -12,6 +12,9 @@
 ; except the models, which go to the machine-wide folder the plug-in also
 ; reads (%PROGRAMDATA%\Keinoaza\Kinu Tune\models), and it installs the
 ; Visual C++ Redistributable that the bundled onnxruntime.dll needs.
+; The plug-in reads %APPDATA%\Keinoaza\Kinu Tune\models instead whenever that
+; folder exists (a manual install), so the README tells installer users to
+; delete it.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<version>
@@ -66,9 +69,10 @@ japanese.InstallingRedist=Microsoft Visual C++ 再頒布可能パッケージを
 
 [InstallDelete]
 ; Start from an empty bundle so files an older version (or a manual install)
-; left behind cannot mix with the new ones.
+; left behind cannot mix with the new ones. The models folder is not emptied:
+; users may add rmvpe.onnx there (see README), and the files below replace
+; ours by name.
 Type: filesandordirs; Name: "{commoncf64}\VST3\Kinu Tune.vst3"
-Type: filesandordirs; Name: "{commonappdata}\Keinoaza\Kinu Tune\models"
 
 [Files]
 Source: "{#StageDir}\Kinu Tune.vst3\*"; DestDir: "{commoncf64}\VST3\Kinu Tune.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs

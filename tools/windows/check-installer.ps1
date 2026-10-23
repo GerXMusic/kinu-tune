@@ -40,8 +40,16 @@ $vst3 = "C:\Program Files\Common Files\VST3\Kinu Tune.vst3"
 $dll = "$vst3\Contents\x86_64-win\Kinu Tune.vst3"
 $models = "C:\ProgramData\Keinoaza\Kinu Tune\models"
 $uninstaller = "C:\Program Files\Keinoaza\Kinu Tune\unins000.exe"
+$appDir = "C:\Program Files\Keinoaza\Kinu Tune"
+$uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{38373E75-C136-4F15-8F5D-6F966750C257}_is1"
 Write-Host "Windows $([System.Environment]::OSVersion.Version)"
-Write-Host "Before: System32\msvcp140.dll present: $(Test-Path (Join-Path $env:SystemRoot 'System32\msvcp140.dll'))"
+# Without this the check below could not tell that the installer brought the
+# Visual C++ runtime.
+if (Test-Path (Join-Path $env:SystemRoot "System32\msvcp140.dll")) {
+    Write-Host "This image already has the Visual C++ runtime; it is not a clean machine."
+    exit 1
+}
+Write-Host "Before: no Visual C++ runtime in System32"
 
 $run = Start-Process C:\kinu\setup.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=C:\kinu\setup.log" -Wait -PassThru
 Write-Host "setup.exe -> exit code $($run.ExitCode)"
@@ -49,7 +57,7 @@ if ($run.ExitCode -ne 0) { $failures += "the installer exited with $($run.ExitCo
 
 foreach ($path in $dll, "$vst3\Contents\x86_64-win\onnxruntime.dll", "$models\fcpe.onnx", "$models\cent_table.bin",
                   "$models\mel_filterbank.bin", "$models\pc_nsf_hifigan.onnx", "$models\GAME", $uninstaller,
-                  "C:\Program Files\Keinoaza\Kinu Tune\LICENSE") {
+                  "$appDir\LICENSE", "$appDir\THIRD_PARTY_NOTICES.txt", "$appDir\licenses", $uninstallKey) {
     if (-not (Test-Path $path)) { $failures += "missing after install: $path" }
 }
 $msvcp = Join-Path $env:SystemRoot "System32\msvcp140.dll"
@@ -62,11 +70,14 @@ if ($LASTEXITCODE -ne 0) { $failures += "create the installed plug-in (exit code
 
 # The uninstaller hands over to a copy of itself; wait for the files to go.
 if (Test-Path $uninstaller) {
-    Start-Process $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+    $un = Start-Process $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+    Write-Host "unins000.exe -> exit code $($un.ExitCode)"
+    if ($un.ExitCode -ne 0) { $failures += "the uninstaller exited with $($un.ExitCode)" }
+    $left = { @($vst3, $models, $appDir, $uninstallKey | Where-Object { Test-Path $_ }) }
     $deadline = (Get-Date).AddSeconds(120)
-    while (((Test-Path $vst3) -or (Test-Path $models)) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-    if (Test-Path $vst3) { $failures += "the plug-in is still there after uninstalling" }
-    if (Test-Path $models) { $failures += "the models are still there after uninstalling" }
+    while ((& $left).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    foreach ($path in & $left) { $failures += "still there after uninstalling: $path" }
+    if ((& $left).Count -eq 0) { Write-Host "Uninstall removed the plug-in, the models, the app folder and the uninstall entry." }
 }
 
 Write-Host "::group::Installer log"
