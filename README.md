@@ -95,6 +95,69 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 3. 左のエディタースケールで曲のキーを選びます
 4. その下のハモリ欄で「3度 上」などを押します(何も選んでいなければ全ノート、選んでいればそのノートだけが動きます)
 
+### ショートカット一覧
+
+表記は Mac のキーです。Windows では Cmd を Ctrl、Option を Alt に読み替えてください。
+
+キーボード
+
+| キー | 動き |
+|---|---|
+| ↑ / ↓ | 選択中のセグメントの音程を動かす(吸着モードに従う。絶対=次の半音またはスケール音ちょうど、相対・オフ=半音) |
+| Shift + ↑ / ↓ | 1 セント単位で動かす(吸着を無視) |
+| ← / → | 前後のセグメントへ選択を移す |
+| 1 / 2 / 3 / 4 | ツール切替: 選択 / 分割 / ピッチ描き込み / タイミング |
+| Shift + F | 全体表示(横は時間軸全体、縦は歌っている音域) |
+| Cmd + Z | 元に戻す |
+| Shift + Cmd + Z、Cmd + Y | やり直し |
+| Cmd + A | すべて選択 |
+| Shift + Cmd + D | デルタピッチ(編集量)の表示切替 |
+| Shift + Cmd + B | ベースピッチの表示切替 |
+| Cmd + , | 設定画面 |
+| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | 開く / 保存 / 名前を付けて保存 / 音声を書き出す(単体アプリ向け) |
+| Space | 再生 / 一時停止(単体アプリだけ。プラグインではホストの Space がそのまま効く) |
+| Esc | 停止 |
+| Home / End | 先頭へ / 末尾へ |
+| Cmd + Q | 終了(単体アプリだけ) |
+
+マウス(選択ツール)
+
+| 操作 | 動き |
+|---|---|
+| クリック | そのセグメントだけを選択 |
+| Shift + クリック | 選択に追加(一緒にドラッグできる) |
+| Cmd + クリック | 選択に追加 / 解除 |
+| Shift + ダブルクリック | 以降の同じ音程のセグメントをすべて選択 |
+| ダブルクリック(セグメント本体) | そのセグメントだけを解析時の状態に戻す(音程・カーブ・フォルマント・音量・タイミング)。元に戻す 1 回で取り消せる |
+| Option + クリック(セグメント上) | その位置で分割 |
+| セグメントを上下にドラッグ | 音程を動かす。ドラッグ中はそのセグメントを繰り返し試聴し、離すと止まる |
+| 空いている所をドラッグ / クリック | 画面を動かす / 選択を外す |
+| Shift + ドラッグ(空いている所から) | 範囲選択(波形の上から始めても範囲選択) |
+| マウスを乗せる | 音名と、十分にズームしていればスマートコントロール(ストレート化・ピッチ補正・結合・傾き・フォルマント・音量)を表示 |
+
+ドラッグ中に吸着を切り替える修飾キー
+
+| 押しながらドラッグ | 吸着 |
+|---|---|
+| Shift | オフ(自由に動く) |
+| Cmd | 絶対(半音・スケール音ぴったり) |
+| Option | 相対(元のずれを保って半音単位) |
+
+何も押さなければ、インスペクタの「ピッチスナップモード」に従います(既定は絶対)。
+
+ズームと画面移動
+
+| 操作 | 動き |
+|---|---|
+| ホイール / Shift + ホイール | 縦スクロール / 横スクロール |
+| Cmd + ホイール | 横方向の拡大縮小(マウス位置を中心に) |
+| Shift + Cmd + ホイール、Option + ホイール | 縦方向の拡大縮小 |
+| Cmd + ドラッグ(空いている所) | 縦横の拡大縮小 |
+| Option + ドラッグ(空いている所) | 縦方向の拡大縮小 |
+| Option + ダブルクリック(空いている所) | 全体表示(Shift + F と同じ) |
+
+VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグでのズームと Option + クリックでの縮小(Option は縦の拡大縮小に割り当てました)。セグメントを削除するキーもありません。
+
 ### AI モデルについて
 
 配布版には次のモデルファイルが入っています。モデルにはそれぞれのライセンスがあります(詳しくは [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt))。
@@ -187,6 +250,69 @@ Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 4. Restart your DAW and rescan plugins.
 
 If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
+
+### Shortcuts
+
+Keys are given for Mac. On Windows read Cmd as Ctrl and Option as Alt.
+
+Keyboard
+
+| Key | Action |
+|---|---|
+| Up / Down | Move the selected segments' pitch (follows the snap mode: Absolute = to the next semitone or scale note exactly, Relative and Off = one semitone) |
+| Shift + Up / Down | Move by one cent (ignores snapping) |
+| Left / Right | Select the previous / next segment |
+| 1 / 2 / 3 / 4 | Tool: Select / Split / Pitch drawing / Timing |
+| Shift + F | Zoom to fit (the whole time range, and the sung pitch range vertically) |
+| Cmd + Z | Undo |
+| Shift + Cmd + Z, Cmd + Y | Redo |
+| Cmd + A | Select all |
+| Shift + Cmd + D | Show / hide the delta pitch (amount of edit) |
+| Shift + Cmd + B | Show / hide the base pitch |
+| Cmd + , | Settings |
+| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | Open / Save / Save as / Export audio (standalone app) |
+| Space | Play / pause (standalone app only; as a plug-in the host's Space works as usual) |
+| Esc | Stop |
+| Home / End | Go to start / end |
+| Cmd + Q | Quit (standalone app only) |
+
+Mouse (Select tool)
+
+| Action | Result |
+|---|---|
+| Click | Select only that segment |
+| Shift + click | Add to the selection (drags together) |
+| Cmd + click | Add to / remove from the selection |
+| Shift + double-click | Select every following segment with the same pitch |
+| Double-click a segment | Reset only that segment to its analysed state (pitch, curve, formant, volume, timing); one Undo takes it back |
+| Option + click on a segment | Split it there |
+| Drag a segment up / down | Move its pitch; while dragging, the segment loops as a preview and stops when you release |
+| Drag / click on empty space | Pan the view / clear the selection |
+| Shift + drag from empty space | Rubber-band selection (starting on the waveform also selects) |
+| Hover | Shows the note name and, when zoomed in enough, the smart controls (straighten, pitch correction, glue, tilt, formant, volume) |
+
+Modifier keys while dragging a pitch
+
+| Hold while dragging | Snap |
+|---|---|
+| Shift | Off (free movement) |
+| Cmd | Absolute (exactly on semitones or scale notes) |
+| Option | Relative (keeps the original deviation, moves in semitones) |
+
+With no modifier the inspector's Pitch Snap Mode applies (Absolute by default).
+
+Zoom and navigation
+
+| Action | Result |
+|---|---|
+| Wheel / Shift + wheel | Scroll vertically / horizontally |
+| Cmd + wheel | Zoom horizontally around the pointer |
+| Shift + Cmd + wheel, Option + wheel | Zoom vertically |
+| Cmd + drag on empty space | Zoom both ways |
+| Option + drag on empty space | Zoom vertically |
+| Option + double-click on empty space | Zoom to fit (same as Shift + F) |
+
+Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Option + click to zoom out (Option is used for vertical zoom here). There is no key for deleting a segment.
 
 ### Model files
 
