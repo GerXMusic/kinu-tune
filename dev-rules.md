@@ -73,6 +73,7 @@
 - コミットの前に、テスト全部(`ctest --test-dir build`)と pluginval(厳しさ 5)を通す。`pitchnet_ui` にリンクするテストは、UI を変えたら全体をビルドしてから流す
 - GitHub に送ったら、自動チェック(CI)が通ったことを確かめる
 - 新しく作るソースファイルの先頭には、Kinu Tune の著作権とライセンスの3行を書く(既存の新規ファイルと同じ文面)
+- GitHub の URL を渡されて実装・移植する時、依存を新しく足す時、第三者のフォーク(例: Rowryu/kinu-tune)からコードを取り込む時は、§14 の安全確認を先に行い、3段階の判定を報告してから動かす
 
 ## 12. ONNX Runtime は読み込めた時だけ呼ぶ
 
@@ -91,3 +92,12 @@
 - Mac の `.pkg` にはライセンス文書(LICENSE・THIRD_PARTY_NOTICES.txt・MODIFICATIONS.md・licenses)も入れる(モデルと同じフォルダー)。zip と Windows のインストーラーにも入っている
 - Windows のインストーラーはモデルを `%PROGRAMDATA%` に入れる。プラグインは `%APPDATA%\Keinoaza\Kinu Tune\models` が「フォルダーとして」あれば、ファイルが欠けていてもそちらだけを読む(ファイルごとに `%PROGRAMDATA%` へは戻らない)。README はインストーラーで入れる人に `%APPDATA%` 側を消すよう書いている。モデルを変える版を出す時は、この順番に気をつける。インストーラーはモデルのフォルダーを空にしない(利用者が置く rmvpe.onnx を消さないため)
 - 破ると: Windows は `windows-installer.yml` の `tools/windows/check-installer.ps1`(まっさらなコンテナーで入れて、プラグインを作って、消す)が落ちる。ただしモデルを実際に読み込むところまでは確かめていない。Mac は自動の検査が無い。作り直したら、この Mac で `installer -pkg <pkg> -target CurrentUserHomeDirectory` で入れ、zip の中身と `diff -r` で同じこと、属性が付いていないことを確かめる
+
+## 14. 外から取り込むコードは安全確認してから動かし、取り込んだものはハッシュかコミット ID で固定する
+
+- 守ること: 外部リポジトリのコード・依存・GitHub Actions のアクションは、`~/.claude/skills/_shared/external-code-intake.md` の手順(空のフォルダーに取得→自動で走る仕掛けの洗い出し→`scan_external_code.sh`→依存の固定→3段階の判定を報告)を通してから、ビルド・インストール・テストに入れる。判定が「注意点あり」以上なら、動かすかどうかはユーザーが決める
+- 必ず通す入口: 確認の記録は `verify-map.md`(確認日・コミットID・判定・注意点)と、ライセンスと出典は `THIRD_PARTY_NOTICES.txt` / `docs/source-ledger.md`
+- CMake がダウンロードするファイル(ONNX Runtime・DirectML の NuGet・GAME モデル)の SHA-256 は `cmake/DependencyHashes.cmake` の表が正本で、ダウンロードは必ず表の値で検証する。`ONNXRUNTIME_VERSION`・`DIRECTML_VERSION`・`GAME_MODELS_VERSION` を上げる時は、新しいファイルを 2 回取得して値が一致することを見てから表も同じコミットで更新する。表に無い変種(Linux の GPU 版、存在しない CUDA 13 版)は `-DPITCHNET_ALLOW_UNPINNED_DOWNLOADS=ON` を付けない限り構成が止まる。`GAME_MODELS_URL` を差し替える時は `GAME_MODELS_SHA256` も渡す
+- GitHub Actions の `uses:` は 40 桁のコミット ID で指定し、行末のコメントに版名を残す。タグ(`@v7`)やブランチ名では指定しない。新しい版に上げる時は `gh api repos/<owner>/<repo>/git/ref/tags/<版>` で ID を取る
+- サブモジュール(JUCE・ARA_SDK・r8brain)はコミット ID で固定されている。進める時は `git submodule status` の変化をコミットの説明に書く
+- 破ると: ダウンロードの中身が表と違えば、構成(configure)が「hash mismatch」で止まる。表の更新忘れも同じ所で止まる。アクションのタグ指定は自動テストが無く、`grep -rn 'uses:' .github/workflows | grep -v '@[0-9a-f]\{40\}'` で見つける(ローカルの `./.github/workflows/…` 参照は対象外)

@@ -68,6 +68,9 @@ set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redis
 set(ONNXRUNTIME_VERSION "1.19.2" CACHE STRING "ONNX Runtime version" FORCE)
 set(GAME_MODELS_VERSION "v1.0.3" CACHE STRING "GAME release tag used to download model assets")
 set(GAME_MODELS_URL "" CACHE STRING "Optional URL to download GAME model zip")
+set(GAME_MODELS_SHA256 "" CACHE STRING "SHA-256 of the zip at GAME_MODELS_URL (the default URL is verified from cmake/DependencyHashes.cmake)")
+# SHA-256 of every archive downloaded below; a download is verified against it.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DependencyHashes.cmake")
 
 if(APPLE)
     list(FIND CMAKE_OSX_ARCHITECTURES "arm64" PITCHNET_ARM64_ARCH_INDEX)
@@ -146,15 +149,19 @@ if(EXISTS "${ONNXRUNTIME_CACHE_HEADER}")
     message(STATUS "ONNX Runtime already downloaded, skipping download")
     set(ONNXRUNTIME_ROOT ${ONNXRUNTIME_CACHE_DIR})
 else()
-    # Detect platform and set download URL
+    # Detect platform and set download URL. ONNXRUNTIME_PACKAGE_KEY names the
+    # archive in cmake/DependencyHashes.cmake so the download can be verified.
     if(WIN32)
         if(USE_CUDA)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-win-x64-gpu_cuda13")
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.zip")
             message(STATUS "Downloading ONNX Runtime GPU CUDA13 package (Windows)")
         elseif(USE_DIRECTML)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-directml-nuget-${ONNXRUNTIME_VERSION}")
             set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/${ONNXRUNTIME_VERSION}")
             message(STATUS "Downloading ONNX Runtime DirectML package from NuGet (Windows)")
         else()
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-win-x64")
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
             message(STATUS "Downloading ONNX Runtime CPU package (Windows)")
         endif()
@@ -162,22 +169,28 @@ else()
         if(USE_GPU)
             message(WARNING "GPU acceleration is not supported on macOS, falling back to CPU")
         endif()
+        set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-osx-${ONNXRUNTIME_MACOS_PACKAGE}")
         set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-${ONNXRUNTIME_MACOS_PACKAGE}-${ONNXRUNTIME_VERSION}.tgz")
     else()
         if(USE_CUDA)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-linux-x64-gpu_cuda13")
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.tgz")
         elseif(USE_GPU)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-linux-x64-gpu")
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz")
         else()
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-linux-x64")
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz")
         endif()
     endif()
 
     message(STATUS "Downloading ONNX Runtime from: ${ONNXRUNTIME_URL}")
+    pitchnet_download_hash_arguments(ONNXRUNTIME_HASH_ARGS "${ONNXRUNTIME_PACKAGE_KEY}" URL_HASH)
 
     FetchContent_Declare(
         onnxruntime
         URL ${ONNXRUNTIME_URL}
+        ${ONNXRUNTIME_HASH_ARGS}
         SOURCE_DIR ${ONNXRUNTIME_CACHE_DIR}
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
@@ -735,10 +748,14 @@ if(ONNXRUNTIME_FOUND)
                     set(DML_NUPKG_PATH "${CMAKE_BINARY_DIR}/_deps/directml.nupkg")
 
                     message(STATUS "Downloading DirectML ${DIRECTML_VERSION} from NuGet...")
+                    pitchnet_download_hash_arguments(DML_HASH_ARGS "directml-nuget-${DIRECTML_VERSION}" EXPECTED_HASH)
                     file(DOWNLOAD "${DML_NUGET_URL}" "${DML_NUPKG_PATH}"
+                        ${DML_HASH_ARGS}
                         SHOW_PROGRESS
                         STATUS DML_DOWNLOAD_STATUS)
 
+                    # A hash mismatch is a CMake error that stops configuring even with
+                    # STATUS present (checked 2026-10-23); STATUS only reports download failures.
                     list(GET DML_DOWNLOAD_STATUS 0 DML_DOWNLOAD_RESULT)
                     if(DML_DOWNLOAD_RESULT EQUAL 0)
                         message(STATUS "Extracting DirectML package...")
@@ -974,12 +991,21 @@ if(GAME_MODELS_MISSING)
     if(NOT GAME_MODELS_URL)
         string(REGEX REPLACE "^v" "" GAME_MODELS_VERSION_NAME "${GAME_MODELS_VERSION}")
         set(GAME_MODELS_URL "https://github.com/openvpi/GAME/releases/download/${GAME_MODELS_VERSION}/GAME-${GAME_MODELS_VERSION_NAME}-small-onnx.zip")
+        pitchnet_download_hash_arguments(GAME_HASH_ARGS "game-models-${GAME_MODELS_VERSION}-small-onnx" EXPECTED_HASH)
+    elseif(GAME_MODELS_SHA256)
+        set(GAME_HASH_ARGS EXPECTED_HASH "SHA256=${GAME_MODELS_SHA256}")
+    elseif(PITCHNET_ALLOW_UNPINNED_DOWNLOADS)
+        message(WARNING "GAME_MODELS_URL is set without GAME_MODELS_SHA256; downloading it unverified because PITCHNET_ALLOW_UNPINNED_DOWNLOADS is ON")
+        set(GAME_HASH_ARGS "")
+    else()
+        message(FATAL_ERROR "GAME_MODELS_URL is set but GAME_MODELS_SHA256 is not. Pass the SHA-256 of that zip, or -DPITCHNET_ALLOW_UNPINNED_DOWNLOADS=ON to download it unverified.")
     endif()
     set(GAME_ZIP_URL "${GAME_MODELS_URL}")
     set(GAME_ZIP_PATH "${CMAKE_BINARY_DIR}/GAME-1.0-small-onnx.zip")
     set(GAME_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_game_extract")
 
     file(DOWNLOAD "${GAME_ZIP_URL}" "${GAME_ZIP_PATH}"
+         ${GAME_HASH_ARGS}
          STATUS GAME_DL_STATUS
          SHOW_PROGRESS)
     list(GET GAME_DL_STATUS 0 GAME_DL_CODE)

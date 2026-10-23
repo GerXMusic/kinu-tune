@@ -157,6 +157,10 @@ The full history of the changes is in the git log of this repository.
 - cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
   ONNX Runtime folder) from the macOS bundles after linking and fails the build
   if one is left.
+- cmake/DependencyHashes.cmake records the SHA-256 of every archive CMake
+  downloads (ONNX Runtime, the DirectML NuGet packages, the GAME models); a
+  download that does not match stops the configure step. The GitHub Actions
+  workflows pin the actions they use to commit ids instead of tags.
 - tools/windows/check-vst3.ps1 (run by both workflows) creates the Windows
   plug-in in a minimal host (tools/windows/vst3-instantiate) on the runner's
   runtime, on an older Visual C++ runtime and in clean Windows containers with
