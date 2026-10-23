@@ -45,19 +45,13 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
 2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
 3. `models` フォルダーを `~/Library/Application Support/Keinoaza/Kinu Tune/` の中に入れます(`.../Kinu Tune/models/fcpe.onnx` などになる配置)
-4. 配布版は Apple の公証を受けていないため、ターミナルで次を実行して「開発元未確認」の制限を外します
+4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+5. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
+6. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
 
    ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
    ```
-
-   AU 版を入れた場合は、続けて次も実行します
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
-   ```
-
-5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
 
 Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
@@ -124,19 +118,13 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
 2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
 3. Copy the `models` folder into `~/Library/Application Support/Keinoaza/Kinu Tune/` (so that `.../Kinu Tune/models/fcpe.onnx` exists).
-4. The release is not notarized. Remove the quarantine flag in Terminal:
+4. Restart your DAW and rescan plugins.
+5. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
+6. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
 
    ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
    ```
-
-   If you installed the Audio Unit, also run:
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
-   ```
-
-5. Restart your DAW and rescan plugins.
 
 Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 
