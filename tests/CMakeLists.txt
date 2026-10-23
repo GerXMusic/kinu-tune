@@ -107,6 +107,24 @@ target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)
 target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)
 add_test(NAME OnnxRuntimeAvailabilityTests COMMAND OnnxRuntimeAvailabilityTests)
 
+# Loads the shipped models and checks analysis and synthesis with numbers. The
+# CI Windows job builds and runs only this target (the other tests stay on
+# macOS), because nothing else runs a model on Windows. The test takes the
+# models folder as its argument; GAME is downloaded into it at configure time.
+add_executable(ModelInferenceTests ModelInferenceTests.cpp)
+target_link_libraries(ModelInferenceTests PRIVATE pitchnet_core)
+target_compile_features(ModelInferenceTests PRIVATE cxx_std_17)
+add_test(NAME ModelInferenceTests
+         COMMAND ModelInferenceTests "${CMAKE_SOURCE_DIR}/Resources/models")
+if(WIN32 AND ONNXRUNTIME_DLLS)
+    # Like the plug-in, the test loads onnxruntime.dll from its own folder.
+    foreach(DLL ${ONNXRUNTIME_DLLS})
+        add_custom_command(TARGET ModelInferenceTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DLL}" "$<TARGET_FILE_DIR:ModelInferenceTests>")
+    endforeach()
+endif()
+
 # Calls that must go through one entry point (see SourceGuard.cmake).
 foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
     add_test(NAME SourceGuard_${guard_rule}

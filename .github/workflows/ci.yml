@@ -1,6 +1,8 @@
 # Checks every push and pull request: builds Kinu Tune with the unit tests on
 # macOS (Apple silicon) and runs them, and builds the Windows VST3 so code that
-# only one compiler accepts is caught before a release.
+# only one compiler accepts is caught before a release. On Windows it also runs
+# the one test that loads the models (ModelInferenceTests), so analysis and
+# synthesis are known to work there and not only on macOS.
 name: CI
 
 on:
@@ -53,11 +55,23 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # PITCHNET_BUILD_TESTS registers the tests; only ModelInferenceTests is
+      # built and run here (the rest run on macOS).
       - name: Configure
-        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=OFF
+        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=ON
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
+
+      # Loads fcpe.onnx, the GAME models and pc_nsf_hifigan.onnx with the
+      # Windows ONNX Runtime and checks the numbers: FCPE reports the tone's
+      # pitch, GAME finds the note, the vocoder and PSOLA shift it by a minor
+      # third. See tests/ModelInferenceTests.cpp.
+      - name: Build the model inference test
+        run: cmake --build build --config Release --target ModelInferenceTests --parallel
+
+      - name: Run the model inference test
+        run: ctest --test-dir build -C Release -R ModelInferenceTests --output-on-failure
 
       # Creates the plug-in in a minimal host on the runner's runtime and on an
       # older Visual C++ runtime, then runs pluginval. See the script.

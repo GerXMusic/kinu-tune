@@ -157,6 +157,10 @@ The full history of the changes is in the git log of this repository.
 - cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
   ONNX Runtime folder) from the macOS bundles after linking and fails the build
   if one is left.
+- tests/ModelInferenceTests.cpp loads the shipped models and checks analysis
+  and synthesis with numbers (FCPE reports a tone's pitch, GAME finds the note,
+  the vocoder and PSOLA shift it by a minor third). It is the one test the CI
+  Windows job also runs, so Windows is known to analyse and synthesise.
 - cmake/DependencyHashes.cmake records the SHA-256 of every archive CMake
   downloads (ONNX Runtime, the DirectML NuGet packages, the GAME models); a
   download that does not match stops the configure step. The GitHub Actions
