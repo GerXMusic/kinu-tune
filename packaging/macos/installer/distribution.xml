@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kinu Tune macOS installer. Built by packaging/macos/build-pkg.sh, which
+     replaces @VERSION@. Titles and texts are in <lang>.lproj. -->
+<installer-gui-script minSpecVersion="2">
+    <title>TITLE</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <!-- Install into the current user's home only: the same places as the
+         manual install, and no administrator password. -->
+    <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="13.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="au"/>
+        <line choice="models"/>
+    </choices-outline>
+    <choice id="vst3" title="VST3_TITLE" description="VST3_DESCRIPTION">
+        <pkg-ref id="com.keinoaza.kinutune.vst3"/>
+    </choice>
+    <choice id="au" title="AU_TITLE" description="AU_DESCRIPTION">
+        <pkg-ref id="com.keinoaza.kinutune.au"/>
+    </choice>
+    <!-- Both plug-ins need the models, so this one cannot be unticked. -->
+    <choice id="models" title="MODELS_TITLE" description="MODELS_DESCRIPTION" enabled="false" selected="true">
+        <pkg-ref id="com.keinoaza.kinutune.models"/>
+    </choice>
+    <pkg-ref id="com.keinoaza.kinutune.vst3" version="@VERSION@">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.keinoaza.kinutune.au" version="@VERSION@">au.pkg</pkg-ref>
+    <pkg-ref id="com.keinoaza.kinutune.models" version="@VERSION@">models.pkg</pkg-ref>
+</installer-gui-script>

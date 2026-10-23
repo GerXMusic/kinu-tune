@@ -1,0 +1,7 @@
+"TITLE" = "Kinu Tune @VERSION@";
+"VST3_TITLE" = "VST3";
+"VST3_DESCRIPTION" = "For VST3 hosts such as Cubase.";
+"AU_TITLE" = "Audio Unit";
+"AU_DESCRIPTION" = "For Audio Unit hosts such as Logic Pro. You can leave it out.";
+"MODELS_TITLE" = "AI models";
+"MODELS_DESCRIPTION" = "Used for pitch detection and voice resynthesis. Both plug-ins need them.";

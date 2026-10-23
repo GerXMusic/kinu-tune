@@ -1,5 +1,6 @@
 # Builds the Windows (x64, CPU) VST3 for an existing GitHub release and
-# attaches the zip to it. Run it by hand (Actions > Windows release build >
+# attaches the zip to it, then the installer made from that zip (see
+# windows-installer.yml). Run it by hand (Actions > Windows release build >
 # Run workflow) after the release exists. fcpe.onnx, cent_table.bin,
 # mel_filterbank.bin and pc_nsf_hifigan.onnx are in the repository; CMake
 # downloads the GAME models from the OpenVPI release during configure.
@@ -80,3 +81,11 @@ jobs:
           name: ${{ env.ZIP_NAME }}-test
           path: ${{ env.ZIP_NAME }}.zip
           retention-days: 7
+
+  installer:
+    needs: windows-x64
+    if: ${{ inputs.ref == '' }}
+    uses: ./.github/workflows/windows-installer.yml
+    with:
+      tag: ${{ inputs.tag }}
+      attach: true
