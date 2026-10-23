@@ -5,6 +5,8 @@
 #include <dxgi1_2.h>
 #include <windows.h>
 
+#include <vector>
+
 #ifdef _MSC_VER
 #pragma comment(lib, "dxgi.lib")
 #endif
@@ -64,6 +66,26 @@ struct WindowsGpuCapabilities
   bool singleIntelAdapter = false;
 };
 
+// Two adapter objects can expose the SAME physical GPU: a virtual display that
+// mirrors the only card (Parsec, remote desktop) makes DXGI list it twice with
+// a different LUID. The policy below is about how many GPUs the machine has,
+// not how many adapter objects it lists, so adapters with the same identity
+// count once. Known limit: two identical real cards also share this identity
+// and would count as one.
+struct AdapterIdentity
+{
+  UINT vendor = 0;
+  UINT device = 0;
+  UINT subsystem = 0;
+  juce::String name;
+};
+
+bool sameGpu (const AdapterIdentity &a, const AdapterIdentity &b)
+{
+  return a.vendor == b.vendor && a.device == b.device
+         && a.subsystem == b.subsystem && a.name == b.name;
+}
+
 WindowsGpuCapabilities detectWindowsGpuCapabilities()
 {
   IDXGIFactory1 *factory = nullptr;
@@ -73,6 +95,7 @@ WindowsGpuCapabilities detectWindowsGpuCapabilities()
     return {};
 
   int hardwareAdapters = 0;
+  std::vector<AdapterIdentity> gpus;
   bool loneAdapterNeedsClassic = false;
   bool loneAdapterIsIntel = false;
 
@@ -89,19 +112,34 @@ WindowsGpuCapabilities detectWindowsGpuCapabilities()
     if (SUCCEEDED(adapter->GetDesc1(&desc)) &&
         (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0)
     {
-      ++hardwareAdapters;
-      if (hardwareAdapters == 1)
+      const AdapterIdentity identity { desc.VendorId, desc.DeviceId,
+                                       desc.SubSysId,
+                                       juce::String(desc.Description) };
+      bool alreadyCounted = false;
+      for (const auto &gpu : gpus)
+        if (sameGpu (gpu, identity))
+        {
+          alreadyCounted = true;
+          break;
+        }
+
+      if (!alreadyCounted)
       {
-        bool ok = false;
-        const bool integrated = isIntegratedAdapter(adapter, ok);
-        loneAdapterIsIntel =
-            juce::String(desc.Description).containsIgnoreCase("Intel");
-        // An adapter D3D12 cannot open is no better for the vocoder than an
-        // integrated one: DirectML would fall back to the CPU either way.
-        // Also prefer Classic for a lone Intel adapter, even if its driver
-        // does not report UMA. Match the display name without case sensitivity.
-        loneAdapterNeedsClassic =
-            !ok || integrated || loneAdapterIsIntel;
+        gpus.push_back (identity);
+        ++hardwareAdapters;
+        if (hardwareAdapters == 1)
+        {
+          bool ok = false;
+          const bool integrated = isIntegratedAdapter(adapter, ok);
+          loneAdapterIsIntel =
+              juce::String(desc.Description).containsIgnoreCase("Intel");
+          // An adapter D3D12 cannot open is no better for the vocoder than an
+          // integrated one: DirectML would fall back to the CPU either way.
+          // Also prefer Classic for a lone Intel adapter, even if its driver
+          // does not report UMA. Match the display name without case sensitivity.
+          loneAdapterNeedsClassic =
+              !ok || integrated || loneAdapterIsIntel;
+        }
       }
     }
     adapter->Release();
