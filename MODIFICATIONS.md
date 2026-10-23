@@ -136,6 +136,11 @@ The full history of the changes is in the git log of this repository.
   builds the Windows release; packaging/INSTALL-*.txt are the install notes in
   the release zips. From 0.1.1 the macOS release also contains the Audio Unit
   (`Kinu Tune.component`) besides the VST3.
+- Installers: the upstream PitchNet.pkgproj and PitchNet.iss are not used.
+  `packaging/macos/build-pkg.sh` builds a macOS package that installs into the
+  user's home; `packaging/windows/KinuTune.iss` is the Windows installer, built
+  and checked by `.github/workflows/windows-installer.yml`. Both are made from
+  the files of the release zips.
 
 ### Tests and checks
 - New unit tests: HarmonyIntervalTests, HarmonyApplyTests,
@@ -166,6 +171,9 @@ New files:
 - `MODIFICATIONS.md`, `licenses/*`, `Resources/fonts/*-OFL.txt`
 - `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
   `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
+- `.github/workflows/windows-installer.yml`, `packaging/macos/build-pkg.sh`,
+  `packaging/macos/installer/*`, `packaging/windows/KinuTune.iss`,
+  `tools/windows/check-installer.ps1`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`
 - `Source/Undo/InspectorEditAction.h`

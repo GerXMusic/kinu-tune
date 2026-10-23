@@ -42,6 +42,30 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 
 ### インストール(配布版)
 
+[Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) のインストーラーを使うのが簡単です。
+
+Mac 版(`Kinu-Tune-<版>-macOS-arm64.pkg`):
+
+1. ダウンロードした pkg を開きます
+2. 「開けません」と出た時は、「システム設定 > プライバシーとセキュリティ」の下に出る「このまま開く」を押して、もう一度開きます(Apple の公証を受けていないため)
+3. 「続ける」「インストール」と進めます。管理者のパスワードは要りません。AU 版が要らない場合は「カスタマイズ」で外せます
+4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+
+消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune` を削除します。
+
+Windows 版(`Kinu-Tune-<版>-Windows-x64-Setup.exe`):
+
+1. ダウンロードした exe を開きます
+2. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
+3. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
+4. DAW を起動し直し、プラグインを再スキャンします
+
+消す時は、Windows の「設定 > アプリ」から Kinu Tune をアンインストールします。
+
+#### zip から手で入れる場合
+
+Mac 版:
+
 1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
 2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
 3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
@@ -116,6 +140,30 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 - An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
 
 ### Installing a release
+
+The installers on [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) are the easy way.
+
+macOS (`Kinu-Tune-<version>-macOS-arm64.pkg`):
+
+1. Open the downloaded package.
+2. If macOS says it cannot be opened, click "Open Anyway" in System Settings > Privacy & Security and open it again (the release is not notarized).
+3. Click Continue and Install. No administrator password is needed. To leave out the Audio Unit, use Customize.
+4. Restart your DAW and rescan plugins.
+
+To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune`.
+
+Windows (`Kinu-Tune-<version>-Windows-x64-Setup.exe`):
+
+1. Open the downloaded installer.
+2. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
+3. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
+4. Restart your DAW and rescan plugins.
+
+To remove it, uninstall Kinu Tune in Windows Settings > Apps.
+
+#### Installing from the zip by hand
+
+macOS:
 
 1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
 2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
