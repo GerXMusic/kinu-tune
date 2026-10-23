@@ -763,6 +763,13 @@ std::vector<float> IncrementalSynthesizer::buildPitchRatioCurve(
 
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
+#if PITCHNET_LOGGING_ENABLED
+  // Wall clock for the whole call, including inference. Only for diagnostics:
+  // with logging off the LOG() arguments are not evaluated and this does not
+  // exist in the release build.
+  const double renderStartMs = juce::Time::getMillisecondCounterHiRes();
+#endif
+
   // PSOLA transforms the original waveform, so it needs neither the model nor
   // a loaded one, and it does not want the mel.
   const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;
@@ -897,6 +904,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     LOG(juce::String("  commit=") + commitText + " " +
         juce::String(static_cast<double>(committedFrames) * framesToSeconds,
                      2) + "s");
+#if PITCHNET_LOGGING_ENABLED
+    // Wall clock of the whole render, including vocoder inference. The "s"
+    // values above are AUDIO durations, not times.
+    LOG(juce::String("  wall=") +
+        juce::String(juce::Time::getMillisecondCounterHiRes() - renderStartMs,
+                     1) +
+        " ms");
+#endif
 
 #if PITCHNET_SYNTH_NOTE_DIAGNOSTICS
     // The exact inputs to collectCommitFrameRanges' branch, per dirty note.
