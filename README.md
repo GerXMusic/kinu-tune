@@ -44,10 +44,11 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 
 1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
 2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
-3. `models` フォルダーを `~/Library/Application Support/Keinoaza/Kinu Tune/` の中に入れます(`.../Kinu Tune/models/fcpe.onnx` などになる配置)
-4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
-5. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
-6. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
+3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
+4. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` などになる配置)
+5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+6. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
+7. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
 
    ```bash
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
@@ -56,8 +57,9 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
 1. `Kinu Tune.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
-2. `models` フォルダーを `%APPDATA%\Keinoaza\Kinu Tune\` の中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
-3. DAW を起動し直してプラグインを再スキャンします
+2. AI のモデルを置くフォルダーを作ります。エクスプローラーのアドレス欄に `%APPDATA%` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
+3. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
+4. DAW を起動し直してプラグインを再スキャンします
 
 挿すと落ちる、または解析が始まらない場合は、[Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)](https://aka.ms/vc14/vc_redist.x64.exe)をインストールしてから DAW を起動し直してください。AI の部品(ONNX Runtime)がこれを必要とします。足りない時は、プラグインが画面で知らせて解析を止めます。
 
@@ -117,10 +119,11 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 
 1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
 2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
-3. Copy the `models` folder into `~/Library/Application Support/Keinoaza/Kinu Tune/` (so that `.../Kinu Tune/models/fcpe.onnx` exists).
-4. Restart your DAW and rescan plugins.
-5. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
-6. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
+3. Create a folder for the AI models: in Finder choose Go > Go to Folder…, enter `~/Library/Application Support`, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
+4. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` exists).
+5. Restart your DAW and rescan plugins.
+6. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
+7. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
 
    ```bash
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
@@ -129,8 +132,9 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 
 1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
-2. Copy the `models` folder into `%APPDATA%\Keinoaza\Kinu Tune\` (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
-3. Restart your DAW and rescan plugins.
+2. Create a folder for the AI models: in File Explorer type `%APPDATA%` in the address bar, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
+3. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
+4. Restart your DAW and rescan plugins.
 
 If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
 

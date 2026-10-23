@@ -7,21 +7,24 @@ Kinu Tune - macOS (Apple silicon) インストール / Install
    For the Audio Unit (Logic Pro and other AU hosts), copy "Kinu Tune.component" to:
      ~/Library/Audio/Plug-Ins/Components/
 
-2. "models" フォルダーを次の場所にコピーします(フォルダーが無ければ作ります)。
-   Copy the "models" folder into (create the folders if needed):
-     ~/Library/Application Support/Keinoaza/Kinu Tune/
-   結果として .../Kinu Tune/models/fcpe.onnx などがある状態にします。
-   so that .../Kinu Tune/models/fcpe.onnx exists.
+2. AI のモデルを置くフォルダーを作ります。
+   Finder のメニュー「移動 > フォルダへ移動…」に ~/Library/Application Support と入力して開き、
+   その中に「Keinoaza」という名前のフォルダーを、さらにその中に「Kinu Tune」という名前のフォルダーを作ります。
+   Create a folder for the AI models: in Finder choose Go > Go to Folder..., enter ~/Library/Application Support,
+   create a folder named "Keinoaza" there, and a folder named "Kinu Tune" inside it.
 
-3. DAW を起動し直し、プラグインを再スキャンします。
+3. この zip の中の "models" フォルダーを、いま作った「Kinu Tune」フォルダーの中に入れます。
+   Move the "models" folder from this zip into that "Kinu Tune" folder.
+
+4. DAW を起動し直し、プラグインを再スキャンします。
    Restart your DAW and rescan plugins.
 
-4. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、
+5. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、
    「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します。
    If the plug-in is blocked ("developer cannot be verified", or it does not appear),
    click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
 
-5. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します(公証を受けていないための手順です)。
+6. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します(公証を受けていないための手順です)。
    If it is still blocked, run this in Terminal and restart your DAW (the build is not notarized):
      xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
    AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません。
