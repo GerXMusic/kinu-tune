@@ -780,6 +780,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
+  if (!usePsola && vocoder) {
+    // A device change may have been written into another controller's vocoder:
+    // rebuild this session so the render uses the device that is selected.
+    vocoder->applySharedDevicePreference();
+  }
+
   if (!usePsola && !vocoder->isLoaded()) {
     if (onComplete)
       onComplete(false);

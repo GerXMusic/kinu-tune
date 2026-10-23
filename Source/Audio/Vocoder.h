@@ -6,6 +6,7 @@
 #endif
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <fstream>
 #include <functional>
@@ -91,9 +92,15 @@ public:
 
   // Device settings
   void setExecutionDevice(const juce::String &device);
-  juce::String getExecutionDevice() const { return executionDevice; }
+  /// Device the next session will use: the shared preference if one has been
+  /// set, otherwise this instance's default.
+  juce::String getExecutionDevice() const;
   void setExecutionDeviceId(int deviceId);
-  int getExecutionDeviceId() const { return executionDeviceId; }
+  int getExecutionDeviceId() const;
+
+  /// Rebuild the session when the shared device preference changed since this
+  /// session was created. No-op when nothing changed. Safe before every render.
+  void applySharedDevicePreference();
 
   // Reload model with new settings (call after changing device)
   bool reloadModel();
@@ -129,6 +136,14 @@ private:
 #endif
   std::unique_ptr<std::ofstream> logFile;
   int executionDeviceId = 0;
+
+  /// Preference generation the current session was built with. When the shared
+  /// preference moves past it, the session is rebuilt before the next render.
+  std::atomic<std::uint64_t> sessionDeviceGeneration{0};
+
+  /// Device actually used when building a session (shared preference wins).
+  juce::String effectiveExecutionDevice() const;
+  int effectiveExecutionDeviceId() const;
 
   // Thread safety for async operations
   std::atomic<bool> isShuttingDown{false};
