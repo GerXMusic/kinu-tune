@@ -22,7 +22,7 @@ escrito en D-100, sin volver a medir nada a mano:
 Uso:
   python tools/check_m2_bounces.py
   python tools/check_m2_bounces.py --psola <2a.wav> --pitchcore <2c.wav>
-  python tools/check_m2_bounces.py --objetivo-cents -205.05
+  python tools/check_m2_bounces.py --objetivo-cents -105.05
 
 No renderiza nada: si falta un WAV o no tiene 558.545 muestras, lo dice y no
 da veredicto (no se mide lo que no existe).
@@ -178,7 +178,7 @@ def last_synthesis(engine):
     for path in logs:
         try:
             for line in open(path, encoding="utf-8", errors="replace"):
-                m = re.match(r"\[(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2})\].*"
+                m = re.match(r"\[(\d{1,2} \w{3} \d{4} \d{1,2}:\d{2}:\d{2})\].*"
                              r"synthesizeRegion: engine=(\w+)", line)
                 if m and m.group(2) == engine:
                     t = datetime.strptime(m.group(1), "%d %b %Y %H:%M:%S")
@@ -216,9 +216,12 @@ def main():
     ap.add_argument("--fuente", default=os.path.join(renders, "Original.wav"))
     ap.add_argument("--arnes", default=os.path.join(
         FORK, "build-dml", "Release", "pitchcore_adapter_check.exe"))
-    ap.add_argument("--objetivo-cents", type=float, default=-205.05,
+    ap.add_argument("--objetivo-cents", type=float, default=-105.05,
                     help="objetivo de la edicion en cents (midiNote - "
-                         "originalMidiNote del JSON del proyecto; D-101)")
+                         "originalMidiNote del archivo ARA del .rpp; D-101). "
+                         "Las copias del proyecto dan 62.0 - 63.0505 = -105.05 "
+                         "(D-102); el veredicto de 2c(c) era FALLA tambien con "
+                         "el -205.05 anterior")
     args = ap.parse_args()
 
     print("== 2a: PSOLA del build nuevo contra %s" % args.baseline)
