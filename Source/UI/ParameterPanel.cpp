@@ -274,7 +274,8 @@ ParameterPanel::ParameterPanel()
 
     for (auto* radio : { &chromaticToggle, &scaleToggle,
                          &beatsTimelineToggle, &timeTimelineToggle,
-                         &vocoderEngineToggle, &psolaEngineToggle })
+                         &vocoderEngineToggle, &psolaEngineToggle,
+                         &pitchcoreEngineToggle })
     {
         addAndMakeVisible(radio);
         radio->setClickingTogglesState(true);
@@ -286,6 +287,7 @@ ParameterPanel::ParameterPanel()
     vocoderEngineToggle.setTooltip(TR(aiResynthesisAvailable ? "tooltip.engine_vocoder"
                                                              : "tooltip.engine_vocoder_unavailable"));
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
+    pitchcoreEngineToggle.setTooltip(TR("tooltip.engine_pitchcore"));
 
     // Device row: added hidden. It appears only once the host tells us the
     // engine is AI Resynthesis and there is more than one device to run it on
@@ -499,36 +501,52 @@ void ParameterPanel::resized()
     synthesisSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
     bounds.removeFromTop(kSectionLabelGap);
 
-    // Both options stay on one row, sharing it in proportion to how wide each
-    // label actually is rather than in half. Measured with GlyphArrangement
-    // against the real typeface at the real size, so this holds through a font
-    // change, DPI scaling or translation - an estimate would not.
+    // All options stay on one row, sharing it in proportion to how wide each
+    // label actually is rather than in equal parts. Measured with
+    // GlyphArrangement against the real typeface at the real size, so this
+    // holds through a font change, DPI scaling or translation - an estimate
+    // would not.
     //
-    // Splitting the space left after the two radio circles, rather than the
-    // row itself, is what makes the proportion work: each label then gets the
-    // same fraction of what it needs, so if the pair cannot fit at full size
-    // they shrink together instead of the long one being squashed while the
-    // short one keeps its size. RadioButton paints through drawFittedText,
-    // which only ever shrinks, so any slack simply renders at full size.
+    // Splitting the space left after the radio circles, rather than the row
+    // itself, is what makes the proportion work: each label then gets the same
+    // fraction of what it needs, so if the set cannot fit at full size they
+    // shrink together instead of the long one being squashed while the short
+    // one keeps its size. RadioButton paints through drawFittedText, which only
+    // ever shrinks, so any slack simply renders at full size.
     auto engineRow = bounds.removeFromTop(kRadioRowHeight);
     const auto engineFont = AppFont::getFont(15.0f);
     constexpr int radioInset = 30; // circle plus gap, as paintButton trims
 
-    const int vocoderTextWidth = juce::GlyphArrangement::getStringWidthInt(
-        engineFont, vocoderEngineToggle.getButtonText());
-    const int psolaTextWidth = juce::GlyphArrangement::getStringWidthInt(
-        engineFont, psolaEngineToggle.getButtonText());
-    const int totalTextWidth = juce::jmax(1, vocoderTextWidth + psolaTextWidth);
+    RadioButton* const engineToggles[] = {
+        &vocoderEngineToggle, &psolaEngineToggle, &pitchcoreEngineToggle };
+    constexpr int numEngineToggles =
+        (int) (sizeof(engineToggles) / sizeof(engineToggles[0]));
 
-    const int sharedTextWidth =
-        juce::jmax(0, engineRow.getWidth() - columnGap - 2 * radioInset);
-    const int vocoderWidth =
-        radioInset + (sharedTextWidth * vocoderTextWidth) / totalTextWidth;
+    int engineTextWidths[numEngineToggles] {};
+    int totalTextWidth = 0;
+    for (int i = 0; i < numEngineToggles; ++i)
+    {
+        engineTextWidths[i] = juce::jmax(1, juce::GlyphArrangement::getStringWidthInt(
+            engineFont, engineToggles[i]->getButtonText()));
+        totalTextWidth += engineTextWidths[i];
+    }
 
-    auto vocoderArea = engineRow.removeFromLeft(vocoderWidth);
-    engineRow.removeFromLeft(columnGap);
-    vocoderEngineToggle.setBounds(vocoderArea);
-    psolaEngineToggle.setBounds(engineRow);
+    const int sharedTextWidth = juce::jmax(
+        0, engineRow.getWidth() - (numEngineToggles - 1) * columnGap
+               - numEngineToggles * radioInset);
+    for (int i = 0; i < numEngineToggles; ++i)
+    {
+        if (i == numEngineToggles - 1)
+        {
+            engineToggles[i]->setBounds(engineRow);
+            break;
+        }
+
+        const int width = radioInset
+            + (sharedTextWidth * engineTextWidths[i]) / juce::jmax(1, totalTextWidth);
+        engineToggles[i]->setBounds(engineRow.removeFromLeft(width));
+        engineRow.removeFromLeft(columnGap);
+    }
 
     bounds.removeFromTop(kRowGap);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
@@ -742,13 +760,16 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
-    if (button == &vocoderEngineToggle || button == &psolaEngineToggle)
+    if (button == &vocoderEngineToggle || button == &psolaEngineToggle
+        || button == &pitchcoreEngineToggle)
     {
         auto picked = synthesisEngine;
         if (button == &vocoderEngineToggle && vocoderEngineToggle.getToggleState())
             picked = SynthesisEngineType::Vocoder;
         else if (button == &psolaEngineToggle && psolaEngineToggle.getToggleState())
             picked = SynthesisEngineType::Psola;
+        else if (button == &pitchcoreEngineToggle && pitchcoreEngineToggle.getToggleState())
+            picked = SynthesisEngineType::Pitchcore;
 
         // Clicking the active one toggles it off; put it back rather than
         // leaving the group with nothing selected.
@@ -825,9 +846,11 @@ void ParameterPanel::refreshLocalisedText()
 
     vocoderEngineToggle.setButtonText(TR("param.engine_vocoder"));
     psolaEngineToggle.setButtonText(TR("param.engine_psola"));
+    pitchcoreEngineToggle.setButtonText(TR("param.engine_pitchcore"));
     vocoderEngineToggle.setTooltip(TR(aiResynthesisAvailable ? "tooltip.engine_vocoder"
                                                              : "tooltip.engine_vocoder_unavailable"));
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
+    pitchcoreEngineToggle.setTooltip(TR("tooltip.engine_pitchcore"));
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
     refreshRenderStatusText();
@@ -1053,6 +1076,8 @@ void ParameterPanel::refreshSynthesisToggles()
                                        juce::dontSendNotification);
     psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
                                      juce::dontSendNotification);
+    pitchcoreEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Pitchcore,
+                                         juce::dontSendNotification);
     refreshRenderDeviceRow();
 }
 
@@ -1073,9 +1098,14 @@ void ParameterPanel::setRenderStatus(RenderStatus status, SynthesisEngineType en
 
 void ParameterPanel::refreshRenderStatusText()
 {
-    const auto engineName = TR(renderStatusEngine == SynthesisEngineType::Psola
-                                   ? "param.engine_psola"
-                                   : "param.engine_vocoder");
+    const char* engineKey = "param.engine_vocoder";
+    switch (renderStatusEngine)
+    {
+        case SynthesisEngineType::Psola:     engineKey = "param.engine_psola"; break;
+        case SynthesisEngineType::Pitchcore: engineKey = "param.engine_pitchcore"; break;
+        case SynthesisEngineType::Vocoder:   break;
+    }
+    const auto engineName = TR(engineKey);
     const char* key = "status.render_none";
     switch (renderStatus)
     {

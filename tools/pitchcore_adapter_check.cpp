@@ -520,12 +520,47 @@ int main(int argc, char **argv)
         std::printf("uso: %s <wav> [cents] [startSec] [durSec] "
                     "[--out salida.wav] [--vs ref.wav] [--identical otra.wav] [--selftest]\n"
                     "   o: %s <wav> --f0 f0.csv --curve curva.csv [--curva-out c.csv] "
-                    "[--out salida.wav] [--vs cli.wav]   (nivel 3, D-099)\n",
-                    argv[0], argv[0]);
+                    "[--out salida.wav] [--vs cli.wav]   (nivel 3, D-099)\n"
+                    "   o: %s --compare <a.wav> <b.wav>   (bounces 2a/2c, D-100)\n",
+                    argv[0], argv[0], argv[0]);
         return 2;
     }
     if (std::string(argv[1]) == "--selftest")
         return selfTest();
+
+    // Comparacion de dos WAV ya renderizados (bounces 2a/2c, D-100): no
+    // renderiza nada, mide muestra a muestra y con el mismo estimador de lag.
+    if (std::string(argv[1]) == "--compare")
+    {
+        if (argc < 4)
+        {
+            std::printf("uso: %s --compare <a.wav> <b.wav>\n", argv[0]);
+            return 2;
+        }
+        pitchcore::WavData a, b;
+        std::string err;
+        if (!pitchcore::readWav(argv[2], a, &err))
+        {
+            std::printf("ERROR leyendo %s: %s\n", argv[2], err.c_str());
+            return 1;
+        }
+        if (!pitchcore::readWav(argv[3], b, &err))
+        {
+            std::printf("ERROR leyendo %s: %s\n", argv[3], err.c_str());
+            return 1;
+        }
+        const int common = static_cast<int>(std::min(a.mono.size(), b.mono.size()));
+        const int distinct = countDistinct(a.mono, b.mono);
+        const LagFit fit = measureLag(a.mono, b.mono);
+        std::printf("A: %s  %d muestras  %.0f Hz\n", argv[2],
+                    static_cast<int>(a.mono.size()), a.sampleRate);
+        std::printf("B: %s  %d muestras  %.0f Hz\n", argv[3],
+                    static_cast<int>(b.mono.size()), b.sampleRate);
+        std::printf("muestras distintas: %d de %d\n", distinct, common);
+        std::printf("lag(A vs B): %.2f  corr %.6f  rms %.3e  n %ld\n",
+                    fit.lag, fit.corr, fit.rms, fit.n);
+        return 0;
+    }
 
     const std::string path = argv[1];
     double cents = 100.0;

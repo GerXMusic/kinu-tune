@@ -149,6 +149,9 @@ private:
     // names track the enum, the button text is what the user reads.
     RadioButton vocoderEngineToggle;
     RadioButton psolaEngineToggle;
+    // Third option: our own pitchcore core (M2 step 1). Same list, same
+    // persistence; no GPU involved, so it is never gated like the vocoder.
+    RadioButton pitchcoreEngineToggle;
 
     juce::Label renderDeviceLabel;
     ComboSelectionButton renderDeviceButton;
