@@ -13,10 +13,16 @@ escrito en D-100, sin volver a medir nada a mano:
       (b) Pitchcore contra Renders\\Original.wav (el tramo exacto del item,
           D-094) -> +2,52 +- 0,05 muestras con la convencion del arnes
           (lag > 0 = render retrasado; D-094 publico -2,52, misma magnitud).
+      (c) control de senal original (D-101): la F0 de la nota --autocorrelacion
+          por tramas de 40 ms con salto de 10 ms, mediana en [0,10, 0,55) s,
+          referencia la misma ventana de Original.wav-- tiene que quedar a
+          +-20 c del objetivo de la edicion y a >=100 c de la fuente. Sin (c)
+          no hay PASA: "no desplazar" no puede pasar.
 
 Uso:
   python tools/check_m2_bounces.py
   python tools/check_m2_bounces.py --psola <2a.wav> --pitchcore <2c.wav>
+  python tools/check_m2_bounces.py --objetivo-cents -205.05
 
 No renderiza nada: si falta un WAV o no tiene 558.545 muestras, lo dice y no
 da veredicto (no se mide lo que no existe).
@@ -38,6 +44,14 @@ LAG_TOLERANCE = 0.05
 SOURCE_LAG = 2.52          # convencion del arnes; D-094 lo publico como -2,52
 HERE = os.path.dirname(os.path.abspath(__file__))
 FORK = os.path.dirname(HERE)
+
+# 2c(c), D-101: mismo estimador que la tabla de D-100.
+F0_FRAME_S = 0.040
+F0_HOP_S = 0.010
+F0_MIN_HZ, F0_MAX_HZ = 70.0, 600.0
+F0_WINDOW = (0.10, 0.55)
+F0_MEDIAN_CENTS = 20.0     # +-20 c del objetivo de la edicion
+F0_MIN_SEP_CENTS = 100.0   # >=100 c de la fuente
 
 
 def read_wav(path):
@@ -79,6 +93,62 @@ def run_harness(harness, a, b):
     return {"lag": float(m.group(1)), "corr": float(m.group(2)),
             "rms": float(m.group(3)),
             "distinct": int(d.group(1)), "common": int(d.group(2)), "raw": out}
+
+
+def _f0_frame(seg, sr):
+    """F0 de una trama por autocorrelacion normalizada; None si no es voiced."""
+    n = len(seg)
+    seg = seg - seg.mean()
+    csum = np.concatenate(([0.0], np.cumsum(seg * seg)))
+    total = csum[n]
+    if total <= 0.0 or np.sqrt(total / n) < 1e-4:
+        return None
+    spec = np.fft.rfft(seg, 2 * n)
+    ac = np.fft.irfft(np.abs(spec) ** 2)[:n]
+    lo = max(1, int(np.floor(sr / F0_MAX_HZ)))
+    hi = min(n - 1, int(np.ceil(sr / F0_MIN_HZ)))
+    if hi <= lo:
+        return None
+    ks = np.arange(lo, hi + 1)
+    ea = csum[n - ks]
+    eb = total - csum[ks]
+    den = np.sqrt(np.maximum(ea * eb, 0.0))
+    r = np.where(den > 1e-20, ac[ks] / np.maximum(den, 1e-30), 0.0)
+    j = int(np.argmax(r))
+    if r[j] < 0.5:
+        return None
+    k = float(ks[j])
+    if 0 < j < len(ks) - 1:
+        y0, y1, y2 = r[j - 1], r[j], r[j + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if abs(denom) > 1e-12:
+            k += 0.5 * (y0 - y2) / denom
+    return sr / k if k > 0 else None
+
+
+def f0_hz(path, window=F0_WINDOW):
+    """F0 mediana (Hz) de una ventana; None si no hay tramas voiced.
+
+    Autocorrelacion por tramas de 40 ms con salto de 10 ms (D-100/D-101).
+    """
+    fmt, chunks, data, x = read_wav(path)
+    sr = fmt["rate"]
+    n = int(round(sr * F0_FRAME_S))
+    hop = max(1, int(round(sr * F0_HOP_S)))
+    a = int(round(window[0] * sr))
+    b = int(round(window[1] * sr))
+    f0s = []
+    for s in range(a, b - n + 1, hop):
+        f = _f0_frame(x[s:s + n], sr)
+        if f is not None and F0_MIN_HZ <= f <= F0_MAX_HZ:
+            f0s.append(f)
+    if not f0s:
+        return None, 0
+    return float(np.median(f0s)), len(f0s)
+
+
+def cents(a_hz, b_hz):
+    return 1200.0 * np.log2(a_hz / b_hz)
 
 
 def check_format(name, path):
@@ -146,6 +216,9 @@ def main():
     ap.add_argument("--fuente", default=os.path.join(renders, "Original.wav"))
     ap.add_argument("--arnes", default=os.path.join(
         FORK, "build-dml", "Release", "pitchcore_adapter_check.exe"))
+    ap.add_argument("--objetivo-cents", type=float, default=-205.05,
+                    help="objetivo de la edicion en cents (midiNote - "
+                         "originalMidiNote del JSON del proyecto; D-101)")
     args = ap.parse_args()
 
     print("== 2a: PSOLA del build nuevo contra %s" % args.baseline)
@@ -196,6 +269,39 @@ def main():
                   % (ref["lag"], SOURCE_LAG))
         else:
             print("  2c(b): SIN VEREDICTO (falta %s)" % args.fuente)
+
+        # (c) D-101: control de senal original. Se aplica siempre que se pueda
+        # medir; no re-abre ni cierra (a)/(b).
+        print("  (c) F0 en %.2f-%.2f s (autocorrelacion 40 ms / salto 10 ms, "
+              "mediana)" % F0_WINDOW)
+        if not os.path.isfile(args.fuente):
+            print("  2c(c): SIN VEREDICTO (falta la fuente %s)" % args.fuente)
+        else:
+            src_f0, src_n = f0_hz(args.fuente)
+            pc_f0, pc_n = f0_hz(args.pitchcore)
+            if src_f0 is None or pc_f0 is None:
+                print("      fuente %s (%d tramas), 2c %s (%d tramas) -> N/A"
+                      % ("%.2f Hz" % src_f0 if src_f0 else "no medida", src_n,
+                         "%.2f Hz" % pc_f0 if pc_f0 else "no medida", pc_n))
+                print("  2c(c): N/A  (sin tramas voiced: no se cierra 2c)")
+            else:
+                pc_cents = cents(pc_f0, src_f0)
+                dist = abs(pc_cents - args.objetivo_cents)
+                sep = abs(pc_cents)
+                print("      fuente %7.2f Hz (%d tramas); 2c %7.2f Hz (%d tramas)"
+                      " -> %+.1f c" % (src_f0, src_n, pc_f0, pc_n, pc_cents))
+                for label, path in (("2a", args.psola), ("baseline", args.baseline)):
+                    other, other_n = f0_hz(path)
+                    if other is not None:
+                        print("      %-8s %7.2f Hz (%3d tramas) -> %+7.1f c"
+                              % (label, other, other_n, cents(other, src_f0)))
+                print("      objetivo de la edicion %+.2f c; distancia %.1f c; "
+                      "separacion de la fuente %.1f c"
+                      % (args.objetivo_cents, dist, sep))
+                ok_c = dist <= F0_MEDIAN_CENTS and sep >= F0_MIN_SEP_CENTS
+                print("  2c(c): %s  (criterio +-%.0f c del objetivo y >=%.0f c de "
+                      "la fuente; sin (c) no hay PASA)"
+                      % (verdict(ok_c), F0_MEDIAN_CENTS, F0_MIN_SEP_CENTS))
     else:
         print("  2c: SIN VEREDICTO")
 

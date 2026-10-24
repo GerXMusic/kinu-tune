@@ -1309,6 +1309,64 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           audioData.voicedMask[frame] ? uint8_t{1} : uint8_t{0};
   }
 
+#if PITCHNET_LOGGING_ENABLED
+  if (useDsp) {
+    // I-9 (D-101): el objetivo que recibe el motor. Los cents de la nota y los
+    // del ratio en su frame medio dicen donde se pierde el tono: si difieren,
+    // el fallo esta en la curva objetivo, no en el motor.
+    const auto &srcF0 =
+        audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+    float ratioMin = 1.0f, ratioMax = 1.0f;
+    for (float r : dspRequest.pitchRatio) {
+      ratioMin = std::min(ratioMin, r);
+      ratioMax = std::max(ratioMax, r);
+    }
+    LOG(juce::String("dspRequest: engine=") +
+        synthesisEngineTypeToString(synthesisEngine) + " frames=[" +
+        juce::String(startFrame) + "," + juce::String(endFrame) + ") hop=" +
+        juce::String(hopSize) + " sr=" + juce::String(audioData.sampleRate) +
+        " src0=" + juce::String(dspRequest.sourceStartSample) + " src=" +
+        juce::String(static_cast<int>(dspRequest.source.size())) + " ratio=[" +
+        juce::String(ratioMin, 4) + "," + juce::String(ratioMax, 4) +
+        "] globalOffset=" + juce::String(project->getGlobalPitchOffset(), 3));
+    for (const auto &note : project->getNotes()) {
+      if (note.getEndFrame() <= startFrame || note.getStartFrame() >= endFrame)
+        continue;
+      const int mid = std::clamp((note.getStartFrame() + note.getEndFrame()) / 2,
+                                 startFrame, endFrame - 1);
+      const int local = mid - note.getStartFrame();
+      const auto &active = note.getActiveDeltaPitch();
+      const float activeDelta =
+          (local >= 0 && local < static_cast<int>(active.size()))
+              ? active[static_cast<size_t>(local)]
+              : 0.0f;
+      const float adj =
+          mid - startFrame < static_cast<int>(adjustedF0Range.size())
+              ? adjustedF0Range[static_cast<size_t>(mid - startFrame)]
+              : 0.0f;
+      const float src = mid < static_cast<int>(srcF0.size())
+                            ? srcF0[static_cast<size_t>(mid)]
+                            : 0.0f;
+      const float ratio =
+          mid - startFrame < static_cast<int>(dspRequest.pitchRatio.size())
+              ? dspRequest.pitchRatio[static_cast<size_t>(mid - startFrame)]
+              : 1.0f;
+      const float cents = ratio > 0.0f ? 1200.0f * std::log2(ratio) : 0.0f;
+      LOG(juce::String("dspRequest: nota [") +
+          juce::String(note.getStartFrame()) + "," +
+          juce::String(note.getEndFrame()) + ") midi=" +
+          juce::String(note.getMidiNote(), 3) + " lastNonMacro=" +
+          juce::String(note.getLastNonMacroMidiNote(), 3) + " orig=" +
+          juce::String(note.getOriginalMidiNote(), 3) + " offset=" +
+          juce::String(note.getPitchOffset(), 3) + " activeDelta=" +
+          juce::String(activeDelta, 4) + " | frame " + juce::String(mid) +
+          ": adjF0=" + juce::String(adj, 2) + " srcF0=" +
+          juce::String(src, 2) + " ratio=" + juce::String(ratio, 4) + " (" +
+          juce::String(cents, 1) + " c)");
+    }
+  }
+#endif
+
   if (onProgress)
     onProgress(TR("progress.synthesizing"));
 

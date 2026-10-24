@@ -10,6 +10,7 @@
 
 #include "pitchcore/psola.h"
 
+#include "../../Utils/AppLogger.h"
 #include "PitchcoreRequest.h"
 
 namespace {
@@ -116,11 +117,55 @@ std::vector<float> PitchcoreSynthesizer::render(
     const Request &request,
     const std::shared_ptr<std::atomic<bool>> &cancelFlag)
 {
+#if PITCHNET_LOGGING_ENABLED
+    // I-10 (D-101): que el motor se invoque, con que peticion y que devuelve.
+    // Sin esto, un fallo del adaptador y uno del despacho son indistinguibles
+    // (el `err` del motor se descartaba).
+    const double renderT0 = juce::Time::getMillisecondCounterHiRes();
+    const double firstSource =
+        request.sourceFrame.empty() ? 0.0 : request.sourceFrame.front();
+    const int firstFrame = static_cast<int>(std::llround(firstSource));
+    float ratioMin = 1.0f, ratioMax = 1.0f;
+    for (float r : request.pitchRatio) {
+      ratioMin = std::min(ratioMin, r);
+      ratioMax = std::max(ratioMax, r);
+    }
+    int voicedInSpan = 0;
+    for (int i = firstFrame;
+         i < firstFrame + request.numOutputFrames &&
+         i < static_cast<int>(request.sourceVoiced.size());
+         ++i)
+      voicedInSpan += request.sourceVoiced[static_cast<size_t>(i)] ? 1 : 0;
+    LOG(juce::String("pitchcore adapter: invocado frames=") +
+        juce::String(request.numOutputFrames) + " hop=" +
+        juce::String(request.hopSize) + " sr=" +
+        juce::String(request.sampleRate) + " primeraFrame=" +
+        juce::String(firstFrame) + " src0=" +
+        juce::String(request.sourceStartSample) + " src=" +
+        juce::String(static_cast<int>(request.source.size())) + " ratio=[" +
+        juce::String(ratioMin, 4) + "," + juce::String(ratioMax, 4) + "] f0=" +
+        juce::String(static_cast<int>(request.sourceF0.size())) + " voiced=" +
+        juce::String(voicedInSpan));
+#endif
+
     if (request.numOutputFrames <= 0 || request.hopSize <= 0 || request.source.empty())
+    {
+#if PITCHNET_LOGGING_ENABLED
+        LOG(juce::String("pitchcore adapter: peticion vacia frames=") +
+            juce::String(request.numOutputFrames) + " hop=" +
+            juce::String(request.hopSize) + " src=" +
+            juce::String(static_cast<int>(request.source.size())));
+#endif
         return {};
+    }
 
     if (isCancelled(cancelFlag))
+    {
+#if PITCHNET_LOGGING_ENABLED
+        LOG("pitchcore adapter: cancelado antes de renderizar");
+#endif
         return {};
+    }
 
     const pitchcore::RenderRequest coreRequest = toCoreRequest(request);
 
@@ -128,10 +173,53 @@ std::vector<float> PitchcoreSynthesizer::render(
     std::vector<float> out;
     std::string err;
     if (!engine.render(coreRequest, out, err))
+    {
+#if PITCHNET_LOGGING_ENABLED
+        LOG(juce::String("pitchcore adapter: motor=false err='") + err.c_str() +
+            "'");
+#endif
         return {};
+    }
 
     if (isCancelled(cancelFlag))
+    {
+#if PITCHNET_LOGGING_ENABLED
+        LOG("pitchcore adapter: cancelado despues de renderizar");
+#endif
         return {};
+    }
+
+#if PITCHNET_LOGGING_ENABLED
+    {
+        // El origen de SALIDA es la primera frame de la peticion, no source[0]
+        // (D-096/D-097). Si rms/max salen 0, el motor devolvio el original tal
+        // cual: el camino de "sin marcas de periodo" (psola.cpp:246-258).
+        const long outOrigin =
+            std::lround(firstSource * static_cast<double>(request.hopSize));
+        double energy = 0.0, maxDiff = 0.0;
+        long compared = 0;
+        for (size_t i = 0; i < out.size(); ++i) {
+          const long idx = outOrigin + static_cast<long>(i) -
+                           static_cast<long>(request.sourceStartSample);
+          if (idx < 0 || idx >= static_cast<long>(request.source.size()))
+            continue;
+          const double d = static_cast<double>(out[i]) -
+                           static_cast<double>(request.source[static_cast<size_t>(idx)]);
+          energy += d * d;
+          maxDiff = std::max(maxDiff, std::fabs(d));
+          ++compared;
+        }
+        const double rmsDiff =
+            compared > 0 ? std::sqrt(energy / static_cast<double>(compared)) : -1.0;
+        LOG(juce::String("pitchcore adapter: fin out=") +
+            juce::String(static_cast<int>(out.size())) + " err='" + err.c_str() +
+            "' vsOriginal rms=" + juce::String(rmsDiff, 8) + " max=" +
+            juce::String(maxDiff, 8) + " n=" + juce::String(static_cast<int>(compared)) +
+            " took=" +
+            juce::String(juce::Time::getMillisecondCounterHiRes() - renderT0, 1) +
+            " ms");
+    }
+#endif
 
     return out;
 }
