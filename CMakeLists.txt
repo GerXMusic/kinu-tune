@@ -224,6 +224,22 @@ add_subdirectory(third_party/JUCE)
 # PitchcoreSynthesizer de M2. La copia la genera tools/sync-pitchcore.ps1.
 add_subdirectory(third_party/pitchcore)
 
+# Arnes del adaptador de M2 (D-093, nivel 1). Herramienta de medida: NO se
+# distribuye con el plugin. Compila solo con el nucleo y la traduccion
+# (PitchcoreRequest.h), sin JUCE, para que mida exactamente lo que mide el
+# adaptador y nada mas.
+add_executable(pitchcore_adapter_check EXCLUDE_FROM_ALL
+    tools/pitchcore_adapter_check.cpp)
+target_include_directories(pitchcore_adapter_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Audio/Synthesis)
+target_link_libraries(pitchcore_adapter_check PRIVATE pitchcore)
+target_compile_features(pitchcore_adapter_check PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(pitchcore_adapter_check PRIVATE /fp:precise)
+else()
+    target_compile_options(pitchcore_adapter_check PRIVATE -fno-fast-math)
+endif()
+
 set(R8BRAIN_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/r8brain-free-src")
 if(NOT EXISTS "${R8BRAIN_INCLUDE_DIR}/CDSPResampler.h")

@@ -10,6 +10,8 @@
 
 #include "pitchcore/psola.h"
 
+#include "PitchcoreRequest.h"
+
 namespace {
 
 /// Un worker propio, hermano del de PsolaSynthesizer: mismo reparto (un hilo
@@ -105,62 +107,9 @@ void PitchcoreSynthesizer::renderAsync(
 
 pitchcore::RenderRequest PitchcoreSynthesizer::toCoreRequest(const Request &request)
 {
-    pitchcore::RenderRequest core;
-
-    core.original = &request.source;
-    // El tramo no empieza en la muestra 0 del proyecto: el nucleo lee por
-    // posiciones absolutas y este campo le dice donde cae source[0] (D-096).
-    core.originalStartSample = request.sourceStartSample;
-    core.sourceStartSample = request.sourceStartSample;
-    core.numSamples = request.numOutputFrames * request.hopSize;
-    core.curveHop = static_cast<double>(request.hopSize);
-    core.sampleRate = static_cast<double>(request.sampleRate);
-    core.preserveFormants = request.preserveFormants;
-
-    // Las dos curvas del fork vienen indexadas por frame LOCAL de la region
-    // (indice 0 = primer frame renderizado). El nucleo las muestrea en
-    // frame = muestra_absoluta / hop, asi que se rellena el tramo anterior con
-    // lo mismo que el propio nucleo devuelve fuera de rango: identidad para
-    // sourceFrame y plano para pitchRatio. Asi el indice local y el absoluto
-    // coinciden sin tocar el contrato.
-    const int hop = request.hopSize;
-    const int base = hop > 0
-                         ? static_cast<int>(std::floor(
-                               static_cast<double>(request.sourceStartSample) / hop))
-                         : 0;
-    const int frames = std::max(0, request.numOutputFrames);
-    core.totalFrames = base + frames;
-
-    core.sourceFrame.assign(static_cast<size_t>(core.totalFrames), 0.0);
-    core.pitchRatio.assign(static_cast<size_t>(core.totalFrames), 1.0f);
-
-    const double firstSource =
-        request.sourceFrame.empty() ? 0.0 : request.sourceFrame.front();
-    const float firstRatio =
-        request.pitchRatio.empty() ? 1.0f : request.pitchRatio.front();
-    for (int j = 0; j < base; ++j)
-    {
-        core.sourceFrame[static_cast<size_t>(j)] =
-            firstSource - static_cast<double>(base - j);
-        core.pitchRatio[static_cast<size_t>(j)] = firstRatio;
-    }
-
-    const int copyFrames =
-        std::min(frames, static_cast<int>(std::min(request.sourceFrame.size(),
-                                                   request.pitchRatio.size())));
-    for (int i = 0; i < copyFrames; ++i)
-    {
-        core.sourceFrame[static_cast<size_t>(base + i)] =
-            request.sourceFrame[static_cast<size_t>(i)];
-        core.pitchRatio[static_cast<size_t>(base + i)] =
-            request.pitchRatio[static_cast<size_t>(i)];
-    }
-
-    // F0 y voicing ya vienen en indexacion ABSOLUTA de la fuente: se copian.
-    core.sourceF0 = request.sourceF0;
-    core.sourceVoiced = request.sourceVoiced;
-
-    return core;
+    // La traduccion vive en PitchcoreRequest.h, sin JUCE, para que el arnes de
+    // D-093 la ejercite sin enlazar el plugin (tools/pitchcore_adapter_check).
+    return pitchcore_adapter::toCoreRequest(request);
 }
 
 std::vector<float> PitchcoreSynthesizer::render(
