@@ -220,6 +220,10 @@ endif()
 # Add JUCE as a subdirectory (git submodule in third_party/)
 add_subdirectory(third_party/JUCE)
 
+# Nucleo de Pitchcore vendorizado (D-095): motor clasico para el adaptador
+# PitchcoreSynthesizer de M2. La copia la genera tools/sync-pitchcore.ps1.
+add_subdirectory(third_party/pitchcore)
+
 set(R8BRAIN_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/r8brain-free-src")
 if(NOT EXISTS "${R8BRAIN_INCLUDE_DIR}/CDSPResampler.h")
@@ -465,6 +469,7 @@ endif()
 juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 
 target_link_libraries(pitchnet_core PUBLIC
+    pitchcore
     BinaryData
     juce::juce_gui_basics
     juce::juce_gui_extra

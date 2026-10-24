@@ -43,5 +43,9 @@ tempcalude-*
 
 third_party/ASIOSDK/
 /build-xcode
-/third_party
+# third_party son sobre todo submodulos y SDKs que no se versionan; el nucleo
+# de Pitchcore vendorizado (D-095) SI se versiona, para que el commit del fork
+# quede atado a la fuente concreta del motor.
+/third_party/*
+!/third_party/pitchcore/
 sign.sh
