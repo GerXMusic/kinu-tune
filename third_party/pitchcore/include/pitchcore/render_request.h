@@ -27,9 +27,13 @@ namespace pitchcore {
 // ---------------------------------------------------------------------------
 
 struct RenderRequest {
-    // la señal original (completa: el motor puede leer antes y despues)
+    // la señal original: el motor la lee por posiciones ABSOLUTAS.
+    // original[0] es la muestra `originalStartSample` del proyecto; el plugin
+    // ARA solo tiene un tramo alrededor de lo que va a renderizar, no la pista
+    // entera, y no debe copiarla para renderizar 6 s.
     const std::vector<float>* original = nullptr;
-    int    sourceStartSample = 0;   // primer sample que se renderiza
+    int    originalStartSample = 0; // muestra absoluta del proyecto que es original[0]
+    int    sourceStartSample = 0;   // primer sample que se renderiza (absoluto)
     int    numSamples = 0;          // samples a producir
 
     // Las curvas van indexadas en la rejilla ABSOLUTA del proyecto. El motor
@@ -48,6 +52,18 @@ struct RenderRequest {
     double sampleRate = 44100.0;
     bool   preserveFormants = true;
 };
+
+// Lee la muestra ABSOLUTA `pos` del original a traves del tramo que trae la
+// peticion. Devuelve false si cae fuera del tramo (el motor decide entonces si
+// clampa, salta o para, como hacia con la senal completa).
+inline bool readOriginal (const RenderRequest& req, long pos, double& out)
+{
+    if (! req.original) return false;
+    const long i = pos - (long) req.originalStartSample;
+    if (i < 0 || i >= (long) req.original->size()) return false;
+    out = (double) (*req.original)[(size_t) i];
+    return true;
+}
 
 // Muestrea sourceFrame en un frame fraccional, extendiendo la identidad mas
 // alla de los dos extremos.

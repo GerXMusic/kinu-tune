@@ -10,7 +10,8 @@
 enum class SynthesisEngineType
 {
     Vocoder = 0,   // PC-NSF-HiFiGAN neural vocoder (mel + F0 -> waveform)
-    Psola          // Classic - time-domain PSOLA (pitch-synchronous overlap-add)
+    Psola,         // Classic - time-domain PSOLA (pitch-synchronous overlap-add)
+    Pitchcore      // Our own classic engine, M2 step 1 (D-089, D-096)
 };
 
 /**
@@ -64,6 +65,7 @@ inline const char* synthesisEngineTypeToString(SynthesisEngineType type)
     switch (type)
     {
         case SynthesisEngineType::Psola:   return "PSOLA";
+        case SynthesisEngineType::Pitchcore: return "Pitchcore";
         case SynthesisEngineType::Vocoder: return "Vocoder";
         default:                           return "Vocoder";
     }
@@ -76,6 +78,8 @@ inline SynthesisEngineType stringToSynthesisEngineType(const juce::String& str)
 {
     if (str == "PSOLA")
         return SynthesisEngineType::Psola;
+    if (str == "Pitchcore")
+        return SynthesisEngineType::Pitchcore;
     if (str == "Vocoder")
         return SynthesisEngineType::Vocoder;
     return defaultSynthesisEngineType();

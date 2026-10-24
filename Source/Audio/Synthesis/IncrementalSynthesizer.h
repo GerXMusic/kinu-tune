@@ -5,6 +5,7 @@
 #include "../SynthesisEngineType.h"
 #include "../Vocoder.h"
 #include "PsolaSynthesizer.h"
+#include "PitchcoreSynthesizer.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -66,6 +67,7 @@ private:
   Project *project = nullptr;
   SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
   PsolaSynthesizer psola;
+  PitchcoreSynthesizer pitchcore;
 
   std::shared_ptr<std::atomic<bool>> cancelFlag;
   std::atomic<uint64_t> jobId{0};

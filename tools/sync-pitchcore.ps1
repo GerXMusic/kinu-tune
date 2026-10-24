@@ -90,11 +90,22 @@ foreach ($sub in 'include\pitchcore', 'src') {
     New-Item -ItemType Directory -Path $p -Force | Out-Null
 }
 
+# El nucleo se guarda en git con LF y el checkout de Windows lo deja en CRLF.
+# La copia se normaliza a LF para que el diff contra el commit anterior sea el
+# cambio real y no todo el fichero por los finales de linea (y para que
+# .gitattributes -text guarde los mismos bytes en cualquier maquina).
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+function Copy-Normalized([string] $from, [string] $to) {
+    $text = [System.IO.File]::ReadAllText($from, [System.Text.Encoding]::UTF8)
+    $text = $text.Replace("`r`n", "`n")
+    [System.IO.File]::WriteAllText($to, $text, $utf8)
+}
+
 foreach ($f in $coreHeaders) {
-    Copy-Item (Join-Path $source "include\pitchcore\$f") (Join-Path $dest 'include\pitchcore') -Force
+    Copy-Normalized (Join-Path $source "include\pitchcore\$f") (Join-Path $dest "include\pitchcore\$f")
 }
 foreach ($f in $coreSources) {
-    Copy-Item (Join-Path $source "src\$f") (Join-Path $dest 'src') -Force
+    Copy-Normalized (Join-Path $source "src\$f") (Join-Path $dest "src\$f")
 }
 
 # El CMakeLists es del fork (no se copia): se comprueba que lista justo esas

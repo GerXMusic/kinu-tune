@@ -136,8 +136,9 @@ std::vector<float> renderRange (const RenderRequest& req,
     for (long s = 0; s < n; ++s)
     {
         const long os = s0 + s;
-        const float o = (os >= 0 && os < (long) req.original->size())
-                            ? (*req.original)[(size_t) os] : 0.f;
+        double oD = 0.0;
+        readOriginal (req, os, oD);
+        const float o = (float) oD;
         const float m = mask[(size_t) s];
         out[(size_t) s] = sintetizado[(size_t) s] * m + o * (1.f - m);
     }

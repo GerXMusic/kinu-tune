@@ -100,7 +100,7 @@ bool SpectralEngine::render (const RenderRequest& req, std::vector<float>& out, 
     }
     const double sr = req.sampleRate;
     const long N = (long) req.original->size();
-    const long a = req.sourceStartSample;
+    const long a = req.sourceStartSample - (long) req.originalStartSample;
     const long b = std::min (N, a + (long) req.numSamples);
     if (b - a < params_.nFft) { err = "SpectralEngine: region demasiado corta"; return false; }
 

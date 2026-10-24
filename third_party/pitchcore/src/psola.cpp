@@ -54,11 +54,9 @@ void applyLocalGainMatch (std::vector<float>& out, const RenderRequest& req,
             const double v = (double) out[(size_t) o];
             eo += v * v;
             const long os = req.sourceStartSample + o;
-            if (os >= 0 && os < (long) req.original->size())
-            {
-                const double w = (double) (*req.original)[(size_t) os];
+            double w = 0.0;
+            if (readOriginal (req, os, w))
                 es += w * w;
-            }
             ++cnt;
         }
         if (cnt < 8) continue;
@@ -166,10 +164,9 @@ std::vector<int> ClassicEngine::detectPitchMarks (const RenderRequest& req)
         const long seedEnd = std::min (runEnd, runStart + (long) T);
         for (long i = runStart; i < seedEnd; ++i)
         {
-            const long o = src0 + i;
-            if (o < 0 || o >= (long) req.original->size()) continue;
-            const float m = (*req.original)[(size_t) o];
-            if (m > best) { best = m; seed = (int) i; }
+            double m = 0.0;
+            if (! readOriginal (req, src0 + i, m)) continue;
+            if (m > best) { best = (float) m; seed = (int) i; }
         }
         marks.push_back (src0 + seed);
 
@@ -201,10 +198,9 @@ std::vector<int> ClassicEngine::detectPitchMarks (const RenderRequest& req)
                 {
                     const long a = src0 + current + k;
                     const long b = src0 + cand + k;
-                    if (a < 0 || a >= (long) req.original->size() ||
-                        b < 0 || b >= (long) req.original->size()) { ok = false; break; }
-                    const double va = (*req.original)[(size_t) a];
-                    const double vb = (*req.original)[(size_t) b];
+                    double va = 0.0, vb = 0.0;
+                    if (! readOriginal (req, a, va) || ! readOriginal (req, b, vb))
+                    { ok = false; break; }
                     dot += va * vb; e1 += va * va; e2 += vb * vb;
                 }
                 if (! ok) continue;
@@ -254,8 +250,9 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
         for (int i = 0; i < nOut; ++i)
         {
             const long o = src0 + i;
-            if (o >= 0 && o < (long) req.original->size())
-                out[(size_t) i] = (*req.original)[(size_t) o];
+            double v = 0.0;
+            if (readOriginal (req, o, v))
+                out[(size_t) i] = (float) v;
         }
         return true;
     }
@@ -391,7 +388,10 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
                     const double sp = (double) ma + k / esc;  // posicion en la fuente
                     const long s0 = (long) std::floor (sp);
                     const double fs = sp - (double) s0;
-                    if (s0 < 0 || s0 + 1 >= (long) req.original->size()) continue;
+                    const long base = (long) req.originalStartSample;
+                    const long last = (long) req.original->size() - 1;
+                    const long s0r = s0 - base;
+                    if (s0r < 0 || s0r + 1 > last) continue;
                     // Interpolacion CUBICA (Catmull-Rom), no lineal: la lineal
                     // deja un CODO en cada muestra (derivada discontinua), y el
                     // detector de clicks mide la segunda diferencia: ese codo se
@@ -399,10 +399,10 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
                     // 0,021 de escalon donde el original tiene 0,0037). La
                     // cubica es C1 y ademas conserva mejor los agudos.
                     auto at = [&] (long idx) {
-                        if (idx < 0) idx = 0;
-                        const long last = (long) req.original->size() - 1;
-                        if (idx > last) idx = last;
-                        return (double) (*req.original)[(size_t) idx];
+                        long r = idx - base;
+                        if (r < 0) r = 0;
+                        if (r > last) r = last;
+                        return (double) (*req.original)[(size_t) r];
                     };
                     const double p0 = at (s0 - 1), p1 = at (s0);
                     const double p2 = at (s0 + 1), p3 = at (s0 + 2);
@@ -525,8 +525,9 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
     for (int i = 0; i < nOut; ++i)
     {
         const long o = src0 + i;
-        const float orig = (o >= 0 && o < (long) req.original->size())
-                             ? (*req.original)[(size_t) o] : 0.f;
+        double origD = 0.0;
+        readOriginal (req, o, origD);
+        const float orig = (float) origD;
         // El peso de la sintesis lleva DOS factores: la mascara de
         // periodicidad (peso, ya suavizada) y la COBERTURA real de granos
         // (wsum). Donde solo cubre el borde de un grano (wsum < 1) no se

@@ -773,8 +773,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // PSOLA transforms the original waveform, so it needs neither the model nor
   // a loaded one, and it does not want the mel.
   const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;
+  const bool usePitchcore = synthesisEngine == SynthesisEngineType::Pitchcore;
+  // Los dos motores DSP transforman la onda original: no quieren modelo, ni
+  // mel, ni vocoder cargado (D-089 paso 1).
+  const bool useDsp = usePsola || usePitchcore;
 
-  if (!project || (!usePsola && !vocoder)) {
+  if (!project || (!useDsp && !vocoder)) {
     if (onComplete)
       onComplete(false);
     return;
@@ -787,19 +791,19 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!usePsola && vocoder) {
+  if (!useDsp && vocoder) {
     // A device change may have been written into another controller's vocoder:
     // rebuild this session so the render uses the device that is selected.
     vocoder->applySharedDevicePreference();
   }
 
-  if (!usePsola && !vocoder->isLoaded()) {
+  if (!useDsp && !vocoder->isLoaded()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if (usePsola && audioData.originalWaveform.getNumSamples() == 0 &&
+  if (useDsp && audioData.originalWaveform.getNumSamples() == 0 &&
       audioData.waveform.getNumSamples() == 0) {
     if (onComplete)
       onComplete(false);
@@ -888,7 +892,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       commitText = "(none)";
 
     LOG(juce::String("synthesizeRegion: engine=") +
-        (usePsola ? "PSOLA" : "Vocoder") +
+        synthesisEngineTypeToString(synthesisEngine) +
         "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
         "  dirtyNotes=" + juce::String(dirtyNoteCount) +
         "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
@@ -1231,7 +1235,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // Mel is the neural vocoder's input and is not cheap to copy, so the PSOLA
   // path skips building it entirely.
   std::vector<std::vector<float>> melRange;
-  if (!usePsola) {
+  if (!useDsp) {
     melRange.assign(audioData.melSpectrogram.begin() + startFrame,
                     audioData.melSpectrogram.begin() + endFrame);
     applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
@@ -1247,7 +1251,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // original audio, and how far its pitch has to move once it gets there.
   // Built here on the message thread while the project is stable.
   DspSynthesisRequest dspRequest;
-  if (usePsola) {
+  if (useDsp) {
     const auto sourceFrameMap = buildSourceFrameMap(startFrame, endFrame);
     auto pitchRatio =
         buildPitchRatioCurve(startFrame, endFrame, sourceFrameMap, adjustedF0Range);
@@ -1997,7 +2001,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         }).detach();
       };
 
-  if (usePsola) {
+  if (usePitchcore) {
+    pitchcore.renderAsync(std::move(dspRequest), std::move(onRendered),
+                          capturedCancelFlag);
+  } else if (usePsola) {
     psola.renderAsync(std::move(dspRequest), std::move(onRendered),
                       capturedCancelFlag);
   } else {
