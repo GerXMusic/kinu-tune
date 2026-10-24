@@ -4,6 +4,8 @@
 
 #include "PsolaSynthesizer.h"
 
+#include "../../Utils/AppLogger.h"
+
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
@@ -243,6 +245,11 @@ PsolaSynthesizer::detectPitchMarks(const Request &request) {
 std::vector<float>
 PsolaSynthesizer::render(const Request &request,
                          const std::shared_ptr<std::atomic<bool>> &cancelFlag) {
+#if PITCHNET_LOGGING_ENABLED
+  // Isolated DSP cost of this render, the counterpart of the vocoder's
+  // "infer=" line. Diagnostics only: with logging off this does not exist.
+  const double renderT0 = juce::Time::getMillisecondCounterHiRes();
+#endif
   const int numOutputFrames = request.numOutputFrames;
   const int hopSize = request.hopSize;
 
@@ -561,6 +568,13 @@ PsolaSynthesizer::render(const Request &request,
   // At a ratio of 1.0 every gain here computes to exactly 1.0, so the
   // bit-exact reconstruction survives.
   applyLocalGainMatch(output, request, numOutSamples);
+
+#if PITCHNET_LOGGING_ENABLED
+  LOG(juce::String("psola render [") + juce::String(numOutputFrames) +
+      " frames] took=" +
+      juce::String(juce::Time::getMillisecondCounterHiRes() - renderT0, 1) +
+      " ms");
+#endif
 
   return output;
 }
