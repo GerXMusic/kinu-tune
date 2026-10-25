@@ -674,6 +674,101 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
                         static_cast<double>(enNota - 1));
     std::printf("\n");
 
+    // I-11 (D-104): tramos voiced y semilla. Decide si el tramo de la nota esta
+    // afectado por el borde izquierdo ANTES de usar su conteo como criterio.
+    auto voicedAt = [&](long abs) {
+        const long f = std::lround(static_cast<double>(abs) / core.curveHop);
+        return f >= 0 && f < static_cast<long>(core.sourceVoiced.size()) &&
+               core.sourceVoiced[static_cast<size_t>(f)] != 0;
+    };
+    const long iniAbs = static_cast<long>(core.sourceStartSample);
+    const long finAbs = iniAbs + static_cast<long>(core.numSamples);
+    struct Run
+    {
+        long a;
+        long b;
+        size_t marcas;
+    };
+    std::vector<Run> runs;
+    for (long pos = iniAbs; pos < finAbs;)
+    {
+        while (pos < finAbs && !voicedAt(pos))
+            ++pos;
+        if (pos >= finAbs)
+            break;
+        const long a = pos;
+        while (pos < finAbs && voicedAt(pos))
+            ++pos;
+        runs.push_back({a, pos, 0});
+    }
+    for (const int m : marcas)
+        for (auto &r : runs)
+            if (m >= r.a && m < r.b)
+            {
+                ++r.marcas;
+                break;
+            }
+    std::printf("tramos     : %zu voiced", runs.size());
+    if (!runs.empty())
+    {
+        size_t uno = 0;
+        for (const auto &r : runs)
+            if (r.marcas == 1)
+                ++uno;
+        std::printf(", %zu con 1 marca (firma de I-11); primero [%ld,%ld) local %ld..%ld"
+                    " (%zu marcas)",
+                    uno, runs.front().a, runs.front().b, runs.front().a - iniAbs,
+                    runs.front().b - iniAbs, runs.front().marcas);
+    }
+    std::printf("\n");
+
+    const Run *runNota = nullptr;
+    for (const auto &r : runs)
+        if (notaA >= r.a && notaA < r.b)
+        {
+            runNota = &r;
+            break;
+        }
+    bool i11Afectado = false;
+    bool i11Medido = false;
+    if (runNota != nullptr)
+    {
+        const long runLocal = runNota->a - iniAbs;
+        const long runEndLocal = runNota->b - iniAbs;
+        const double f0run = pitchcore::sampleCurve(
+            core.sourceF0, static_cast<double>(runNota->a) / core.curveHop,
+            core.totalFrames);
+        const double T = f0run > 0.0 ? core.sampleRate / f0run : 0.0;
+        const long half = static_cast<long>(std::max(4.0, T * 0.5));
+        if (T > 0.0)
+        {
+            long semilla = runLocal;
+            float best = -1e30f;
+            const long seedEnd = std::min(runEndLocal, runLocal + static_cast<long>(T));
+            for (long i = runLocal; i < seedEnd; ++i)
+            {
+                const long k = iniAbs + i - static_cast<long>(dsp.sourceStartSample);
+                if (k < 0 || k >= static_cast<long>(dsp.source.size()))
+                    continue;
+                const float v = dsp.source[static_cast<size_t>(k)];
+                if (v > best)
+                {
+                    best = v;
+                    semilla = i;
+                }
+            }
+            i11Afectado = (semilla - half) < 0;
+            i11Medido = true;
+            std::printf("tramo nota : local [%ld,%ld), T %.1f, half %ld, semilla %ld -> I-11 %s\n",
+                        runLocal, runEndLocal, T, half, semilla,
+                        i11Afectado ? "AFECTA al conteo" : "no afecta");
+        }
+    }
+    else
+    {
+        std::printf("tramo nota : la nota no cae en un tramo voiced\n");
+    }
+
     std::vector<float> out;
     if (!pitchcore::ClassicEngine().render(core, out, err))
     {
@@ -730,6 +825,14 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
     if (!sizeOk || !rmsOk)
     {
         std::printf("nivel 4    : SIN VEREDICTO (la fixtura no reproduce la peticion real)\n");
+        return 1;
+    }
+
+    // I-11 (D-104): si el conteo del tramo de la nota esta contaminado por el
+    // borde izquierdo, D-103 no se aplica.
+    if (i11Medido && i11Afectado)
+    {
+        std::printf("nivel 4    : SIN VEREDICTO (I-11 afecta al conteo del tramo; D-103 no se aplica)\n");
         return 1;
     }
 
