@@ -606,7 +606,7 @@ bool readFixture(const std::string &path, DspSynthesisRequest &req, std::string 
 }
 
 int runFixtureMode(const std::string &path, const std::string &outPath,
-                   int notaIni, int notaFin, bool gate)
+                   int notaIni, int notaFin, bool gate, double adapterRms)
 {
     DspSynthesisRequest dsp;
     std::string err;
@@ -843,9 +843,9 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
                 rmsNota, maxNota, nNota);
 
     const bool sizeOk = static_cast<int>(out.size()) == dsp.numOutputFrames * dsp.hopSize;
-    const bool rmsOk = rmsAll >= 0.0 && std::fabs(rmsAll - kAdapterRms) <= kFidelityTol;
+    const bool rmsOk = rmsAll >= 0.0 && std::fabs(rmsAll - adapterRms) <= kFidelityTol;
     std::printf("fidelidad  : tamano %s ; rms contra el adaptador (%.6e) %s\n",
-                sizeOk ? "PASA" : "FALLA", kAdapterRms, rmsOk ? "PASA" : "FALLA");
+                sizeOk ? "PASA" : "FALLA", adapterRms, rmsOk ? "PASA" : "FALLA");
 
     if (!outPath.empty() && pitchcore::writeWavMono(outPath, out, dsp.sampleRate))
         std::printf("salida wav : %s\n", outPath.c_str());
@@ -944,6 +944,7 @@ int main(int argc, char **argv)
         int notaIni = 1838;
         int notaFin = 1892;
         bool gate = false;
+        double adapterRms = kAdapterRms;
         for (int i = 3; i < argc; ++i)
         {
             const std::string a = argv[i];
@@ -958,6 +959,12 @@ int main(int argc, char **argv)
                 notaFin = std::atoi(argv[++i]);
                 continue;
             }
+            if (a == "--adapter-rms" && i + 1 < argc)
+            {
+                // G1 de D-106: el rms que registre el plugin EN ESTE render.
+                adapterRms = std::atof(argv[++i]);
+                continue;
+            }
             if (a == "--gate")
             {
                 gate = true;
@@ -966,7 +973,7 @@ int main(int argc, char **argv)
             std::printf("ERROR: argumento desconocido %s\n", a.c_str());
             return 2;
         }
-        return runFixtureMode(argv[2], outPath, notaIni, notaFin, gate);
+        return runFixtureMode(argv[2], outPath, notaIni, notaFin, gate, adapterRms);
     }
 
     const std::string path = argv[1];
