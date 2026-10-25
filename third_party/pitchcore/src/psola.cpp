@@ -49,7 +49,11 @@ void applyLocalGainMatch (std::vector<float>& out, const RenderRequest& req,
         for (long k = -half; k < half; ++k)
         {
             const long s = c + k;
-            const long o = s - req.sourceStartSample;
+            // `markPos` guarda posiciones LOCALES de la salida (psola.cpp:474), no
+            // absolutas: restarle `sourceStartSample` dejaba el indice negativo y
+            // la igualacion de ganancia no se aplicaba nunca en una peticion que
+            // no empieza en la muestra 0 (I-13, D-111).
+            const long o = s;
             if (o < 0 || o >= nOut) continue;
             const double v = (double) out[(size_t) o];
             eo += v * v;
@@ -417,7 +421,14 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
             // tanto y esa JITTER se acumula en el recorrido (desplazando la
             // salida respecto del original: con ratio 1 la correlacion con el
             // original caia a -0,02). Con Ta el ratio 1 es exacto.
-            const double frame = ts / req.curveHop;
+            //
+            // I-13 (D-111): el frame de la curva es ABSOLUTO, como el que usa
+            // f0En mas arriba (`posOriginal / curveHop` con posOriginal ya
+            // absoluto). Con el indice LOCAL (`ts / curveHop`), una peticion que
+            // no empieza en la muestra 0 leia el relleno plano de la cabecera y
+            // aplicaba UN SOLO ratio a todo el render (medido en la fixtura _v2:
+            // 1,1274 en los 1632 granos cuando la curva pedia 0,9411).
+            const double frame = ((double) src0 + ts) / req.curveHop;
             const double ratio = sampleCurve (req.pitchRatio, frame, req.totalFrames);
             const double Ts = (ratio > 1e-6) ? (Ta / ratio) : Ta;
 

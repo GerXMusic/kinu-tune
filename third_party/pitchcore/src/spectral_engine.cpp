@@ -179,8 +179,16 @@ bool SpectralEngine::render (const RenderRequest& req, std::vector<float>& out, 
         for (int k = 0; k < bins; ++k) magnitudes[(size_t) k] = std::abs (row[k]);
 
         // la altura fuente y objetivo en el centro del frame
-        const double t = (a + (double) f * params_.hop + 0.5 * params_.nFft) / sr;
-        const double frame = t * sr / req.curveHop;      // frame de la curva
+        //
+        // I-13 (D-111): el frame de la curva es ABSOLUTO (muestra absoluta del
+        // centro del frame). Antes se usaba `a`, que es la posicion DENTRO del
+        // bufer (`sourceStartSample - originalStartSample`) y no lleva
+        // `originalStartSample`: una peticion que no empieza en la muestra 0
+        // leia la curva desplazada (en el adaptador, 8 frames en vez de 1738) y
+        // caia en el relleno plano del principio.
+        const double frame =
+            ((double) req.sourceStartSample + (double) f * params_.hop +
+             0.5 * (double) params_.nFft) / req.curveHop;
         const double f0s = f0Fuente (frame);
         const double f0t = f0s * razonEn (frame);
 
