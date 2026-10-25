@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
+#include <cstdlib>
 #include <deque>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -30,6 +33,60 @@ bool isCancelled(const std::shared_ptr<std::atomic<bool>> &flag)
 {
     return flag != nullptr && flag->load();
 }
+
+#if PITCHNET_LOGGING_ENABLED
+/// D-103: volca la peticion REAL que recibe el motor, para el nivel 4.
+///
+/// Binario little-endian, sin conversiones: los mismos float32/float64/uint8
+/// que se le pasan al motor. El arnes lo ejecuta por toCoreRequest +
+/// ClassicEngine y cuenta las marcas de periodo del tramo.
+bool dumpRequest(const DspSynthesisRequest &request)
+{
+    juce::File dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                         .getChildFile("opencode")
+                         .getChildFile("bounce");
+    if (!dir.createDirectory())
+        return false;
+    const juce::File target = dir.getChildFile("pitchcore_request.bin");
+    std::ofstream f(target.getFullPathName().toStdString(),
+                    std::ios::binary | std::ios::trunc);
+    if (!f)
+        return false;
+
+    const char magic[8] = {'P', 'C', 'R', 'E', 'Q', '1', 0, 0};
+    f.write(magic, 8);
+    auto w32 = [&f](int32_t v) { f.write(reinterpret_cast<const char *>(&v), 4); };
+    w32(1);
+    w32(request.hopSize);
+    w32(request.sampleRate);
+    w32(request.sourceStartSample);
+    w32(request.numOutputFrames);
+    const uint8_t formants = request.preserveFormants ? 1 : 0;
+    f.write(reinterpret_cast<const char *>(&formants), 1);
+    w32(static_cast<int32_t>(request.source.size()));
+    w32(static_cast<int32_t>(request.sourceFrame.size()));
+    w32(static_cast<int32_t>(request.pitchRatio.size()));
+    w32(static_cast<int32_t>(request.sourceF0.size()));
+    w32(static_cast<int32_t>(request.sourceVoiced.size()));
+
+    auto wbytes = [&f](const void *p, size_t bytes) {
+        f.write(reinterpret_cast<const char *>(p), static_cast<std::streamsize>(bytes));
+    };
+    if (!request.source.empty())
+        wbytes(request.source.data(), request.source.size() * sizeof(float));
+    if (!request.sourceFrame.empty())
+        wbytes(request.sourceFrame.data(), request.sourceFrame.size() * sizeof(double));
+    if (!request.pitchRatio.empty())
+        wbytes(request.pitchRatio.data(), request.pitchRatio.size() * sizeof(float));
+    if (!request.sourceF0.empty())
+        wbytes(request.sourceF0.data(), request.sourceF0.size() * sizeof(float));
+    if (!request.sourceVoiced.empty())
+        wbytes(request.sourceVoiced.data(), request.sourceVoiced.size());
+
+    f.flush();
+    return static_cast<bool>(f);
+}
+#endif
 
 class RenderWorker
 {
@@ -146,6 +203,12 @@ std::vector<float> PitchcoreSynthesizer::render(
         juce::String(ratioMin, 4) + "," + juce::String(ratioMax, 4) + "] f0=" +
         juce::String(static_cast<int>(request.sourceF0.size())) + " voiced=" +
         juce::String(voicedInSpan));
+    // D-103: la fixtura del nivel 4 sale de la MISMA peticion que se registra
+    // y se le pasa al motor.
+    if (dumpRequest(request))
+        LOG("pitchcore adapter: peticion volcada para el nivel 4 (D-103)");
+    else
+        LOG("pitchcore adapter: no se pudo volcar la peticion (D-103)");
 #endif
 
     if (request.numOutputFrames <= 0 || request.hopSize <= 0 || request.source.empty())

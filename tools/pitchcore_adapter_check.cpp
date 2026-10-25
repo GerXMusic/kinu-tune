@@ -32,8 +32,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -511,6 +513,239 @@ int runCliMode(const std::string &wavPath, const std::string &f0Csv,
     return failures == 0 ? 0 : 1;
 }
 
+// ---------------------------------------------------------------------------
+// MODO FIXTURA (nivel 4, D-103): la peticion REAL que recibe el motor, volcada
+// por el adaptador, ejecutada aqui por la MISMA traduccion (toCoreRequest) y el
+// MISMO motor (ClassicEngine). Cuenta las marcas de periodo del tramo de la
+// nota y mide si la salida desplaza. El criterio esta escrito ANTES de contar
+// (D-103); aqui solo se aplica.
+// ---------------------------------------------------------------------------
+
+// Residuo del adaptador con esta peticion (D-102, 2c: vsOriginal rms=9,466e-05).
+constexpr double kAdapterRms = 9.466e-05;
+constexpr double kFidelityTol = 1e-6;   // control de fidelidad de la fixtura
+constexpr double kNoShiftRms = 1e-3;    // 10x el residuo del adaptador
+constexpr double kShiftRms = 1e-2;      // ~8x por debajo de una edicion real (8,6e-02)
+
+bool readFixture(const std::string &path, DspSynthesisRequest &req, std::string &err)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+    {
+        err = "no se puede abrir";
+        return false;
+    }
+    char magic[8] = {};
+    f.read(magic, 8);
+    if (!f || std::memcmp(magic, "PCREQ1", 6) != 0)
+    {
+        err = "no es una fixtura PCREQ1";
+        return false;
+    }
+    auto r32 = [&f]() -> int32_t {
+        int32_t v = 0;
+        f.read(reinterpret_cast<char *>(&v), 4);
+        return v;
+    };
+    const int32_t version = r32();
+    if (version != 1)
+    {
+        err = "version distinta de 1";
+        return false;
+    }
+    const int32_t hop = r32();
+    const int32_t sr = r32();
+    const int32_t src0 = r32();
+    const int32_t frames = r32();
+    uint8_t formants = 0;
+    f.read(reinterpret_cast<char *>(&formants), 1);
+    const int32_t nSource = r32();
+    const int32_t nFrame = r32();
+    const int32_t nRatio = r32();
+    const int32_t nF0 = r32();
+    const int32_t nVoiced = r32();
+    if (!f)
+    {
+        err = "cabecera truncada";
+        return false;
+    }
+    if (hop <= 0 || sr <= 0 || frames <= 0 || nSource <= 0 ||
+        nFrame < 0 || nRatio < 0 || nF0 < 0 || nVoiced < 0)
+    {
+        err = "cabecera invalida";
+        return false;
+    }
+
+    req.hopSize = hop;
+    req.sampleRate = sr;
+    req.sourceStartSample = src0;
+    req.numOutputFrames = frames;
+    req.preserveFormants = formants != 0;
+    req.source.resize(static_cast<size_t>(nSource));
+    req.sourceFrame.resize(static_cast<size_t>(nFrame));
+    req.pitchRatio.resize(static_cast<size_t>(nRatio));
+    req.sourceF0.resize(static_cast<size_t>(nF0));
+    req.sourceVoiced.resize(static_cast<size_t>(nVoiced));
+
+    auto rd = [&f](void *p, size_t bytes) {
+        if (bytes > 0)
+            f.read(static_cast<char *>(p), static_cast<std::streamsize>(bytes));
+    };
+    rd(req.source.data(), req.source.size() * sizeof(float));
+    rd(req.sourceFrame.data(), req.sourceFrame.size() * sizeof(double));
+    rd(req.pitchRatio.data(), req.pitchRatio.size() * sizeof(float));
+    rd(req.sourceF0.data(), req.sourceF0.size() * sizeof(float));
+    rd(req.sourceVoiced.data(), req.sourceVoiced.size());
+    if (!f)
+    {
+        err = "cuerpo truncado";
+        return false;
+    }
+    return true;
+}
+
+int runFixtureMode(const std::string &path, const std::string &outPath,
+                   int notaIni, int notaFin)
+{
+    DspSynthesisRequest dsp;
+    std::string err;
+    if (!readFixture(path, dsp, err))
+    {
+        std::printf("ERROR fixtura %s: %s\n", path.c_str(), err.c_str());
+        return 1;
+    }
+
+    float rmin = 1.0f, rmax = 1.0f;
+    double rsum = 0.0;
+    for (float r : dsp.pitchRatio)
+    {
+        rmin = std::min(rmin, r);
+        rmax = std::max(rmax, r);
+        rsum += static_cast<double>(r);
+    }
+    std::printf("fixtura    : %s\n", path.c_str());
+    std::printf("peticion   : frames=%d hop=%d sr=%d src0=%d src=%zu\n",
+                dsp.numOutputFrames, dsp.hopSize, dsp.sampleRate,
+                dsp.sourceStartSample, dsp.source.size());
+    std::printf("curvas     : sourceFrame=%zu ratio=%zu (media %.4f, rango [%.4f,%.4f])"
+                " f0=%zu voiced=%zu\n",
+                dsp.sourceFrame.size(), dsp.pitchRatio.size(),
+                dsp.pitchRatio.empty() ? 1.0
+                                       : rsum / static_cast<double>(dsp.pitchRatio.size()),
+                rmin, rmax, dsp.sourceF0.size(), dsp.sourceVoiced.size());
+
+    const pitchcore::RenderRequest core = pitchcore_adapter::toCoreRequest(dsp);
+    const int base = core.totalFrames - dsp.numOutputFrames;
+    std::printf("traduccion : curveHop=%.0f totalFrames=%d base=%d origen=%d muestras=%d\n",
+                core.curveHop, core.totalFrames, base, core.sourceStartSample,
+                core.numSamples);
+
+    const int fMid = (notaIni + notaFin) / 2;
+    const int localMid = fMid - base;
+    if (localMid >= 0 && localMid < static_cast<int>(dsp.pitchRatio.size()))
+    {
+        const float r = dsp.pitchRatio[static_cast<size_t>(localMid)];
+        std::printf("ratio nota : frame %d -> %.4f (%+.1f c)\n", fMid, r,
+                    1200.0 * std::log2(static_cast<double>(r)));
+    }
+
+    const std::vector<int> marcas = pitchcore::ClassicEngine::detectPitchMarks(core);
+    std::printf("marcas     : %zu en toda la peticion\n", marcas.size());
+
+    const long notaA = static_cast<long>(notaIni) * dsp.hopSize;
+    const long notaB = static_cast<long>(notaFin) * dsp.hopSize;
+    int enNota = 0;
+    long primera = -1, ultima = -1;
+    for (int m : marcas)
+    {
+        if (m >= notaA && m < notaB)
+        {
+            if (primera < 0)
+                primera = m;
+            ultima = m;
+            ++enNota;
+        }
+    }
+    std::printf("nota       : frames [%d,%d) = muestras [%ld,%ld) -> %d marcas",
+                notaIni, notaFin, notaA, notaB, enNota);
+    if (enNota >= 2 && ultima > primera)
+        std::printf(" (paso medio %.1f muestras)",
+                    static_cast<double>(ultima - primera) /
+                        static_cast<double>(enNota - 1));
+    std::printf("\n");
+
+    std::vector<float> out;
+    if (!pitchcore::ClassicEngine().render(core, out, err))
+    {
+        std::printf("ERROR motor: %s\n", err.c_str());
+        return 1;
+    }
+    std::printf("salida     : %zu muestras (contrato %d)  err='%s'\n",
+                out.size(), dsp.numOutputFrames * dsp.hopSize, err.c_str());
+
+    const long outOrigin = static_cast<long>(core.sourceStartSample);
+    const long srcOrigin = static_cast<long>(dsp.sourceStartSample);
+    auto rmsWindow = [&](long aAbs, long bAbs, double *maxAbs, long *count) {
+        double e = 0.0, mx = 0.0;
+        long n = 0;
+        for (long abs = aAbs; abs < bAbs; ++abs)
+        {
+            const long i = abs - outOrigin;
+            const long k = abs - srcOrigin;
+            if (i < 0 || i >= static_cast<long>(out.size()))
+                continue;
+            if (k < 0 || k >= static_cast<long>(dsp.source.size()))
+                continue;
+            const double d = static_cast<double>(out[static_cast<size_t>(i)]) -
+                             static_cast<double>(dsp.source[static_cast<size_t>(k)]);
+            e += d * d;
+            mx = std::max(mx, std::fabs(d));
+            ++n;
+        }
+        if (maxAbs != nullptr)
+            *maxAbs = mx;
+        if (count != nullptr)
+            *count = n;
+        return n > 0 ? std::sqrt(e / static_cast<double>(n)) : -1.0;
+    };
+
+    double maxAll = 0.0, maxNota = 0.0;
+    long nAll = 0, nNota = 0;
+    const double rmsAll = rmsWindow(outOrigin, outOrigin + static_cast<long>(out.size()),
+                                    &maxAll, &nAll);
+    const double rmsNota = rmsWindow(notaA, notaB, &maxNota, &nNota);
+    std::printf("vs original: rms %.6e max %.6e n %ld  (toda la peticion)\n",
+                rmsAll, maxAll, nAll);
+    std::printf("             rms %.6e max %.6e n %ld  (nota)\n",
+                rmsNota, maxNota, nNota);
+
+    const bool sizeOk = static_cast<int>(out.size()) == dsp.numOutputFrames * dsp.hopSize;
+    const bool rmsOk = rmsAll >= 0.0 && std::fabs(rmsAll - kAdapterRms) <= kFidelityTol;
+    std::printf("fidelidad  : tamano %s ; rms contra el adaptador (%.6e) %s\n",
+                sizeOk ? "PASA" : "FALLA", kAdapterRms, rmsOk ? "PASA" : "FALLA");
+
+    if (!outPath.empty() && pitchcore::writeWavMono(outPath, out, dsp.sampleRate))
+        std::printf("salida wav : %s\n", outPath.c_str());
+
+    if (!sizeOk || !rmsOk)
+    {
+        std::printf("nivel 4    : SIN VEREDICTO (la fixtura no reproduce la peticion real)\n");
+        return 1;
+    }
+
+    const char *fila = nullptr;
+    if (enNota < 2)
+        fila = "marcas del tramo < 2 -> el fallo esta en lo que RECIBE el motor";
+    else if (rmsNota >= 0.0 && rmsNota < kNoShiftRms)
+        fila = "marcas >= 2 y NO desplaza -> render PSOLA del nucleo";
+    else if (rmsNota >= kShiftRms)
+        fila = "marcas >= 2 y desplaza -> la entrega en el plugin (peticion vs llamada)";
+    else
+        fila = "zona sin veredicto (rms en la nota entre 1e-3 y 1e-2)";
+    std::printf("nivel 4    : %s\n", fila);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -521,8 +756,10 @@ int main(int argc, char **argv)
                     "[--out salida.wav] [--vs ref.wav] [--identical otra.wav] [--selftest]\n"
                     "   o: %s <wav> --f0 f0.csv --curve curva.csv [--curva-out c.csv] "
                     "[--out salida.wav] [--vs cli.wav]   (nivel 3, D-099)\n"
-                    "   o: %s --compare <a.wav> <b.wav>   (bounces 2a/2c, D-100)\n",
-                    argv[0], argv[0], argv[0]);
+                    "   o: %s --compare <a.wav> <b.wav>   (bounces 2a/2c, D-100)\n"
+                    "   o: %s --fixture peticion.bin [--nota-frames ini fin] [--out salida.wav]"
+                    "   (nivel 4, D-103)\n",
+                    argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     if (std::string(argv[1]) == "--selftest")
@@ -560,6 +797,39 @@ int main(int argc, char **argv)
         std::printf("lag(A vs B): %.2f  corr %.6f  rms %.3e  n %ld\n",
                     fit.lag, fit.corr, fit.rms, fit.n);
         return 0;
+    }
+
+    // Nivel 4 (D-103): la peticion REAL volcada por el adaptador, ejecutada por
+    // la misma traduccion y el mismo motor que el plugin.
+    if (std::string(argv[1]) == "--fixture")
+    {
+        if (argc < 3)
+        {
+            std::printf("uso: %s --fixture peticion.bin [--nota-frames ini fin] [--out salida.wav]\n",
+                        argv[0]);
+            return 2;
+        }
+        std::string outPath;
+        int notaIni = 1838;
+        int notaFin = 1892;
+        for (int i = 3; i < argc; ++i)
+        {
+            const std::string a = argv[i];
+            if (a == "--out" && i + 1 < argc)
+            {
+                outPath = argv[++i];
+                continue;
+            }
+            if (a == "--nota-frames" && i + 2 < argc)
+            {
+                notaIni = std::atoi(argv[++i]);
+                notaFin = std::atoi(argv[++i]);
+                continue;
+            }
+            std::printf("ERROR: argumento desconocido %s\n", a.c_str());
+            return 2;
+        }
+        return runFixtureMode(argv[2], outPath, notaIni, notaFin);
     }
 
     const std::string path = argv[1];
