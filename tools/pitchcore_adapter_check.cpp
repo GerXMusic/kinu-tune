@@ -659,6 +659,25 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
                     1200.0 * std::log2(static_cast<double>(r)));
     }
 
+    // D-111: el motor clasico muestrea la curva de razon con el frame LOCAL de la
+    // salida (psola.cpp:420, `frame = ts / curveHop`) y no con el absoluto. Se
+    // imprimen las dos lecturas -local (lo que usa el motor) y absoluta (lo que
+    // pide la curva)- para que la fila del veredicto no atribuya a la entrega una
+    // altura que no es la pedida.
+    {
+        const double tsNota = static_cast<double>(notaIni - base) * dsp.hopSize;
+        const float rMotor = static_cast<float>(pitchcore::sampleCurve(
+            core.pitchRatio, tsNota / core.curveHop, core.totalFrames));
+        const float rCurva = static_cast<float>(pitchcore::sampleCurve(
+            core.pitchRatio, static_cast<double>(notaIni), core.totalFrames));
+        std::printf("ratio motor: indice LOCAL %.1f (ts/hop) -> %+.1f c ; indice "
+                    "ABSOLUTO %.1f -> %+.1f c  (D-111)\n",
+                    tsNota / core.curveHop,
+                    1200.0 * std::log2(static_cast<double>(rMotor)),
+                    static_cast<double>(notaIni),
+                    1200.0 * std::log2(static_cast<double>(rCurva)));
+    }
+
     // D-106 G3: la compuerta de voiced no puede apagar la nota; se informa del
     // voiced que trae la fixtura en la peticion y en la nota.
     int vozNota = 0;
@@ -853,7 +872,17 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
 
     if (!sizeOk || !rmsOk)
     {
-        std::printf("nivel 4    : SIN VEREDICTO (la fixtura no reproduce la peticion real)\n");
+        // Dos causas distintas. Confundirlas hacia leer «la fixtura no es la
+        // peticion real» cuando lo que cambia es el BUILD: el rms de referencia
+        // lo registro el plugin que volco la fixtura, asi que al arreglar el
+        // nucleo (D-108/D-111) la igualdad ya no puede darse.
+        if (!sizeOk)
+            std::printf("nivel 4    : SIN VEREDICTO (la fixtura no reproduce la peticion "
+                        "real: el tamano no cuadra)\n");
+        else
+            std::printf("nivel 4    : SIN VEREDICTO (el rms no coincide con el del plugin "
+                        "que volco la fixtura: build distinto del que la produjo; la "
+                        "fidelidad de la fixtura se midio en D-107)\n");
         return 1;
     }
 
@@ -882,7 +911,13 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
     else if (rmsNota >= 0.0 && rmsNota < kNoShiftRms)
         fila = "marcas >= 2 y NO desplaza -> render PSOLA del nucleo";
     else if (rmsNota >= kShiftRms)
-        fila = "marcas >= 2 y desplaza -> la entrega en el plugin (peticion vs llamada)";
+        // D-111: con marcas el tramo se resintetiza y desplaza, pero la ALTURA
+        // aplicada es otra cosa: el motor lee la curva con el indice local
+        // (psola.cpp:420) y puede estar usando un ratio que no es el de la
+        // curva. La fila de D-103 atribuia esto a «la entrega en el plugin» y
+        // ya no se sostiene (medido: +206 c donde la curva pide -105 c).
+        fila = "marcas >= 2 y desplaza -> el tramo se resintetiza; la altura aplicada "
+               "se mide aparte (ratio motor, D-111)";
     else
         fila = "zona sin veredicto (rms en la nota entre 1e-3 y 1e-2)";
     std::printf("nivel 4    : %s\n", fila);
