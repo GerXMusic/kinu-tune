@@ -40,18 +40,22 @@ bool isCancelled(const std::shared_ptr<std::atomic<bool>> &flag)
 /// Binario little-endian, sin conversiones: los mismos float32/float64/uint8
 /// que se le pasan al motor. El arnes lo ejecuta por toCoreRequest +
 /// ClassicEngine y cuenta las marcas de periodo del tramo.
-bool dumpRequest(const DspSynthesisRequest &request)
+juce::String dumpRequest(const DspSynthesisRequest &request)
 {
     juce::File dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
                          .getChildFile("opencode")
                          .getChildFile("bounce");
     if (!dir.createDirectory())
-        return false;
-    const juce::File target = dir.getChildFile("pitchcore_request.bin");
+        return {};
+    // Un fichero por tramo: un render puede sintetizar varias regiones y no
+    // queremos que la ultima pise a la de la nota.
+    const juce::File target = dir.getChildFile(
+        "pitchcore_request_" + juce::String(request.sourceStartSample) + "_" +
+        juce::String(request.numOutputFrames) + ".bin");
     std::ofstream f(target.getFullPathName().toStdString(),
                     std::ios::binary | std::ios::trunc);
     if (!f)
-        return false;
+        return {};
 
     const char magic[8] = {'P', 'C', 'R', 'E', 'Q', '1', 0, 0};
     f.write(magic, 8);
@@ -84,7 +88,7 @@ bool dumpRequest(const DspSynthesisRequest &request)
         wbytes(request.sourceVoiced.data(), request.sourceVoiced.size());
 
     f.flush();
-    return static_cast<bool>(f);
+    return f ? target.getFullPathName() : juce::String();
 }
 #endif
 
@@ -205,8 +209,9 @@ std::vector<float> PitchcoreSynthesizer::render(
         juce::String(voicedInSpan));
     // D-103: la fixtura del nivel 4 sale de la MISMA peticion que se registra
     // y se le pasa al motor.
-    if (dumpRequest(request))
-        LOG("pitchcore adapter: peticion volcada para el nivel 4 (D-103)");
+    const juce::String dumpPath = dumpRequest(request);
+    if (dumpPath.isNotEmpty())
+        LOG("pitchcore adapter: peticion volcada para el nivel 4 (D-103) en " + dumpPath);
     else
         LOG("pitchcore adapter: no se pudo volcar la peticion (D-103)");
 #endif
