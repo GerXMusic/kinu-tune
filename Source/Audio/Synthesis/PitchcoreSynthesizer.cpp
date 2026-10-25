@@ -15,6 +15,7 @@
 
 #include "../../Utils/AppLogger.h"
 #include "PitchcoreRequest.h"
+#include "PitchcoreVoicedGate.h"
 
 namespace {
 
@@ -48,10 +49,14 @@ juce::String dumpRequest(const DspSynthesisRequest &request)
     if (!dir.createDirectory())
         return {};
     // Un fichero por tramo: un render puede sintetizar varias regiones y no
-    // queremos que la ultima pise a la de la nota.
-    const juce::File target = dir.getChildFile(
+    // queremos que la ultima pise a la de la nota. D-106: tampoco se pisa una
+    // fixtura anterior; si el nombre ya existe se anade sufijo _v2, _v3...
+    const juce::String stem =
         "pitchcore_request_" + juce::String(request.sourceStartSample) + "_" +
-        juce::String(request.numOutputFrames) + ".bin");
+        juce::String(request.numOutputFrames);
+    juce::File target = dir.getChildFile(stem + ".bin");
+    for (int version = 2; target.existsAsFile() && version < 100; ++version)
+        target = dir.getChildFile(stem + "_v" + juce::String(version) + ".bin");
     std::ofstream f(target.getFullPathName().toStdString(),
                     std::ios::binary | std::ios::trunc);
     if (!f)
@@ -175,9 +180,17 @@ pitchcore::RenderRequest PitchcoreSynthesizer::toCoreRequest(const Request &requ
 }
 
 std::vector<float> PitchcoreSynthesizer::render(
-    const Request &request,
+    const Request &requestIn,
     const std::shared_ptr<std::atomic<bool>> &cancelFlag)
 {
+    // D-106: compuerta de voiced SOLO para este motor. Se aplica antes del log
+    // y del volcado (D-103) para que la fixtura lleve la mascara que recibe el
+    // motor; no toca IncrementalSynthesizer (peticion del PSOLA del fork) ni el
+    // nucleo vendorizado.
+    DspSynthesisRequest gatedRequest = requestIn;
+    const int voicedCleared = pitchcore_voiced_gate::apply(gatedRequest);
+    const Request &request = gatedRequest;
+
 #if PITCHNET_LOGGING_ENABLED
     // I-10 (D-101): que el motor se invoque, con que peticion y que devuelve.
     // Sin esto, un fallo del adaptador y uno del despacho son indistinguibles
@@ -209,6 +222,8 @@ std::vector<float> PitchcoreSynthesizer::render(
         juce::String(voicedInSpan));
     // D-103: la fixtura del nivel 4 sale de la MISMA peticion que se registra
     // y se le pasa al motor.
+    LOG(juce::String("pitchcore adapter: voiced gate: limpiados=") +
+        juce::String(voicedCleared) + " (D-106)");
     const juce::String dumpPath = dumpRequest(request);
     if (dumpPath.isNotEmpty())
         LOG("pitchcore adapter: peticion volcada para el nivel 4 (D-103) en " + dumpPath);

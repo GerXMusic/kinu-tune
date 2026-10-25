@@ -25,6 +25,7 @@
 //       [--out salida.wav] [--vs referencia.wav] [--identical otra.wav] [--selftest]
 
 #include "PitchcoreRequest.h"
+#include "PitchcoreVoicedGate.h"
 #include "pitchcore/f0.h"
 #include "pitchcore/pitch_curve.h"
 #include "pitchcore/psola.h"
@@ -605,7 +606,7 @@ bool readFixture(const std::string &path, DspSynthesisRequest &req, std::string 
 }
 
 int runFixtureMode(const std::string &path, const std::string &outPath,
-                   int notaIni, int notaFin)
+                   int notaIni, int notaFin, bool gate)
 {
     DspSynthesisRequest dsp;
     std::string err;
@@ -613,6 +614,15 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
     {
         std::printf("ERROR fixtura %s: %s\n", path.c_str(), err.c_str());
         return 1;
+    }
+
+    if (gate)
+    {
+        // Prueba de fontaneria de la compuerta (D-106): la aplica el arnes, no
+        // el plugin. Para el veredicto se mide la fixtura ya volcada, SIN flag.
+        const int cleared = pitchcore_voiced_gate::apply(dsp);
+        std::printf("gate       : limpiados=%d frames (--gate; no es la medida real)\n",
+                    cleared);
     }
 
     float rmin = 1.0f, rmax = 1.0f;
@@ -647,6 +657,24 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
         const float r = dsp.pitchRatio[static_cast<size_t>(localMid)];
         std::printf("ratio nota : frame %d -> %.4f (%+.1f c)\n", fMid, r,
                     1200.0 * std::log2(static_cast<double>(r)));
+    }
+
+    // D-106 G3: la compuerta de voiced no puede apagar la nota; se informa del
+    // voiced que trae la fixtura en la peticion y en la nota.
+    {
+        const int lo = std::max(0, base);
+        const int hi = std::min<int>(static_cast<int>(core.sourceVoiced.size()),
+                                     base + dsp.numOutputFrames);
+        int voz = 0;
+        for (int f = lo; f < hi; ++f)
+            voz += core.sourceVoiced[static_cast<size_t>(f)] ? 1 : 0;
+        const int nlo = std::max(0, notaIni), nhi = notaFin;
+        int vozNota = 0;
+        for (int f = nlo; f < nhi && f < static_cast<int>(core.sourceVoiced.size());
+             ++f)
+            vozNota += core.sourceVoiced[static_cast<size_t>(f)] ? 1 : 0;
+        std::printf("voiced     : peticion %d de %d frames; nota %d de %d\n", voz,
+                    hi - lo, vozNota, nhi - nlo);
     }
 
     const std::vector<int> marcas = pitchcore::ClassicEngine::detectPitchMarks(core);
@@ -915,6 +943,7 @@ int main(int argc, char **argv)
         std::string outPath;
         int notaIni = 1838;
         int notaFin = 1892;
+        bool gate = false;
         for (int i = 3; i < argc; ++i)
         {
             const std::string a = argv[i];
@@ -929,10 +958,15 @@ int main(int argc, char **argv)
                 notaFin = std::atoi(argv[++i]);
                 continue;
             }
+            if (a == "--gate")
+            {
+                gate = true;
+                continue;
+            }
             std::printf("ERROR: argumento desconocido %s\n", a.c_str());
             return 2;
         }
-        return runFixtureMode(argv[2], outPath, notaIni, notaFin);
+        return runFixtureMode(argv[2], outPath, notaIni, notaFin, gate);
     }
 
     const std::string path = argv[1];
