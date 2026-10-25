@@ -210,7 +210,63 @@ std::vector<int> ClassicEngine::detectPitchMarks (const RenderRequest& req)
             }
             // la periodicidad: si la correlacion es baja, aqui ya no hay
             // periodo (el tramo se acaba aqui)
-            if (bestScore < kMinCorr) break;
+            if (bestScore < kMinCorr)
+            {
+                // D-108 / I-12: el tramo NO se abandona. Un ataque, una
+                // respiracion o un F0 malo al principio dejaban sin marcas todo
+                // lo que venia detras aunque fuese periodico (medido: 1,34 s de
+                // voz con correlacion 0,995 y 0 marcas). Se avanza un periodo y
+                // se re-siembra con la MISMA regla que la semilla del tramo
+                // (maximo con signo de un periodo), aceptando la semilla solo si
+                // su propia correlacion supera kMinCorr: mismo umbral, misma
+                // geometria, sin constante nueva.
+                const long step = std::max (1L, (long) std::lround (period));
+                long next = currentL + step;
+                bool reanudado = false;
+                while (next + (long) (period * 2) < runEnd)
+                {
+                    const double f2 = f0En (src0 + next);
+                    const double T2 = (f2 > 0) ? sr / f2 : period;
+                    long s2 = -1;
+                    float b2 = -1e30f;
+                    const long e2 = std::min (runEnd, next + (long) T2);
+                    for (long i = next; i < e2; ++i)
+                    {
+                        double m = 0.0;
+                        if (! readOriginal (req, src0 + i, m)) continue;
+                        if (m > b2) { b2 = (float) m; s2 = i; }
+                    }
+                    if (s2 >= 0)
+                    {
+                        const long lag2 = (long) std::lround (T2);
+                        const long half2 = std::max (4L, (long) (T2 * 0.5));
+                        double dot = 0.0, g1 = 0.0, g2 = 0.0;
+                        bool ok = true;
+                        for (long k = -half2; k < half2; ++k)
+                        {
+                            double va = 0.0, vb = 0.0;
+                            if (! readOriginal (req, src0 + s2 + k, va) ||
+                                ! readOriginal (req, src0 + s2 + lag2 + k, vb))
+                            { ok = false; break; }
+                            dot += va * vb; g1 += va * va; g2 += vb * vb;
+                        }
+                        if (ok)
+                        {
+                            const double den = std::sqrt (g1 * g2);
+                            if (den > 1e-12 && dot / den >= kMinCorr)
+                            {
+                                current = s2;
+                                marks.push_back (src0 + s2);
+                                reanudado = true;
+                                break;
+                            }
+                        }
+                    }
+                    next += step;
+                }
+                if (! reanudado) break;
+                continue;
+            }
             marks.push_back (src0 + bestP);
             current = bestP;
         }

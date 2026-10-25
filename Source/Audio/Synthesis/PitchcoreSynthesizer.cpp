@@ -187,9 +187,18 @@ std::vector<float> PitchcoreSynthesizer::render(
     // y del volcado (D-103) para que la fixtura lleve la mascara que recibe el
     // motor; no toca IncrementalSynthesizer (peticion del PSOLA del fork) ni el
     // nucleo vendorizado.
-    DspSynthesisRequest gatedRequest = requestIn;
-    const int voicedCleared = pitchcore_voiced_gate::apply(gatedRequest);
-    const Request &request = gatedRequest;
+    // D-109: DESACTIVADA por defecto hasta que pase el porton: cambia otros
+    // tramos (19 -> 1049 marcas en la fixtura de D-107) y no esta evaluada.
+    // Para medirla se pone a true y se recompila.
+    constexpr bool kVoicedGateEnabled = false;
+    DspSynthesisRequest gatedRequest;
+    int voicedCleared = 0;
+    if (kVoicedGateEnabled)
+    {
+        gatedRequest = requestIn;
+        voicedCleared = pitchcore_voiced_gate::apply(gatedRequest);
+    }
+    const Request &request = kVoicedGateEnabled ? gatedRequest : requestIn;
 
 #if PITCHNET_LOGGING_ENABLED
     // I-10 (D-101): que el motor se invoque, con que peticion y que devuelve.
@@ -222,8 +231,9 @@ std::vector<float> PitchcoreSynthesizer::render(
         juce::String(voicedInSpan));
     // D-103: la fixtura del nivel 4 sale de la MISMA peticion que se registra
     // y se le pasa al motor.
-    LOG(juce::String("pitchcore adapter: voiced gate: limpiados=") +
-        juce::String(voicedCleared) + " (D-106)");
+    LOG(juce::String("pitchcore adapter: voiced gate: activa=") +
+        juce::String(kVoicedGateEnabled ? 1 : 0) + " limpiados=" +
+        juce::String(voicedCleared) + " (D-107/D-109)");
     const juce::String dumpPath = dumpRequest(request);
     if (dumpPath.isNotEmpty())
         LOG("pitchcore adapter: peticion volcada para el nivel 4 (D-103) en " + dumpPath);

@@ -4,8 +4,8 @@ Copia **exacta** de las 12 fuentes del motor clÃ¡sico y sus 13 cabeceras.
 No se edita a mano: se regenera con `tools/sync-pitchcore.ps1`.
 
 - **Origen**: `C:\Users\GumiPC\Desktop\Opencode\Pitchcore\codigo\pitchcore`
-- **Commit**: `47a45868bf673d407439a05662eca46f706234b4`
-- **Sincronizado**: 2026-10-23 22:06:48
+- **Commit**: `8258d4fccfa509d47aac5444d57fd2b930437572`
+- **Sincronizado**: 2026-10-24 22:46:29
 
 ## QuÃ© entra y quÃ© no
 

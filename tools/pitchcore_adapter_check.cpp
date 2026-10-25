@@ -661,6 +661,8 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
 
     // D-106 G3: la compuerta de voiced no puede apagar la nota; se informa del
     // voiced que trae la fixtura en la peticion y en la nota.
+    int vozNota = 0;
+    const int notaFrames = notaFin - notaIni;
     {
         const int lo = std::max(0, base);
         const int hi = std::min<int>(static_cast<int>(core.sourceVoiced.size()),
@@ -669,7 +671,6 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
         for (int f = lo; f < hi; ++f)
             voz += core.sourceVoiced[static_cast<size_t>(f)] ? 1 : 0;
         const int nlo = std::max(0, notaIni), nhi = notaFin;
-        int vozNota = 0;
         for (int f = nlo; f < nhi && f < static_cast<int>(core.sourceVoiced.size());
              ++f)
             vozNota += core.sourceVoiced[static_cast<size_t>(f)] ? 1 : 0;
@@ -866,7 +867,18 @@ int runFixtureMode(const std::string &path, const std::string &outPath,
 
     const char *fila = nullptr;
     if (enNota < 2)
-        fila = "marcas del tramo < 2 -> el fallo esta en lo que RECIBE el motor";
+    {
+        // La fila de D-103 daba por hecho que «<2 marcas» era culpa de la
+        // entrada. D-105/D-107 midieron que con la nota bien voiced (54/54) el
+        // bloqueo esta en la deteccion de marcas del nucleo (I-12). Se separa
+        // para no inducir la lectura contraria.
+        if (runNota != nullptr && vozNota == notaFrames)
+            fila = "marcas < 2 y la nota esta ENTERA voiced -> el bloqueo esta en la "
+                   "deteccion de marcas del nucleo (I-12), no en lo que recibe";
+        else
+            fila = "marcas < 2 y la nota NO esta entera voiced -> el fallo esta en lo "
+                   "que RECIBE el motor";
+    }
     else if (rmsNota >= 0.0 && rmsNota < kNoShiftRms)
         fila = "marcas >= 2 y NO desplaza -> render PSOLA del nucleo";
     else if (rmsNota >= kShiftRms)
