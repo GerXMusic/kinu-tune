@@ -831,6 +831,12 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
 
+    // Per-note engine (M2 fase 1, D-125). Optional: Inherit is omitted, so a
+    // project written before this field existed round-trips to the same JSON
+    // and no archive version has to change.
+    if (note.getEngine() != NoteEngine::Inherit)
+        obj->setProperty("noteEngine", noteEngineToString(note.getEngine()));
+
     // Lyric/Phoneme
     if (note.hasLyric())
         obj->setProperty("lyric", note.getLyric());
@@ -897,6 +903,14 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
+
+    // Per-note engine (M2 fase 1, D-125). Absent in every project written
+    // before the field existed: that loads as Inherit, exactly the previous
+    // behaviour. Unknown text also falls back to Inherit.
+    const juce::var engineVar = json.getProperty("noteEngine", juce::var());
+    note.setEngine(engineVar.isVoid()
+                       ? NoteEngine::Inherit
+                       : stringToNoteEngine(engineVar.toString()));
 
     // Lyric/Phoneme
     auto lyric = json.getProperty("lyric", juce::var());
