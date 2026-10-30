@@ -1,7 +1,76 @@
 #pragma once
 
+#include "../Audio/SynthesisEngineType.h"
 #include "../JuceHeader.h"
+#include <optional>
 #include <vector>
+
+/**
+ * Engine requested for one note (M2 fase 1, D-125).
+ *
+ * Inherit is the default and keeps the behaviour every project had before the
+ * field existed: the note is rendered by the engine selected in SettingsManager
+ * (the global preference). The other three name a specific engine for the note
+ * and travel in the project. Fase 1 only stores the value: nothing reads it
+ * during rendering yet, so the audio of an existing edit does not change.
+ */
+enum class NoteEngine
+{
+    Inherit = 0, // Use the global engine (SettingsManager)
+    Vocoder,     // Neural vocoder (mel + F0 -> waveform)
+    Psola,       // Classic time-domain PSOLA of the fork
+    Pitchcore    // Our own classic engine (M2 step 1, D-096)
+};
+
+/// The concrete engine named by a note, or nothing when the note inherits.
+inline std::optional<SynthesisEngineType> noteEngineToSynthesisEngine(NoteEngine engine)
+{
+    switch (engine)
+    {
+        case NoteEngine::Vocoder:   return SynthesisEngineType::Vocoder;
+        case NoteEngine::Psola:     return SynthesisEngineType::Psola;
+        case NoteEngine::Pitchcore: return SynthesisEngineType::Pitchcore;
+        case NoteEngine::Inherit:
+        default:                    return std::nullopt;
+    }
+}
+
+/// Note field for a concrete engine. Every SynthesisEngineType has one.
+inline NoteEngine noteEngineFromSynthesisEngine(SynthesisEngineType type)
+{
+    switch (type)
+    {
+        case SynthesisEngineType::Vocoder:   return NoteEngine::Vocoder;
+        case SynthesisEngineType::Psola:     return NoteEngine::Psola;
+        case SynthesisEngineType::Pitchcore: return NoteEngine::Pitchcore;
+        default:                             return NoteEngine::Psola;
+    }
+}
+
+/// Serialised form, matching the names SettingsManager already writes.
+inline const char* noteEngineToString(NoteEngine engine)
+{
+    switch (engine)
+    {
+        case NoteEngine::Vocoder:   return "Vocoder";
+        case NoteEngine::Psola:     return "PSOLA";
+        case NoteEngine::Pitchcore: return "Pitchcore";
+        case NoteEngine::Inherit:
+        default:                    return "Inherit";
+    }
+}
+
+/// Unknown or missing text loads as Inherit, never as a different engine.
+inline NoteEngine stringToNoteEngine(const juce::String& text)
+{
+    if (text.equalsIgnoreCase("PSOLA"))
+        return NoteEngine::Psola;
+    if (text.equalsIgnoreCase("Vocoder"))
+        return NoteEngine::Vocoder;
+    if (text.equalsIgnoreCase("Pitchcore"))
+        return NoteEngine::Pitchcore;
+    return NoteEngine::Inherit;
+}
 
 /**
  * Represents a single note/pitch segment.
@@ -208,6 +277,10 @@ public:
     bool isRest() const { return rest; }
     void setRest(bool r) { rest = r; }
 
+    // Per-note engine (M2 fase 1, D-125). Inherit keeps the global engine.
+    NoteEngine getEngine() const { return engine; }
+    void setEngine(NoteEngine value) { engine = value; }
+
     // Lyric (character/syllable for this note)
     juce::String getLyric() const { return lyric; }
     void setLyric(const juce::String& text) { lyric = text; }
@@ -269,6 +342,8 @@ private:
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
     bool rest = false;        // Rest note (silence placeholder)
+    // Per-note engine; Inherit means "use the global engine" (D-125).
+    NoteEngine engine = NoteEngine::Inherit;
 
     juce::String lyric;   // Lyric text (e.g., "a", "SP" for silence)
     juce::String phoneme; // Phoneme (e.g., "a", "sp", for pronunciation)

@@ -18,6 +18,7 @@ set(PITCHNET_TEST_SOURCES
     FormantShiftTests.cpp
     HarmonyIntervalTests.cpp
     HostSyncTempoTests.cpp
+    NoteEngineTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
