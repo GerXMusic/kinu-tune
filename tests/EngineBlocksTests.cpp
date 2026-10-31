@@ -368,7 +368,9 @@ void testUnselectedContiguousRequestDoesNotSplitTheBlock() {
         notes, {2}, NoteEngine::Psola, SynthesisEngineType::Psola, source,
         kSampleRate, kHop);
     CHECK(plan.refused == 0);
-    CHECK(plan.edits.empty());
+    CHECK(plan.edits.size() == 1);
+    if (!plan.edits.empty())
+        CHECK(plan.edits.front().next == NoteEngine::Psola);
 }
 
 void testRestsDoNotBecomeThePreviousNoteForEngineEdits() {
@@ -385,7 +387,9 @@ void testRestsDoNotBecomeThePreviousNoteForEngineEdits() {
         notes, {2}, NoteEngine::Vocoder, SynthesisEngineType::Psola, source,
         kSampleRate, kHop);
     CHECK(plan.refused == 1);
-    CHECK(plan.edits.empty());
+    CHECK(plan.edits.size() == 1);
+    if (!plan.edits.empty())
+        CHECK(plan.edits.front().next == NoteEngine::Inherit);
 }
 
 void testTwoTouchingNotesWithDifferentEnginesKeepOneEngine() {
@@ -423,7 +427,7 @@ int main() {
     testRefusedNoteGetsTheBlockEngineStored();
     testInheritRequestReturnsANoteToTheGlobalEngine();
     testInheritClearsAnOverrideEvenWhenAudioAlreadyUsesGlobal();
-    testUnselectedNotesKeepTheirEngineAndTheirBlock();
+    testUnselectedContiguousRequestDoesNotSplitTheBlock();
     testRestsDoNotBecomeThePreviousNoteForEngineEdits();
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
 
