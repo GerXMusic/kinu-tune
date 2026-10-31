@@ -354,9 +354,10 @@ void testInheritClearsAnOverrideEvenWhenAudioAlreadyUsesGlobal() {
         CHECK(plan.edits.front().next == NoteEngine::Inherit);
 }
 
-void testUnselectedNotesKeepTheirEngineAndTheirBlock() {
-    // The middle note is not selected and stays Pitchcore; the third note,
-    // touching it, cannot go back to the global engine.
+void testUnselectedContiguousRequestDoesNotSplitTheBlock() {
+    // The middle note asks for Pitchcore but has no silence before it, so it
+    // remains in the PSOLA block. The selected third note also asks for PSOLA
+    // and needs no boundary because the block already renders that engine.
     auto source = makeSource({});
     std::vector<Note> notes{
         makeNote(4, 12, NoteEngine::Psola),
@@ -366,12 +367,8 @@ void testUnselectedNotesKeepTheirEngineAndTheirBlock() {
     const auto plan = engineBlocks::planEngineEdits(
         notes, {2}, NoteEngine::Psola, SynthesisEngineType::Psola, source,
         kSampleRate, kHop);
-    // It already renders as Pitchcore, so nothing changes in the audio; the
-    // field is corrected to say so.
-    CHECK(plan.refused == 1);
-    CHECK(plan.edits.size() == 1);
-    if (!plan.edits.empty())
-        CHECK(plan.edits.front().next == NoteEngine::Pitchcore);
+    CHECK(plan.refused == 0);
+    CHECK(plan.edits.empty());
 }
 
 void testRestsDoNotBecomeThePreviousNoteForEngineEdits() {
