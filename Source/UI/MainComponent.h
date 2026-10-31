@@ -330,6 +330,8 @@ private:
   // inspector's targets through the silence rule, as one undo step, and
   // re-renders. Returns how many selected notes the rule refused.
   int applyNoteEngineToSelection(NoteEngine engine);
+  int applyNoteEngineToIndices(const std::vector<int> &indices,
+                               NoteEngine engine);
   std::optional<NoteEngine> getSelectionNoteEngine() const;
   void onZoomChanged(float pixelsPerSecond);
   void reinterpolateUV(int startFrame,
@@ -339,6 +341,8 @@ private:
   // Whole timeline horizontally, the sung range vertically (Shift+F).
   void zoomToFull();
   void applyUiBrightness(double brightnessPercent);
+  // Local MCP commands are polled on the message thread, never the audio thread.
+  void pollMcpControl();
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
@@ -376,6 +380,11 @@ private:
 
   std::unique_ptr<EditorController> ownedEditorController;
   EditorController *editorController = nullptr;
+  juce::String mcpInstanceId { juce::Uuid().toString() };
+  juce::uint32 mcpLastPollMs = 0;
+  juce::uint32 mcpLastHeartbeatMs = 0;
+  juce::uint32 mcpRenderGeneration = 0;
+  bool mcpRenderPending = false;
   std::unique_ptr<PitchUndoManager> ownedUndoManager;
   PitchUndoManager *undoManager = nullptr;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;

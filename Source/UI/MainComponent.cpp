@@ -25,6 +25,7 @@
 #include <limits>
 #include <optional>
 #include <thread>
+#include <unordered_set>
 
 namespace
 {
@@ -60,6 +61,24 @@ constexpr float updateSubtitleFontSize = 14.0f;
 constexpr float aboutNoticesFontSize = 12.0f;
 const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
 const juce::Colour updateLogScrollbarThumb(0xFF565656u);
+
+juce::File getMcpControlDirectory()
+{
+  auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                 .getChildFile("kinu-tune-mcp");
+  dir.createDirectory();
+  return dir;
+}
+
+bool writeMcpJsonAtomically(const juce::File &file, const juce::var &value)
+{
+  const auto temporary = file.getSiblingFile(file.getFileName() + ".tmp");
+  if (!temporary.replaceWithText(juce::JSON::toString(value)))
+    return false;
+  if (file.existsAsFile())
+    file.deleteFile();
+  return temporary.moveFileTo(file);
+}
 
 struct UpdateInfo
 {
@@ -1197,6 +1216,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   LOG("MainComponent: starting timer...");
   // Start timer for UI updates
   startTimerHz(60);
+  writeMcpJsonAtomically(
+      getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json"),
+      juce::var(new juce::DynamicObject()));
 
   // The launch update check asks Session Loops' server about PitchNet releases
   // and offers their download page, which does not apply to Kinu Tune.
@@ -1462,6 +1484,8 @@ MainComponent::~MainComponent()
 #endif
   removeKeyListener(commandManager->getKeyMappings());
   stopTimer();
+  getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json")
+      .deleteFile();
 
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
@@ -1560,8 +1584,136 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent &e)
   juce::ignoreUnused(e);
 }
 
+void MainComponent::pollMcpControl()
+{
+  jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+  const auto now = juce::Time::getMillisecondCounter();
+  if (now - mcpLastPollMs < 100)
+    return;
+  mcpLastPollMs = now;
+
+  auto *project = getProject();
+  if ((mcpRenderPending && now - mcpLastHeartbeatMs >= 100) ||
+      now - mcpLastHeartbeatMs >= 1000)
+  {
+    mcpLastHeartbeatMs = now;
+    auto instance = new juce::DynamicObject();
+    instance->setProperty("instance_id", mcpInstanceId);
+    instance->setProperty("plugin_editor_open", true);
+    instance->setProperty("project_loaded", project != nullptr);
+    instance->setProperty("project_notes", project
+        ? static_cast<int>(project->getNotes().size()) : 0);
+    instance->setProperty("render_pending", mcpRenderPending);
+    instance->setProperty("render_generation", static_cast<int>(mcpRenderGeneration));
+    writeMcpJsonAtomically(
+        getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json"),
+        juce::var(instance));
+  }
+
+  const auto dir = getMcpControlDirectory();
+  const auto requests = dir.findChildFiles(juce::File::findFiles, false,
+                                            "request_*.json");
+  for (const auto &requestFile : requests)
+  {
+    const auto request = juce::JSON::parse(requestFile.loadFileAsString());
+    if (!request.isObject() || request.getProperty("target_instance", "").toString() != mcpInstanceId)
+      continue;
+
+    const auto requestId = request.getProperty("request_id", "").toString();
+    if (requestId.isEmpty() || requestId.containsAnyOf("/\\:*?\"<>|"))
+      continue;
+    auto response = new juce::DynamicObject();
+    response->setProperty("request_id", requestId);
+    response->setProperty("instance_id", mcpInstanceId);
+    response->setProperty("ok", false);
+
+    const auto command = request.getProperty("command", "").toString();
+    if (project == nullptr)
+      response->setProperty("error", "El editor no tiene un proyecto analizado.");
+    else if (command == "list_notes")
+    {
+      juce::Array<juce::var> noteArray;
+      const auto &notes = project->getNotes();
+      response->setProperty("sample_rate", project->getAudioData().sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      {
+        const auto &note = notes[static_cast<size_t>(i)];
+        auto noteObject = new juce::DynamicObject();
+        noteObject->setProperty("index", i);
+        noteObject->setProperty("start_frame", note.getStartFrame());
+        noteObject->setProperty("end_frame", note.getEndFrame());
+        noteObject->setProperty("midi", note.getMidiNote());
+        noteObject->setProperty("rest", note.isRest());
+        noteObject->setProperty("engine", noteEngineToString(note.getEngine()));
+        noteObject->setProperty("selected", note.isSelected());
+        noteArray.add(juce::var(noteObject));
+      }
+      response->setProperty("notes", juce::var(noteArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "set_note_engine")
+    {
+      const auto engineText = request.getProperty("engine", "").toString();
+      const auto engine = stringToNoteEngine(engineText);
+      const bool engineValid = engineText.equalsIgnoreCase("Inherit") ||
+          engineText.equalsIgnoreCase("Vocoder") ||
+          engineText.equalsIgnoreCase("PSOLA") ||
+          engineText.equalsIgnoreCase("Pitchcore");
+      const auto indicesVar = request.getProperty("indices", juce::var());
+      std::vector<int> indices;
+      if (indicesVar.isArray())
+        for (const auto &value : *indicesVar.getArray())
+          indices.push_back(static_cast<int>(value));
+      if (!engineValid || indices.empty())
+        response->setProperty("error", "Se requieren índices de nota y un motor válido: Inherit, Vocoder, PSOLA o Pitchcore.");
+      else
+      {
+        const auto &notes = project->getNotes();
+        juce::Array<juce::var> before;
+        for (const int index : indices)
+        {
+          if (index < 0 || index >= static_cast<int>(notes.size()))
+          {
+            response->setProperty("error", "Índice de nota fuera de rango; no se aplicó ningún cambio.");
+            break;
+          }
+          before.add(noteEngineToString(notes[static_cast<size_t>(index)].getEngine()));
+        }
+        if (before.size() == static_cast<int>(indices.size()))
+        {
+          const int refused = applyNoteEngineToIndices(indices, engine);
+          juce::Array<juce::var> applied;
+          juce::Array<juce::var> unchanged;
+          for (size_t i = 0; i < indices.size(); ++i)
+          {
+            const int index = indices[i];
+            const auto previous = before[static_cast<int>(i)].toString();
+            const auto current = noteEngineToString(project->getNotes()[static_cast<size_t>(index)].getEngine());
+            (previous == current ? unchanged : applied).add(index);
+          }
+          response->setProperty("applied_indices", juce::var(applied));
+          response->setProperty("unchanged_indices", juce::var(unchanged));
+          response->setProperty("refused", refused);
+          response->setProperty("engine", engineText);
+          response->setProperty("ok", refused == 0);
+          if (refused > 0)
+            response->setProperty("error", "D-129 rechazó notas sin silencio válido; ver refused y unchanged_indices.");
+        }
+      }
+    }
+    else
+      response->setProperty("error", "Comando MCP desconocido.");
+
+    const auto responseFile = dir.getChildFile("response_" + requestId + ".json");
+    writeMcpJsonAtomically(responseFile, juce::var(response));
+    requestFile.deleteFile();
+  }
+}
+
 void MainComponent::timerCallback()
 {
+  pollMcpControl();
   dispatchPendingDragAudition();
 
   // Handle throttled cursor updates (30Hz max)
@@ -2859,6 +3011,9 @@ void MainComponent::resynthesizeIncremental()
     return;
   }
 
+  mcpRenderPending = true;
+  ++mcpRenderGeneration;
+
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
   setToolGroupEnabled(false);
@@ -2883,6 +3038,8 @@ void MainComponent::resynthesizeIncremental()
       {
         if (safeThis == nullptr)
           return;
+
+        safeThis->mcpRenderPending = false;
 
         safeThis->setToolGroupEnabled(true);
         safeThis->toolbar.hideProgress();
@@ -2949,16 +3106,13 @@ std::optional<NoteEngine> MainComponent::getSelectionNoteEngine() const
 
 int MainComponent::applyNoteEngineToSelection(NoteEngine engine)
 {
+  std::vector<int> selection;
+  const auto targets = pianoRoll.getInspectorTargets();
+  selection.reserve(targets.size());
   auto *project = getProject();
   if (project == nullptr)
     return 0;
   auto &notes = project->getNotes();
-  if (notes.empty())
-    return 0;
-
-  std::vector<int> selection;
-  const auto targets = pianoRoll.getInspectorTargets();
-  selection.reserve(targets.size());
   for (auto *note : targets)
   {
     // Identity, not pointer arithmetic: the targets must be notes of this
@@ -2970,6 +3124,29 @@ int MainComponent::applyNoteEngineToSelection(NoteEngine engine)
         break;
       }
   }
+  if (selection.empty())
+    return 0;
+
+  return applyNoteEngineToIndices(selection, engine);
+}
+
+int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
+                                            NoteEngine engine)
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return 0;
+  auto &notes = project->getNotes();
+  if (notes.empty() || indices.empty())
+    return 0;
+
+  std::vector<int> selection;
+  selection.reserve(indices.size());
+  std::unordered_set<int> seen;
+  for (const int index : indices)
+    if (index >= 0 && index < static_cast<int>(notes.size()) &&
+        seen.insert(index).second && !notes[static_cast<size_t>(index)].isRest())
+      selection.push_back(index);
   if (selection.empty())
     return 0;
 
@@ -3169,6 +3346,7 @@ void MainComponent::hideAnalysisProgress()
 
 void MainComponent::finishBackendRender(bool success)
 {
+  mcpRenderPending = false;
   setToolGroupEnabled(true);
   toolbar.hideProgress();
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
