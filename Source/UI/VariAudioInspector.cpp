@@ -25,7 +25,7 @@ constexpr int kNumRows = 5;
 
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
-    kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 2 + kRowGap +
+    kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 3 + kRowGap +
     kTargetLabelHeight + kRowsBoxHeight;
 constexpr int kRootMenuWidth = 50;
 constexpr int kMenuGap = 4;
@@ -68,6 +68,30 @@ int scaleModeId(ScaleMode mode)
         if (kModeOptions[i].mode == mode)
             return static_cast<int>(i) + 1;
     return 0;
+}
+
+// Per-note engine menu: 1 Inherit, 2 Vocoder, 3 PSOLA, 4 Pitchcore.
+int engineMenuId(NoteEngine engine)
+{
+    switch (engine)
+    {
+    case NoteEngine::Vocoder:   return 2;
+    case NoteEngine::Psola:     return 3;
+    case NoteEngine::Pitchcore: return 4;
+    case NoteEngine::Inherit:
+    default:                    return 1;
+    }
+}
+
+NoteEngine engineFromMenuId(int id)
+{
+    switch (id)
+    {
+    case 2:  return NoteEngine::Vocoder;
+    case 3:  return NoteEngine::Psola;
+    case 4:  return NoteEngine::Pitchcore;
+    default: return NoteEngine::Inherit;
+    }
 }
 
 const auto kRowsBoxColour = juce::Colour(0xFF1D1F21u);
@@ -198,14 +222,14 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(*header);
     }
 
-    for (auto* label : {&smartControlsLabel, &snapModeLabel})
+    for (auto* label : {&smartControlsLabel, &snapModeLabel, &engineLabel})
     {
         label->setFont(AppFont::getFont(13.0f));
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         content.addAndMakeVisible(*label);
     }
 
-    for (auto* box : {&smartControlsBox, &snapModeBox, &scaleRootBox, &scaleModeBox})
+    for (auto* box : {&smartControlsBox, &snapModeBox, &engineBox, &scaleRootBox, &scaleModeBox})
         box->setLookAndFeel(comboLookAndFeel.get());
 
     styleCombo(smartControlsBox);
@@ -225,6 +249,16 @@ VariAudioInspector::VariAudioInspector()
             setSnapModeInternal(static_cast<SnapMode>(id - 1), true);
     };
     content.addAndMakeVisible(snapModeBox);
+
+    styleCombo(engineBox);
+    engineBox.onChange = [this]
+    {
+        const int id = engineBox.getSelectedId();
+        shownEngineId = id;
+        if (id >= 1 && id <= 4 && onNoteEngineChanged)
+            onNoteEngineChanged(engineFromMenuId(id));
+    };
+    content.addAndMakeVisible(engineBox);
 
     targetLabel.setFont(AppFont::getFont(12.0f));
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
@@ -327,7 +361,7 @@ VariAudioInspector::VariAudioInspector()
 VariAudioInspector::~VariAudioInspector()
 {
     stopTimer();
-    for (auto* box : {&smartControlsBox, &snapModeBox, &scaleRootBox, &scaleModeBox})
+    for (auto* box : {&smartControlsBox, &snapModeBox, &engineBox, &scaleRootBox, &scaleModeBox})
         box->setLookAndFeel(nullptr);
     viewport.setViewedComponent(nullptr, false);
 }
@@ -337,6 +371,18 @@ void VariAudioInspector::refreshLocalisedText()
     variAudioHeader.setText(TR("inspector.variaudio"), juce::dontSendNotification);
     smartControlsLabel.setText(TR("inspector.smart_controls"), juce::dontSendNotification);
     snapModeLabel.setText(TR("inspector.snap_mode"), juce::dontSendNotification);
+    engineLabel.setText(TR("inspector.engine"), juce::dontSendNotification);
+    {
+        const int engineId = engineBox.getSelectedId();
+        engineBox.clear(juce::dontSendNotification);
+        engineBox.addItem(TR("inspector.engine_inherit"), 1);
+        engineBox.addItem(TR("inspector.engine_vocoder"), 2);
+        engineBox.addItem(TR("inspector.engine_psola"), 3);
+        engineBox.addItem(TR("inspector.engine_pitchcore"), 4);
+        engineBox.setSelectedId(engineId > 0 ? engineId : 1,
+                                juce::dontSendNotification);
+        shownEngineId = engineBox.getSelectedId();
+    }
 
     const int smartId = smartControlsBox.getSelectedId();
     smartControlsBox.clear(juce::dontSendNotification);
@@ -384,6 +430,11 @@ void VariAudioInspector::refreshFromProject()
     smartControlsBox.setEnabled(hasProject);
     snapModeBox.setEnabled(hasProject);
     snapScaleToggle.setEnabled(hasProject && project->getSnapToSemitones());
+
+    const auto engineValue = getNoteEngine ? getNoteEngine() : std::nullopt;
+    engineBox.setEnabled(hasProject && engineValue.has_value());
+    if (engineValue)
+        showMenuValue(engineBox, engineMenuId(*engineValue), shownEngineId);
 
     if (hasProject)
     {
@@ -551,6 +602,9 @@ void VariAudioInspector::layoutContent(int width)
     auto snapRow = card.removeFromTop(kMenuRowHeight);
     snapModeBox.setBounds(snapRow.removeFromRight(menuWidth).reduced(0, 1));
     snapModeLabel.setBounds(snapRow);
+    auto engineRow = card.removeFromTop(kMenuRowHeight);
+    engineBox.setBounds(engineRow.removeFromRight(menuWidth).reduced(0, 1));
+    engineLabel.setBounds(engineRow);
     card.removeFromTop(kRowGap);
     targetLabel.setBounds(card.removeFromTop(kTargetLabelHeight));
 

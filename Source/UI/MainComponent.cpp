@@ -4,6 +4,7 @@
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
+#include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/AppLogger.h"
@@ -751,6 +752,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   variAudioInspector.onParamEditValue = [this](float value)
   { pianoRoll.setInspectorEditValue(value); };
   variAudioInspector.onParamEditEnd = [this] { pianoRoll.endInspectorEdit(); };
+  variAudioInspector.getNoteEngine = [this]
+  { return getSelectionNoteEngine(); };
+  variAudioInspector.onNoteEngineChanged = [this](NoteEngine engine)
+  { applyNoteEngineToSelection(engine); };
   variAudioInspector.onSnapModeChanged =
       [this](VariAudioInspector::SnapMode mode)
   {
@@ -2927,6 +2932,88 @@ void MainComponent::onPitchEdited()
   pianoRoll.repaint();
   pianoRollView.refreshOverview();
   parameterPanel.updateFromNote();
+}
+
+std::optional<NoteEngine> MainComponent::getSelectionNoteEngine() const
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return std::nullopt;
+  const auto targets = pianoRoll.getInspectorTargets();
+  if (targets.empty() || targets.front() == nullptr)
+    return std::nullopt;
+  return targets.front()->getEngine();
+}
+
+int MainComponent::applyNoteEngineToSelection(NoteEngine engine)
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return 0;
+  auto &notes = project->getNotes();
+  if (notes.empty())
+    return 0;
+
+  std::vector<int> selection;
+  const auto targets = pianoRoll.getInspectorTargets();
+  selection.reserve(targets.size());
+  for (auto *note : targets)
+  {
+    // Identity, not pointer arithmetic: the targets must be notes of this
+    // project, and anything else is simply not part of the edit.
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      if (&notes[static_cast<size_t>(i)] == note)
+      {
+        selection.push_back(i);
+        break;
+      }
+  }
+  if (selection.empty())
+    return 0;
+
+  const auto &audio = project->getAudioData();
+  const auto &source = audio.originalWaveform.getNumSamples() > 0
+                           ? audio.originalWaveform
+                           : audio.waveform;
+  const auto globalEngine = editorController
+                                ? editorController->getSynthesisEngineType()
+                                : defaultSynthesisEngineType();
+
+  // The rule lives in one place so the menu and the renderer cannot disagree:
+  // a note only takes another engine when a usable silence separates it from
+  // the previous one (D-129).
+  const auto plan = engineBlocks::planEngineEdits(
+      notes, selection, engine, globalEngine, source, audio.sampleRate,
+      HOP_SIZE);
+
+  if (plan.refused > 0)
+    LOG("engine: refused " + juce::String(plan.refused) + " of " +
+        juce::String(static_cast<int>(selection.size())) +
+        " note(s): no silence between blocks");
+
+  if (!plan.edits.empty())
+  {
+    std::vector<NoteEngineAction::Change> changes;
+    changes.reserve(plan.edits.size());
+    for (const auto &edit : plan.edits)
+      changes.push_back(
+          {&notes[static_cast<size_t>(edit.noteIndex)], edit.previous,
+           edit.next});
+
+    auto action = std::make_unique<NoteEngineAction>(
+        std::move(changes), [this] { pianoRoll.repaint(); });
+    action->redo();
+    if (undoManager)
+      undoManager->addAction(std::move(action));
+
+    // The engine decides how the audio is produced, so the affected notes have
+    // to be rendered again; the action left them dirty and synth-dirty.
+    resynthesizeIncremental();
+    notifyProjectDataChanged();
+  }
+
+  variAudioInspector.refresh();
+  return plan.refused;
 }
 
 void MainComponent::onZoomChanged(float pixelsPerSecond)

@@ -326,6 +326,11 @@ private:
 
   void onNoteSelected(Note *note);
   void onPitchEdited();
+  // Per-note engine (M2 paso 2, D-125). Applies the requested engine to the
+  // inspector's targets through the silence rule, as one undo step, and
+  // re-renders. Returns how many selected notes the rule refused.
+  int applyNoteEngineToSelection(NoteEngine engine);
+  std::optional<NoteEngine> getSelectionNoteEngine() const;
   void onZoomChanged(float pixelsPerSecond);
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE
