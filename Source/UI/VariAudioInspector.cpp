@@ -254,9 +254,18 @@ VariAudioInspector::VariAudioInspector()
     engineBox.onChange = [this]
     {
         const int id = engineBox.getSelectedId();
-        shownEngineId = id;
-        if (id >= 1 && id <= 4 && onNoteEngineChanged)
+        if (id >= 1 && id <= 4 && onNoteEngineChanged) {
             onNoteEngineChanged(engineFromMenuId(id));
+            // The silence rule may refuse the request. Reflect the actual
+            // engine after the edit instead of leaving the rejected choice
+            // displayed as if it had taken effect.
+            const auto actual = getNoteEngine ? getNoteEngine() : std::nullopt;
+            if (actual) {
+                shownEngineId = engineMenuId(*actual);
+                engineBox.setSelectedId(shownEngineId,
+                                        juce::dontSendNotification);
+            }
+        }
     };
     content.addAndMakeVisible(engineBox);
 

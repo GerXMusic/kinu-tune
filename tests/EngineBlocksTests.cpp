@@ -289,7 +289,9 @@ void testSelectionRefusesWhenThereIsNoSilence() {
         notes, {1}, NoteEngine::Vocoder, SynthesisEngineType::Psola, source,
         kSampleRate, kHop);
     CHECK(plan.refused == 1);
-    CHECK(plan.edits.empty());  // it already renders as Psola
+    CHECK(plan.edits.size() == 1);
+    if (!plan.edits.empty())
+        CHECK(plan.edits.front().next == NoteEngine::Inherit);
 }
 
 void testRefusedNoteGetsTheBlockEngineStored() {
@@ -330,6 +332,20 @@ void testInheritRequestReturnsANoteToTheGlobalEngine() {
         CHECK(plan.edits.front().next == NoteEngine::Inherit);
 }
 
+void testInheritClearsAnOverrideEvenWhenAudioAlreadyUsesGlobal() {
+    auto source = makeSource({});
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+    };
+    const auto plan = engineBlocks::planEngineEdits(
+        notes, {0}, NoteEngine::Inherit, SynthesisEngineType::Psola, source,
+        kSampleRate, kHop);
+    CHECK(plan.refused == 0);
+    CHECK(plan.edits.size() == 1);
+    if (!plan.edits.empty())
+        CHECK(plan.edits.front().next == NoteEngine::Inherit);
+}
+
 void testUnselectedNotesKeepTheirEngineAndTheirBlock() {
     // The middle note is not selected and stays Pitchcore; the third note,
     // touching it, cannot go back to the global engine.
@@ -348,6 +364,23 @@ void testUnselectedNotesKeepTheirEngineAndTheirBlock() {
     CHECK(plan.edits.size() == 1);
     if (!plan.edits.empty())
         CHECK(plan.edits.front().next == NoteEngine::Pitchcore);
+}
+
+void testRestsDoNotBecomeThePreviousNoteForEngineEdits() {
+    // Rest placeholders carry no engine and must not create or break a block.
+    auto source = makeSource({});
+    Note rest(12, 22, 0.0f);
+    rest.setRest(true);
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+        rest,
+        makeNote(22, 30, NoteEngine::Psola),
+    };
+    const auto plan = engineBlocks::planEngineEdits(
+        notes, {2}, NoteEngine::Vocoder, SynthesisEngineType::Psola, source,
+        kSampleRate, kHop);
+    CHECK(plan.refused == 1);
+    CHECK(plan.edits.empty());
 }
 
 void testTwoTouchingNotesWithDifferentEnginesKeepOneEngine() {
@@ -384,7 +417,9 @@ int main() {
     testSelectionRefusesWhenThereIsNoSilence();
     testRefusedNoteGetsTheBlockEngineStored();
     testInheritRequestReturnsANoteToTheGlobalEngine();
+    testInheritClearsAnOverrideEvenWhenAudioAlreadyUsesGlobal();
     testUnselectedNotesKeepTheirEngineAndTheirBlock();
+    testRestsDoNotBecomeThePreviousNoteForEngineEdits();
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
 
     std::cout << "EngineBlocksTests: all checks passed\n";

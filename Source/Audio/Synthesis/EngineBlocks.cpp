@@ -129,10 +129,11 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
     current.engine = effectiveEngine(*range.front(), globalEngine);
 
     const Note *previous = range.front();
+    SynthesisEngineType blockEngine = current.engine;
     for (size_t i = 1; i < range.size(); ++i) {
         const Note &note = *range[i];
         const auto requested = effectiveEngine(note, globalEngine);
-        if (requested == current.engine) {
+        if (requested == blockEngine) {
             previous = &note;
             continue;
         }
@@ -171,6 +172,7 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
         current.endFrame = boundaryFrame;
         blocks.push_back(current);
         current.startFrame = boundaryFrame;
+        blockEngine = requested;
         current.engine = requested;
         previous = &note;
     }
@@ -217,47 +219,43 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
 
     for (int index : order) {
         const Note &note = notes[static_cast<size_t>(index)];
+        if (note.isRest())
+            continue;
         const auto stored = effectiveEngine(note, globalEngine);
         if (!haveBlock) {
             blockEngine = stored;
             haveBlock = true;
         }
 
-        if (!isSelected(index)) {
-            blockEngine = stored;
-            previous = &note;
-            continue;
-        }
-
-        NoteEngine next = requested;
-        if (requestedEngine == blockEngine) {
-            // Same engine the block already renders with: just store it, no
-            // silence is needed because nothing changes for the audio.
-            blockEngine = requestedEngine;
+        const bool selected = isSelected(index);
+        const auto wanted = selected ? requestedEngine : stored;
+        NoteEngine next = selected ? requested : note.getEngine();
+        if (wanted == blockEngine) {
+            // Same engine as the current block, regardless of whether the
+            // stored value is explicit or Inherit.
+            if (selected)
+                next = requested;
         } else if (previous == nullptr ||
                    canChangeEngineAfter(*previous, note, source, sampleRate,
                                         hopSize)) {
-            blockEngine = requestedEngine;
+            blockEngine = wanted;
         } else {
-            // No usable silence before this note: it cannot break away from
-            // the block, so it keeps the engine that will actually render it.
-            ++plan.refused;
-            next = blockEngine == globalEngine
-                       ? NoteEngine::Inherit
-                       : noteEngineFromSynthesisEngine(blockEngine);
+            // The engine request cannot start a new block here. A selected
+            // note is refused and stored as the engine it will actually use;
+            // an unselected note simply inherits the current block.
+            if (selected) {
+                ++plan.refused;
+                next = blockEngine == globalEngine
+                           ? NoteEngine::Inherit
+                           : noteEngineFromSynthesisEngine(blockEngine);
+            }
         }
 
-        if (next != note.getEngine()) {
-            // Only record a change that changes what renders. Unpinning a note
-            // whose engine already equals the global one (a refusal that lands
-            // on the same sound) is not an edit the user asked for.
-            auto effectiveOf = [&](NoteEngine value) {
-                const auto mapped = noteEngineToSynthesisEngine(value);
-                return mapped ? *mapped : globalEngine;
-            };
-            if (effectiveOf(next) != stored)
-                plan.edits.push_back({index, note.getEngine(), next});
-        }
+        // The stored choice matters even when its current sound equals the
+        // global engine: choosing Inherit must actually remove an override,
+        // and a refused request must store the engine the block will use.
+        if (selected && next != note.getEngine())
+            plan.edits.push_back({index, note.getEngine(), next});
         previous = &note;
     }
 
