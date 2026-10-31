@@ -178,6 +178,14 @@ void testInheritFollowsTheBlockEngine() {
                                               source, kSampleRate, kHop);
     CHECK(plan.size() == 1);
     CHECK(plan.front().engine == SynthesisEngineType::Vocoder);
+
+    // Inherit is resolved from the current global preference each time; the
+    // per-note field does not pin or mutate that preference.
+    const auto classicPlan = engineBlocks::buildPlan(
+        notes, 0, kFrames, SynthesisEngineType::Psola, source, kSampleRate,
+        kHop);
+    CHECK(classicPlan.size() == 1);
+    CHECK(classicPlan.front().engine == SynthesisEngineType::Psola);
 }
 
 void testExplicitEngineEqualToGlobalDoesNotSplit() {
