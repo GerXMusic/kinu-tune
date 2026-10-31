@@ -854,6 +854,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     settingsManager->saveConfig();
     if (editorController)
       editorController->setSynthesisEngineType(type);
+    // In plugin mode this controller writes the shared engine preference, so
+    // processor-owned ARA/background controllers observe the same global engine.
     // Otherwise the switch is only a setting: the audio already rendered by
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
