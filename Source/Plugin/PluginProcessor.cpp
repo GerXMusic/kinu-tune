@@ -540,7 +540,23 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   if (bypassed) {
     // Transport sync still needs to run even when bypassed
     transportController.processBlock(getPlayHead(), hostSampleRate);
-    return; // Input buffer passes through unchanged
+#if JucePlugin_Enable_ARA
+    // ARA bypass: the host input buffer may be silent (region audio reaches
+    // the host through the ARA playback renderer, see the comment on
+    // processBlockForARA below), so "return, input passes through" mutes the
+    // track. Render each region's raw source instead; the flag is cleared
+    // before returning so the next non-bypassed block behaves normally.
+    PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
+    if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+      sanitiseARAOutput(buffer);
+      PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+      return; // Bypass output = original ARA source audio
+    }
+    // Non-ARA (e.g. capture attempt): restore the flag and let the input
+    // buffer pass through unchanged.
+    PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+#endif
+    return; // Non-ARA: input buffer passes through unchanged
   }
 
 #if JucePlugin_Enable_ARA
@@ -595,6 +611,20 @@ void PitchNetAudioProcessor::processBlockBypassed(
 
   // Transport sync still runs when bypassed so cursor stays in sync
   transportController.processBlock(getPlayHead(), hostSampleRate);
+
+#if JucePlugin_Enable_ARA
+  // Same reason as the bypass branch of processBlock(): in ARA the input
+  // buffer is not the audible track, so bypass here must render the regions'
+  // raw ARA sources instead of leaving whatever the host handed in.
+  PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
+  if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+    sanitiseARAOutput(buffer);
+    PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+    return; // Bypass output = original ARA source audio
+  }
+  // Non-ARA context: restore the flag and leave the input untouched.
+  PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+#endif
 
   // Input passes through unchanged (buffer already contains input)
 }

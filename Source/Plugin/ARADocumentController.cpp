@@ -338,6 +338,14 @@ static bool mixProcessedRegionAudio(juce::AudioBuffer<float> &buffer,
 // PitchNetPlaybackRenderer
 //==============================================================================
 
+// One flag for all instances in the process: each set/clear happens wholly
+// inside the bypassed plugin block that needs it, so a race that mixes
+// bypassed and non-bypassed instances in one block is not representable here
+// (the host serialises process calls per thread, and two instances on
+// different threads are exactly the case the comment in the header accepts).
+std::atomic<bool>
+    PitchNetPlaybackRenderer::bypassRawSourcesRequested{false};
+
 PitchNetDocumentController *
 PitchNetPlaybackRenderer::getDocController() const {
   auto *docController = getDocumentController();
@@ -428,6 +436,10 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // it.
   bool renderedAny = false;
 
+  // Bypass: play every region's raw source, regardless of edits (see
+  // setBypassRendersRawSources in the header).
+  const bool bypassRaw = bypassRendersRawSources();
+
   const juce::Range<double> blockRange(
       static_cast<double>(timeInSamples) / sampleRate,
       static_cast<double>(timeInSamples + numSamples) / sampleRate);
@@ -444,8 +456,9 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 
     bool renderedRegion = false;
 
-    if (auto *modification =
-            region->getAudioModification<PitchNetAudioModification>()) {
+    if (!bypassRaw) {
+      if (auto *modification =
+              region->getAudioModification<PitchNetAudioModification>()) {
       const auto lock = modification->tryLockProcessedAudio();
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
@@ -470,6 +483,7 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                   ? &processedState->second
                   : nullptr);
         }
+      }
       }
     }
 

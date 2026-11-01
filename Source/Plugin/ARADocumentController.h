@@ -146,7 +146,30 @@ public:
   // closed).
   PitchNetDocumentController *getDocController() const;
 
+  // Host/plugin bypass in ARA playback.
+  //
+  // In ARA the host input buffer carries no audio (regions come through the
+  // playback renderer), so a bypass that "passes through the input" passes
+  // through silence. Bypass audio must be rendered from each region's raw ARA
+  // source instead. The processor sets this flag for the duration of bypassed
+  // blocks; renderProcessedRegions() then skips the processed-audio layer and
+  // reads the original source even for edited regions.
+  //
+  // Static (not per-instance): the processor does not own the renderer the
+  // host created, and one bypass state is consistent for every instance that
+  // is bypassed in the same block. Multiple plugin instances each keep the
+  // flag active only inside their own bypassed block, matching how ARA gives
+  // every instance the same model graph anyway.
+  static void setBypassRendersRawSources(bool enabled) noexcept {
+    bypassRawSourcesRequested.store(enabled, std::memory_order_relaxed);
+  }
+  static bool bypassRendersRawSources() noexcept {
+    return bypassRawSourcesRequested.load(std::memory_order_relaxed);
+  }
+
 private:
+  static std::atomic<bool> bypassRawSourcesRequested;
+
   struct HostUiSyncState {
     std::atomic<bool> latestPlaying{false};
     std::atomic<double> latestLoopStartSeconds{0.0};
