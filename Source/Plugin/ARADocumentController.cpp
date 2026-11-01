@@ -439,6 +439,15 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // Bypass: play every region's raw source, regardless of edits (see
   // setBypassRendersRawSources in the header).
   const bool bypassRaw = bypassRendersRawSources();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  {
+    static std::atomic<bool> lastBypassRawLogged{false};
+    if (lastBypassRawLogged.exchange(bypassRaw) != bypassRaw)
+      ARA_DIAG(juce::String("renderProcessedRegions: bypassRaw=") +
+               (bypassRaw ? "1" : "0") +
+               " regions=" + juce::String(getPlaybackRegions().size()));
+  }
+#endif
 
   const juce::Range<double> blockRange(
       static_cast<double>(timeInSamples) / sampleRate,

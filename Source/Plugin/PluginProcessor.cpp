@@ -547,7 +547,11 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     // track. Render each region's raw source instead; the flag is cleared
     // before returning so the next non-bypassed block behaves normally.
     PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
-    if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+    const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
+    ARA_DIAG(juce::String("processBlock bypass: handled=") +
+             (handled ? "1" : "0") + " samples=" +
+             juce::String(buffer.getNumSamples()));
+    if (handled) {
       sanitiseARAOutput(buffer);
       PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
       return; // Bypass output = original ARA source audio
@@ -617,7 +621,11 @@ void PitchNetAudioProcessor::processBlockBypassed(
   // buffer is not the audible track, so bypass here must render the regions'
   // raw ARA sources instead of leaving whatever the host handed in.
   PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
-  if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+  const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
+  ARA_DIAG(juce::String("processBlockBypassed: handled=") +
+           (handled ? "1" : "0") + " samples=" +
+           juce::String(buffer.getNumSamples()));
+  if (handled) {
     sanitiseARAOutput(buffer);
     PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
     return; // Bypass output = original ARA source audio
