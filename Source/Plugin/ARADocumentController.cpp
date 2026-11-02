@@ -894,6 +894,9 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         record.maxParamInstance = bestInstance;
         record.maxParamMilli =
             bestValue < 0.0f ? -2 : static_cast<int>(std::lround(bestValue * 1000.0f));
+        // D-142 route (c): the instance that registered last in prepareToPlay.
+        record.routeCInstance = araPrepareInstance.load(std::memory_order_relaxed);
+        record.routeCParamMilli = araPrepareParamMilli.load(std::memory_order_relaxed);
       } else {
         record.editorInstance = -2;
         record.maxParamInstance = -2;

@@ -322,6 +322,15 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-142 route (c): "the FX registers itself here" attempt. Only diagnostics:
+  // the last registration wins, and the render trace records which instance
+  // that is and what bypass value it holds.
+  araPrepareInstance.store(diagInstanceId, std::memory_order_relaxed);
+  araPrepareParamMilli.store(
+      static_cast<int>(std::lround(getBypassParamForDiagnostics() * 1000.0f)),
+      std::memory_order_relaxed);
+#endif
 
   // Report zero latency — PitchNet uses pre-computed audio buffers,
   // so output at time T corresponds to input at time T (no analysis delay).

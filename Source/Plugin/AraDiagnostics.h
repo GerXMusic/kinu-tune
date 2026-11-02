@@ -128,6 +128,9 @@ struct AraBlockTrace {
   int editorParamMilli = -2;
   int maxParamInstance = -1;
   int maxParamMilli = -2;
+  // D-142: route (c): the last processor that called prepareToPlay.
+  int routeCInstance = -1;
+  int routeCParamMilli = -2;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -213,6 +216,8 @@ inline void araBlockTraceFlush() {
         << " editorParamMilli=" << r.editorParamMilli
         << " maxParamInstance=" << r.maxParamInstance
         << " maxParamMilli=" << r.maxParamMilli
+        << " routeCInstance=" << r.routeCInstance
+        << " routeCParamMilli=" << r.routeCParamMilli
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -303,6 +308,11 @@ inline void araSnapshotProcessors(std::vector<AraProcessorEntry> &out) {
     return;
   out = araProcessorRegistry;
 }
+
+// D-142 route (c): the processor that registered last in prepareToPlay (a
+// single slot: "the FX registers itself" attempt). Value in milli-units.
+inline std::atomic<int> araPrepareInstance{-1};
+inline std::atomic<int> araPrepareParamMilli{-2};
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,
                                   juce::int64 thread) {
