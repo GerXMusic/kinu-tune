@@ -149,6 +149,9 @@ struct AraBlockTrace {
   int publishCount = -1;    // publish[edit]/[render] events since process start
   float msSincePublish = -1.0f;
   int editorOpen = -1;      // this document controller has a main component
+  // D-152: 1 = every modification currently in the document has received its
+  // restored state; 0 = at least one is still pending. No modifications = 1.
+  int hydrated = 0;
   int publisherInstance = -1; // instance that published last (-1 = none)
   // D-146: the failed try-lock of the processed audio and its owner.
   int lockFailCount = -1;
@@ -259,6 +262,7 @@ inline void araBlockTraceFlush() {
         << " publishCount=" << r.publishCount
         << " msSincePublish=" << juce::String(r.msSincePublish, 3)
         << " editorOpen=" << r.editorOpen
+        << " hydrated=" << r.hydrated
         << " publisherInstance=" << r.publisherInstance
         << " lockFailCount=" << r.lockFailCount
         << " lockOwnerKind=" << r.lockOwnerKind
@@ -537,12 +541,13 @@ inline bool araDiagSuppressBypassWrites() {
 }
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,
-                                  juce::int64 thread) {
+                                  juce::int64 thread, int hydrated = 0) {
   AraBlockTrace record;
   record.t = t;
   record.n = n;
   record.exitCode = exitCode;
   record.thread = thread;
+  record.hydrated = hydrated;
   araBlockTracePush(record);
 }
 

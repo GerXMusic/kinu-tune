@@ -505,6 +505,24 @@ public:
   PitchNetAudioProcessor *getEditorProcessorForDiagnostics() const {
     return editorProcessor;
   }
+  // D-152: hydration of the document for the trace. Counts every modification
+  // created in the document and every one that has received restored state.
+  void diagNoteModificationCreated() noexcept {
+    documentModificationCount.fetch_add(1, std::memory_order_relaxed);
+  }
+  void diagNoteModificationDestroyed(bool wasRestored) noexcept {
+    if (wasRestored)
+      restoredModificationCount.fetch_sub(1, std::memory_order_relaxed);
+    documentModificationCount.fetch_sub(1, std::memory_order_relaxed);
+  }
+  void diagNoteModificationRestored() noexcept {
+    restoredModificationCount.fetch_add(1, std::memory_order_relaxed);
+  }
+  bool diagDocumentHydrated() const noexcept {
+    const int total = documentModificationCount.load(std::memory_order_relaxed);
+    return total <= 0 ||
+           restoredModificationCount.load(std::memory_order_relaxed) >= total;
+  }
 #endif
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
@@ -595,6 +613,8 @@ private:
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   static std::atomic<float> bypassIntentForDiagnostics;
   static std::atomic<juce::int64> bypassIntentWriterThread;
+  std::atomic<int> documentModificationCount{0};
+  std::atomic<int> restoredModificationCount{0};
 #endif
   RealtimePitchProcessor documentRealtimeProcessor;
   PitchNetAudioProcessor *owningProcessor = nullptr;

@@ -883,6 +883,8 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.t = timeInSamples;
     record.n = numSamples;
     record.exitCode = 0;
+    if (auto *hydrationDocCtrl = getDocController())
+      record.hydrated = hydrationDocCtrl->diagDocumentHydrated() ? 1 : 0;
     record.bypassRaw = bypassRaw ? 1 : 0;
     record.regions = diagRegions;
     record.intersecting = diagIntersecting;
@@ -1066,7 +1068,7 @@ bool PitchNetPlaybackRenderer::processBlock(
   if (!docCtrl) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     araBlockTracePushExit(1, posInfo.getTimeInSamples().orFallback(0),
-                           buffer.getNumSamples(), araDiagThreadId());
+                           buffer.getNumSamples(), araDiagThreadId(), 0);
 #endif
     buffer.clear();
     return true;
@@ -1084,7 +1086,8 @@ bool PitchNetPlaybackRenderer::processBlock(
   if (!processingLock.isLocked()) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     araBlockTracePushExit(2, posInfo.getTimeInSamples().orFallback(0),
-                           buffer.getNumSamples(), araDiagThreadId());
+                           buffer.getNumSamples(), araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
 #endif
     buffer.clear();
     return true;
@@ -1133,7 +1136,8 @@ bool PitchNetPlaybackRenderer::processBlock(
 
   if (!isPlaying) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    araBlockTracePushExit(3, timeInSamples, numSamples, araDiagThreadId());
+    araBlockTracePushExit(3, timeInSamples, numSamples, araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
 #endif
     notifyHostPlayState(false);
     notifyHostStopped();
@@ -1143,7 +1147,8 @@ bool PitchNetPlaybackRenderer::processBlock(
 
   if (!hasPlaybackRegions) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    araBlockTracePushExit(4, timeInSamples, numSamples, araDiagThreadId());
+    araBlockTracePushExit(4, timeInSamples, numSamples, araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
 #endif
     notifyHostPlayState(true);
     buffer.clear();
@@ -2554,6 +2559,10 @@ void PitchNetDocumentController::willDestroyAudioModification(
   if (modification == nullptr)
     return;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  diagNoteModificationDestroyed(modification->wasRestoredFromArchive());
+#endif
+
   if (currentPlaybackRegion != nullptr &&
       currentPlaybackRegion->getAudioModification() == audioModification) {
     if (previewState.previewedRegion.load() == currentPlaybackRegion)
@@ -2946,6 +2955,9 @@ juce::ARAAudioModification *PitchNetDocumentController::doCreateAudioModificatio
 
   auto *created = new PitchNetAudioModification(audioSource, hostRef,
                                                optionalModificationToClone);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  diagNoteModificationCreated();
+#endif
   ARA_DIAG("createMod mod=" + ARA_DIAG_PTR(created) +
            " src=" + ARA_DIAG_PTR(audioSource) + " clonedFrom=" +
            (optionalModificationToClone
@@ -3073,6 +3085,14 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
           }
         }
       }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      // D-152: the modification has consumed its archived state (including
+      // the zero-region case). Count it once for the per-block hydrated flag.
+      if (payloadIsUsable && pitchModification != nullptr &&
+          pitchModification->markRestoredFromArchive())
+        diagNoteModificationRestored();
+#endif
 
       if (!audioModification)
         continue;
