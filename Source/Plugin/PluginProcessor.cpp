@@ -572,7 +572,8 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     didProcessHostSync = true;
     checkParameterChanges();
 
-    if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+    const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
+    if (handled) {
       // ARA playback has no meaningful input/dry buffer. The playback renderer
       // replaces the buffer from ARA audio modifications or original sources,
       // so mixing against the host input can mute playback when that input is
@@ -583,6 +584,24 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
       sanitiseARAOutput(buffer);
       return;
     }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-134: the block was not handled by ARA. Record whether the plugin is
+    // bound at all, so "ARA not ready" can be told apart from a renderer that
+    // ran and produced silence.
+    {
+      AraBlockTrace record;
+      juce::int64 t = 0;
+      if (auto *ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+          t = pos->getTimeInSamples().orFallback(0);
+      record.t = t;
+      record.n = buffer.getNumSamples();
+      record.exitCode = 5;
+      record.bound = isBoundToARA() ? 1 : 0;
+      record.thread = araDiagThreadId();
+      araBlockTracePush(record);
+    }
+#endif
   }
 #endif
 

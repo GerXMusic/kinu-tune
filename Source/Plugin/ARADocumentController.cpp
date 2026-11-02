@@ -440,13 +440,15 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // setBypassRendersRawSources in the header).
   const bool bypassRaw = bypassRendersRawSources();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  {
-    static std::atomic<bool> lastBypassRawLogged{false};
-    if (lastBypassRawLogged.exchange(bypassRaw) != bypassRaw)
-      ARA_DIAG(juce::String("renderProcessedRegions: bypassRaw=") +
-               (bypassRaw ? "1" : "0") +
-               " regions=" + juce::String(getPlaybackRegions().size()));
-  }
+  // D-134: per-block accounting. Read-only; it never changes which audio is
+  // selected. rawAttempted/rawHadResources are aggregated over the regions
+  // that intersect this block.
+  int diagRegions = 0;
+  int diagIntersecting = 0;
+  int diagRawAttempted = 0;
+  int diagRawHadResources = 0;
+  int diagProcessedRendered = 0;
+  const juce::int64 diagThread = araDiagThreadId();
 #endif
 
   const juce::Range<double> blockRange(
@@ -462,6 +464,12 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                              region->getEndInPlaybackTime())
              .getIntersectionWith(blockRange)
              .isEmpty();
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ++diagRegions;
+    if (intersectsBlock)
+      ++diagIntersecting;
+#endif
 
     bool renderedRegion = false;
 
@@ -496,6 +504,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       }
     }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    if (renderedRegion)
+      ++diagProcessedRendered;
+#endif
+
     bool rawAttempted = false;
     bool rawHadResources = false;
 
@@ -506,6 +519,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       rawAttempted = true;
       rawHadResources =
           (it != readers.end() && rawState != rawResamplingStates.end());
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      ++diagRawAttempted;
+      if (rawHadResources)
+        ++diagRawHadResources;
+#endif
       // Resources are created on the model thread by ensureRenderResourcesFor().
       // A missing resampler slot must not mean silence: readPlaybackRegionIntoBlock
       // accepts a null state and falls back to a fresh interpolator per call, which
@@ -530,6 +548,36 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     renderedAny = renderedAny || renderedRegion;
   }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-134: one record per block, buffered (see AraBlockTrace). "nonZero"
+  // counts samples != 0 across every channel of the block that was handed to
+  // the renderer, i.e. what this function produced before the processor
+  // sanitises it.
+  {
+    AraBlockTrace record;
+    record.t = timeInSamples;
+    record.n = numSamples;
+    record.exitCode = 0;
+    record.bypassRaw = bypassRaw ? 1 : 0;
+    record.regions = diagRegions;
+    record.intersecting = diagIntersecting;
+    record.processedRendered = diagProcessedRendered;
+    record.rawAttempted = diagRawAttempted;
+    record.rawHadResources = diagRawHadResources;
+    record.renderedAny = renderedAny ? 1 : 0;
+    record.thread = diagThread;
+    int nonZero = 0;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+      const auto *data = buffer.getReadPointer(ch);
+      for (int i = 0; i < numSamples; ++i)
+        if (data[i] != 0.0f)
+          ++nonZero;
+    }
+    record.nonZero = nonZero;
+    araBlockTracePush(record);
+  }
+#endif
+
   return renderedAny;
 }
 
@@ -539,6 +587,10 @@ bool PitchNetPlaybackRenderer::processBlock(
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
   if (!docCtrl) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(1, posInfo.getTimeInSamples().orFallback(0),
+                           buffer.getNumSamples(), araDiagThreadId());
+#endif
     buffer.clear();
     return true;
   }
@@ -553,6 +605,10 @@ bool PitchNetPlaybackRenderer::processBlock(
   // cycle.
   const auto processingLock = docCtrl->getProcessingLock();
   if (!processingLock.isLocked()) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(2, posInfo.getTimeInSamples().orFallback(0),
+                           buffer.getNumSamples(), araDiagThreadId());
+#endif
     buffer.clear();
     return true;
   }
@@ -599,6 +655,9 @@ bool PitchNetPlaybackRenderer::processBlock(
   };
 
   if (!isPlaying) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(3, timeInSamples, numSamples, araDiagThreadId());
+#endif
     notifyHostPlayState(false);
     notifyHostStopped();
     buffer.clear();
@@ -606,6 +665,9 @@ bool PitchNetPlaybackRenderer::processBlock(
   }
 
   if (!hasPlaybackRegions) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(4, timeInSamples, numSamples, araDiagThreadId());
+#endif
     notifyHostPlayState(true);
     buffer.clear();
     return true;

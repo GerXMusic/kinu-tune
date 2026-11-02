@@ -20,6 +20,9 @@
 #define ARA_DIAG(msg) AppLogger::log(juce::String("[ARA] ") + (msg))
 #define ARA_DIAG_PTR(p)                                                        \
   juce::String::toHexString((juce::int64)(juce::pointer_sized_int)(p))
+#define ARA_DIAG_TID()                                                         \
+  juce::String::toHexString(                                                   \
+      (juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId())
 
 // Cheap content fingerprint of an audio buffer.
 //
@@ -49,9 +52,87 @@ inline float araDiagFingerprint(const juce::AudioBuffer<float> &buffer) {
   return sum;
 }
 
+// D-134: per-block render trace.
+//
+// Writing one log line per block reopens the log file ~100 times per second of
+// render, which is slow enough to change the timing of the very start-up race
+// this trace exists to measure (the first diagnostic build made the cold render
+// audible). Records are therefore kept in a fixed array and written in one
+// batch: when the block time goes backwards (a new render or playback starts),
+// or when the array fills. Nothing is written while a render is running, so the
+// audio path only pays a store per block.
+struct AraBlockTrace {
+  juce::int64 t = 0;
+  int n = 0;
+  // 0 = renderProcessedRegions ran; 1..4 = early exits of the renderer's
+  // processBlock; 5 = the processor's ARA branch did not handle the block.
+  int exitCode = 0;
+  int bypassRaw = 0;
+  int regions = 0;
+  int intersecting = 0;
+  int processedRendered = 0;
+  int rawAttempted = 0;
+  int rawHadResources = 0;
+  int renderedAny = 0;
+  int nonZero = 0;
+  int bound = -1; // only for exitCode 5: isBoundToARA()
+  juce::int64 thread = 0;
+};
+
+inline constexpr int kAraBlockTraceCapacity = 4096;
+inline AraBlockTrace araBlockTrace[kAraBlockTraceCapacity];
+inline int araBlockTraceCount = 0;
+inline juce::int64 araBlockTraceLastT = -1;
+
+inline void araBlockTraceFlush() {
+  if (araBlockTraceCount == 0)
+    return;
+  juce::String out;
+  out.preallocateBytes(araBlockTraceCount * 130);
+  for (int i = 0; i < araBlockTraceCount; ++i) {
+    const auto &r = araBlockTrace[i];
+    out << "blk t=" << r.t << " n=" << r.n << " exit=" << r.exitCode
+        << " bypassRaw=" << r.bypassRaw << " regions=" << r.regions
+        << " intersecting=" << r.intersecting
+        << " processedRendered=" << r.processedRendered
+        << " rawAttempted=" << r.rawAttempted
+        << " rawHadResources=" << r.rawHadResources
+        << " renderedAny=" << r.renderedAny << " nonZero=" << r.nonZero
+        << " bound=" << r.bound
+        << " thread=" << juce::String::toHexString(r.thread) << "\n";
+  }
+  ARA_DIAG(out);
+  araBlockTraceCount = 0;
+}
+
+inline void araBlockTracePush(const AraBlockTrace &r) {
+  if (araBlockTraceCount > 0 && r.t < araBlockTraceLastT)
+    araBlockTraceFlush();
+  if (araBlockTraceCount >= kAraBlockTraceCapacity)
+    araBlockTraceFlush();
+  araBlockTrace[araBlockTraceCount++] = r;
+  araBlockTraceLastT = r.t;
+}
+
+inline juce::int64 araDiagThreadId() {
+  return static_cast<juce::int64>(
+      reinterpret_cast<juce::pointer_sized_int>(juce::Thread::getCurrentThreadId()));
+}
+
+inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,
+                                  juce::int64 thread) {
+  AraBlockTrace record;
+  record.t = t;
+  record.n = n;
+  record.exitCode = exitCode;
+  record.thread = thread;
+  araBlockTracePush(record);
+}
+
 #else
 
 #define ARA_DIAG(msg) ((void)0)
 #define ARA_DIAG_PTR(p) juce::String()
+#define ARA_DIAG_TID() juce::String()
 
 #endif
