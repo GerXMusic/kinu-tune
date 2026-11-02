@@ -362,6 +362,16 @@ void PitchNetPlaybackRenderer::prepareToPlay(
   numChannels = numChannelsIn;
   tempBuffer =
       std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: reference buffers for the per-block comparison. Pre-allocated here
+  // so the render thread never allocates.
+  diagRawBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+  diagProcessedBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+  diagTempBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+#endif
 
   bool useBuffered = (alwaysNonRealtime == AlwaysNonRealtime::no);
   juce::ignoreUnused(useBuffered);
@@ -396,6 +406,12 @@ void PitchNetPlaybackRenderer::ensureRenderResourcesFor(
 
   rawResamplingStates.try_emplace(region);
   processedResamplingStates.try_emplace(region);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: mirror slots, so a reference render can reuse the very same
+  // resampler state the real path uses.
+  diagRawResamplingStates.try_emplace(region);
+  diagProcessedResamplingStates.try_emplace(region);
+#endif
 
   auto *modification = region->getAudioModification();
   auto *source =
@@ -426,6 +442,78 @@ void PitchNetPlaybackRenderer::willRemovePlaybackRegion(
   processedResamplingStates.erase(region);
 }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-136: analysis frames of a block window whose pitch ratio differs from 1.
+//
+// The ratio is the one the synthesiser builds
+// (IncrementalSynthesizer::buildPitchRatioCurve): target F0 (project base pitch
+// + delta + global pitch offset) over source F0, with the same 1e-3 tolerance.
+// Returns -1 when the project cannot be reached (editor closed) or the window
+// cannot be mapped to project frames.
+static int diagCountRatioNotOneFrames(const Project *project,
+                                      const juce::ARAPlaybackRegion &region,
+                                      juce::int64 timeInSamples, int numSamples,
+                                      double outputSampleRate) {
+  if (project == nullptr || region.getAudioModification() == nullptr)
+    return -1;
+  auto *source = region.getAudioModification()->getAudioSource();
+  if (source == nullptr)
+    return -1;
+  const double sourceRate = source->getSampleRate();
+  if (sourceRate <= 0.0 || outputSampleRate <= 0.0)
+    return -1;
+
+  const auto &audioData = project->getAudioData();
+  const auto &srcF0 =
+      audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+  if (srcF0.empty() || audioData.basePitch.empty())
+    return -1;
+
+  // Playback time of the block -> source (modification) samples.
+  const double blockStartSeconds =
+      static_cast<double>(timeInSamples) / outputSampleRate;
+  const double offsetSeconds =
+      blockStartSeconds - region.getStartInPlaybackTime();
+  const auto modStart =
+      region.getStartInAudioModificationSamples() +
+      static_cast<juce::int64>(std::llround(offsetSeconds * sourceRate));
+  const auto modEnd =
+      modStart + static_cast<juce::int64>(
+                      std::llround(static_cast<double>(numSamples) /
+                                   outputSampleRate * sourceRate));
+
+  // Modification samples -> project analysis frames (hop 512 at project rate).
+  const double projectRate = static_cast<double>(audioData.sampleRate);
+  const int frameStart = static_cast<int>(
+      std::floor(static_cast<double>(modStart) * projectRate / sourceRate /
+                 HOP_SIZE));
+  const int frameEnd = static_cast<int>(
+      std::ceil(static_cast<double>(modEnd) * projectRate / sourceRate /
+                HOP_SIZE));
+  const int clampedStart = std::max(frameStart, 0);
+  const int clampedEnd =
+      std::min(frameEnd, static_cast<int>(audioData.basePitch.size()));
+  if (clampedEnd <= clampedStart)
+    return 0;
+
+  const auto target = project->getAdjustedF0ForRange(clampedStart, clampedEnd);
+  int count = 0;
+  for (size_t i = 0; i < target.size(); ++i) {
+    const int frame = clampedStart + static_cast<int>(i);
+    if (frame < 0 || frame >= static_cast<int>(srcF0.size()))
+      continue;
+    const float sourceF0 = srcF0[static_cast<size_t>(frame)];
+    const float targetF0 = target[i];
+    if (sourceF0 > 0.0f && targetF0 > 0.0f) {
+      const float ratio = targetF0 / sourceF0;
+      if (std::abs(ratio - 1.0f) > 1e-3f)
+        ++count;
+    }
+  }
+  return count;
+}
+#endif
+
 bool PitchNetPlaybackRenderer::renderProcessedRegions(
     juce::AudioBuffer<float> &buffer, juce::int64 timeInSamples,
     int numSamples) {
@@ -448,12 +536,21 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   int diagRawAttempted = 0;
   int diagRawHadResources = 0;
   int diagProcessedRendered = 0;
+  bool diagRawPathRan = false;
   const juce::int64 diagThread = araDiagThreadId();
 #endif
 
   const juce::Range<double> blockRange(
       static_cast<double>(timeInSamples) / sampleRate,
       static_cast<double>(timeInSamples + numSamples) / sampleRate);
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: the reference buffers are rebuilt for every block.
+  if (diagRawBuffer != nullptr)
+    diagRawBuffer->clear();
+  if (diagProcessedBuffer != nullptr)
+    diagProcessedBuffer->clear();
+#endif
 
   for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
     if (!region || !region->getAudioModification())
@@ -499,10 +596,52 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
               processedState != processedResamplingStates.end()
                   ? &processedState->second
                   : nullptr);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+          // D-136: mirror the processed render into the reference buffer with
+          // a mirror of the very same resampler state, so the reference holds
+          // exactly the samples the processed path produced in this block.
+          if (diagProcessedBuffer != nullptr) {
+            AraResamplingState *mirror = nullptr;
+            if (processedState != processedResamplingStates.end()) {
+              auto diagState = diagProcessedResamplingStates.find(region);
+              if (diagState != diagProcessedResamplingStates.end())
+                mirror = &diagState->second;
+            }
+            mixProcessedRegionAudio(
+                *diagProcessedBuffer, *region, data->audio, data->sampleRate,
+                data->startSampleInModification, modificationRate, sampleRate,
+                timeInSamples, mirror);
+          }
+#endif
         }
       }
       }
     }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-136: with bypass the processed path does not run, but the reference
+    // still needs to say what the processed path WOULD produce. The stateful
+    // path resets after a gap, which is exactly what a fresh (null state)
+    // render does.
+    if (bypassRaw && diagProcessedBuffer != nullptr) {
+      if (auto *modification =
+              region->getAudioModification<PitchNetAudioModification>()) {
+        const auto lock = modification->tryLockProcessedAudio();
+        if (lock.isLocked()) {
+          const auto *data = modification->getProcessedData();
+          if (data != nullptr && data->hasAudio()) {
+            auto *source = modification->getAudioSource();
+            const double modificationRate =
+                source != nullptr ? source->getSampleRate() : 0.0;
+            mixProcessedRegionAudio(
+                *diagProcessedBuffer, *region, data->audio, data->sampleRate,
+                data->startSampleInModification, modificationRate, sampleRate,
+                timeInSamples, nullptr);
+          }
+        }
+      }
+    }
+#endif
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     if (renderedRegion)
@@ -540,13 +679,119 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                ++ch)
             buffer.addFrom(ch, 0, *tempBuffer, ch, 0, numSamples);
           renderedRegion = true;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+          diagRawPathRan = true;
+          // D-136: mirror the raw read into the reference buffer with a mirror
+          // of the same resampler state: the reference then holds exactly the
+          // samples the raw path produced in this block.
+          if (diagRawBuffer != nullptr && diagTempBuffer != nullptr) {
+            AraResamplingState *mirror = nullptr;
+            if (rawStatePtr != nullptr) {
+              auto diagState = diagRawResamplingStates.find(region);
+              if (diagState != diagRawResamplingStates.end())
+                mirror = &diagState->second;
+            }
+            diagTempBuffer->clear();
+            if (readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                            timeInSamples, *diagTempBuffer,
+                                            mirror)) {
+              for (int ch = 0; ch < std::min(diagRawBuffer->getNumChannels(),
+                                             diagTempBuffer->getNumChannels());
+                   ++ch)
+                diagRawBuffer->addFrom(ch, 0, *diagTempBuffer, ch, 0, numSamples);
+            }
+          }
+#endif
         }
       }
     }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-136: the raw reference of a region whose raw path did NOT run in this
+    // block. The stateful path resets after a gap, so the fresh (null state)
+    // read is what the raw path would produce here.
+    if (!diagRawPathRan && diagRawBuffer != nullptr &&
+        diagTempBuffer != nullptr) {
+      auto *source = region->getAudioModification()->getAudioSource();
+      auto it = source != nullptr ? readers.find(source) : readers.end();
+      if (it != readers.end()) {
+        diagTempBuffer->clear();
+        if (readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                        timeInSamples, *diagTempBuffer,
+                                        nullptr)) {
+          for (int ch = 0; ch < std::min(diagRawBuffer->getNumChannels(),
+                                         diagTempBuffer->getNumChannels());
+               ++ch)
+            diagRawBuffer->addFrom(ch, 0, *diagTempBuffer, ch, 0, numSamples);
+        }
+      }
+    }
+#endif
 
     renderedAny = renderedAny || renderedRegion;
   }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: per-block references. The raw source and the processed audio are
+  // re-read for the SAME window as this block and compared with the block
+  // output, so a block that took one path or the other can be told apart. The
+  // comparison is only reported when it can be exact (same sample rate on both
+  // sides, so no resampling is involved); otherwise the field stays
+  // unavailable and is not used as a verdict.
+  int diagFramesRatioNotOne = -1;
+  float diagMaxDiffRaw = -1.0f;
+  float diagMaxDiffProcessed = -1.0f;
+  int diagRefFlags = 0;
+  if (diagRawBuffer != nullptr && diagProcessedBuffer != nullptr &&
+      diagRawBuffer->getNumSamples() >= buffer.getNumSamples() &&
+      diagProcessedBuffer->getNumSamples() >= buffer.getNumSamples()) {
+    const Project *diagProject = nullptr;
+    if (auto *docCtrl = getDocController()) {
+      if (auto *mainView = docCtrl->getMainComponent())
+        diagProject = mainView->getProject();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      // The editor may have no project (headless playback after loading a
+      // saved project); the document controller keeps the restored one.
+      if (diagProject == nullptr)
+        diagProject = docCtrl->getDocumentProjectSnapshot();
+#endif
+    }
+
+    auto diagMaxDiffAgainst = [&buffer](const juce::AudioBuffer<float> &ref) {
+      float maximum = 0.0f;
+      const int samples = buffer.getNumSamples();
+      for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+        const float *out = buffer.getReadPointer(ch);
+        const float *reference =
+            ref.getReadPointer(std::min(ch, ref.getNumChannels() - 1));
+        for (int i = 0; i < samples; ++i)
+          maximum = std::max(maximum, std::abs(out[i] - reference[i]));
+      }
+      return maximum;
+    };
+
+    diagMaxDiffRaw = diagMaxDiffAgainst(*diagRawBuffer);
+    diagRefFlags |= 1;
+    diagMaxDiffProcessed = diagMaxDiffAgainst(*diagProcessedBuffer);
+    diagRefFlags |= 2;
+
+    // --- analysis frames of this window whose pitch ratio differs from 1 ---
+    int diagFramesSum = 0;
+    bool diagFramesKnown = false;
+    for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+      if (region == nullptr || region->getAudioModification() == nullptr)
+        continue;
+      const int count = diagCountRatioNotOneFrames(
+          diagProject, *region, timeInSamples, numSamples, sampleRate);
+      if (count < 0)
+        continue;
+      diagFramesKnown = true;
+      diagFramesSum += count;
+    }
+    if (diagFramesKnown)
+      diagFramesRatioNotOne = diagFramesSum;
+  }
+#endif
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-134: one record per block, buffered (see AraBlockTrace). "nonZero"
@@ -566,6 +811,10 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.rawHadResources = diagRawHadResources;
     record.renderedAny = renderedAny ? 1 : 0;
     record.thread = diagThread;
+    record.framesRatioNotOne = diagFramesRatioNotOne;
+    record.maxDiffRaw = diagMaxDiffRaw;
+    record.maxDiffProcessed = diagMaxDiffProcessed;
+    record.refFlags = diagRefFlags;
     int nonZero = 0;
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
       const auto *data = buffer.getReadPointer(ch);

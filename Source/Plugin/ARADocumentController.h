@@ -226,6 +226,20 @@ private:
   std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
       processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: scratch buffers for the per-block reference renders (raw source and
+  // processed audio of the SAME window), used only to measure the block output.
+  // They never feed the output path. The resampler states below MIRROR the
+  // ones the real paths use, so a reference render produces the very same
+  // samples the real path would have produced in that block.
+  std::unique_ptr<juce::AudioBuffer<float>> diagRawBuffer;
+  std::unique_ptr<juce::AudioBuffer<float>> diagProcessedBuffer;
+  std::unique_ptr<juce::AudioBuffer<float>> diagTempBuffer;
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      diagRawResamplingStates;
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      diagProcessedResamplingStates;
+#endif
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   HostLoopState previousLoopState;
@@ -448,6 +462,14 @@ public:
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
                                   bool notifyHost = true);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: the project the document controller restored from the archive.
+  // Used only to count the analysis frames whose pitch ratio differs from 1
+  // when the editor has no project (headless playback).
+  const Project *getDocumentProjectSnapshot() const {
+    return documentProjectSnapshot.get();
+  }
+#endif
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,

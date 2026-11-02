@@ -77,6 +77,18 @@ struct AraBlockTrace {
   int nonZero = 0;
   int bound = -1; // only for exitCode 5: isBoundToARA()
   juce::int64 thread = 0;
+  // D-136: reference measurements for this block (read at the same point as
+  // bypassRaw). framesRatioNotOne counts the analysis frames of the block
+  // window whose pitch ratio differs from 1 (-1 = not computable). maxDiffRaw
+  // and maxDiffProcessed are the maximum sample-wise differences between the
+  // block output and, respectively, the raw source and the processed audio
+  // re-read for the SAME window (-1 = reference not available, e.g. the rates
+  // differ and the comparison would not be exact). refFlags says which
+  // references were exact: 1 = raw, 2 = processed.
+  int framesRatioNotOne = -1;
+  float maxDiffRaw = -1.0f;
+  float maxDiffProcessed = -1.0f;
+  int refFlags = 0;
 };
 
 inline constexpr int kAraBlockTraceCapacity = 4096;
@@ -99,6 +111,10 @@ inline void araBlockTraceFlush() {
         << " rawHadResources=" << r.rawHadResources
         << " renderedAny=" << r.renderedAny << " nonZero=" << r.nonZero
         << " bound=" << r.bound
+        << " framesRatioNotOne=" << r.framesRatioNotOne
+        << " maxDiffRaw=" << r.maxDiffRaw
+        << " maxDiffProcessed=" << r.maxDiffProcessed
+        << " refFlags=" << r.refFlags
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
   ARA_DIAG(out);
