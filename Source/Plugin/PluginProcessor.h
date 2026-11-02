@@ -296,6 +296,11 @@ public:
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
 
+  // D-144: the bypass intent as this instance holds it (the host's parameter).
+  bool isBypassRequestedByHost() const {
+    return bypassParamValue != nullptr && bypassParamValue->load() >= 0.5f;
+  }
+
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-139 pre-test: the instance id and the bypass parameter of THIS processor,
   // so the renderer can compare what it reads with the host's value.
