@@ -167,8 +167,17 @@ public:
     return bypassRawSourcesRequested.load(std::memory_order_relaxed);
   }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-137: the bypass parameter as the project has it (the INTENT of the
+  // render), kept next to the static flag the renderer reads. The processor
+  // that renders writes it before every block, so the trace can compare the
+  // two per block.
+#endif
+
 private:
   static std::atomic<bool> bypassRawSourcesRequested;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+#endif
 
   struct HostUiSyncState {
     std::atomic<bool> latestPlaying{false};
@@ -443,6 +452,25 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-137: the bypass parameter as the project has it (the INTENT of the
+  // render), written by the processor before it renders a block and read by
+  // the playback renderer, so the trace can compare the intent with the
+  // static flag the renderer actually read.
+  void setBypassIntentForDiagnostics(float value) noexcept {
+    bypassIntentForDiagnostics.store(value, std::memory_order_relaxed);
+    bypassIntentWriterThread.store(
+        static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(
+            juce::Thread::getCurrentThreadId())),
+        std::memory_order_relaxed);
+  }
+  float getBypassIntentForDiagnostics() const noexcept {
+    return bypassIntentForDiagnostics.load(std::memory_order_relaxed);
+  }
+  juce::int64 getBypassIntentWriterThread() const noexcept {
+    return bypassIntentWriterThread.load(std::memory_order_relaxed);
+  }
+#endif
   void setPersistenceCallbacks(
       std::function<bool(juce::MemoryBlock &)> serializeProjectState,
       std::function<bool(const void *, size_t)> restoreProjectState);
@@ -556,6 +584,10 @@ private:
   double analysisTimelineSampleRate = 0.0;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
   std::unique_ptr<Project> documentProjectSnapshot;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  static std::atomic<float> bypassIntentForDiagnostics;
+  static std::atomic<juce::int64> bypassIntentWriterThread;
+#endif
   RealtimePitchProcessor documentRealtimeProcessor;
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;

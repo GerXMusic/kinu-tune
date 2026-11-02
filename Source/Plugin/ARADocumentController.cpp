@@ -345,6 +345,14 @@ static bool mixProcessedRegionAudio(juce::AudioBuffer<float> &buffer,
 // different threads are exactly the case the comment in the header accepts).
 std::atomic<bool>
     PitchNetPlaybackRenderer::bypassRawSourcesRequested{false};
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-137: the bypass parameter of the project (the intent of the render),
+// written by the processor that renders before every block.
+std::atomic<float>
+    PitchNetDocumentController::bypassIntentForDiagnostics{-1.0f};
+std::atomic<juce::int64>
+    PitchNetDocumentController::bypassIntentWriterThread{-1};
+#endif
 
 PitchNetDocumentController *
 PitchNetPlaybackRenderer::getDocController() const {
@@ -815,6 +823,16 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.maxDiffRaw = diagMaxDiffRaw;
     record.maxDiffProcessed = diagMaxDiffProcessed;
     record.refFlags = diagRefFlags;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-137: the bypass parameter of the project at this instant (the intent
+    // of the render), next to the static flag the renderer read.
+    record.bypassParam = getDocController() != nullptr
+                              ? getDocController()->getBypassIntentForDiagnostics()
+                              : -1.0f;
+    record.bypassWriterThread = getDocController() != nullptr
+                                    ? getDocController()->getBypassIntentWriterThread()
+                                    : -1;
+#endif
     int nonZero = 0;
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
       const auto *data = buffer.getReadPointer(ch);

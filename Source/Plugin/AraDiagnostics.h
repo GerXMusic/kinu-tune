@@ -89,6 +89,11 @@ struct AraBlockTrace {
   float maxDiffRaw = -1.0f;
   float maxDiffProcessed = -1.0f;
   int refFlags = 0;
+  // D-137: the bypass parameter as the project has it right now (the INTENT),
+  // as opposed to the static flag the renderer reads. -1 = not available.
+  float bypassParam = -1.0f;
+  // D-137: which thread wrote that intent last (-1 = none).
+  juce::int64 bypassWriterThread = -1;
 };
 
 inline constexpr int kAraBlockTraceCapacity = 4096;
@@ -115,6 +120,9 @@ inline void araBlockTraceFlush() {
         << " maxDiffRaw=" << r.maxDiffRaw
         << " maxDiffProcessed=" << r.maxDiffProcessed
         << " refFlags=" << r.refFlags
+        << " bypassParam=" << r.bypassParam
+        << " bypassWriterThread="
+        << juce::String::toHexString(r.bypassWriterThread)
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
   ARA_DIAG(out);

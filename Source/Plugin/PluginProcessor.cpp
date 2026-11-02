@@ -537,6 +537,18 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
   // Check bypass — if bypassed, pass through input unchanged
   const bool bypassed = bypassParamValue->load() >= 0.5f;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-137: record the bypass parameter as the project has it right now (the
+  // INTENT), so the render trace can tell it apart from the static flag the
+  // playback renderer reads. Diagnostics only; it does not touch the DSP.
+  //
+  // Note: the document controller is shared by every instance of the plugin
+  // in the process, so this value is the one written LAST by any instance.
+  // The project's own bypass is the host parameter (see the measurement
+  // notes); this field is informative only.
+  if (araDocumentController != nullptr)
+    araDocumentController->setBypassIntentForDiagnostics(bypassed ? 1.0f : 0.0f);
+#endif
   if (bypassed) {
     // Transport sync still needs to run even when bypassed
     transportController.processBlock(getPlayHead(), hostSampleRate);
@@ -631,6 +643,13 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 void PitchNetAudioProcessor::processBlockBypassed(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-137: JUCE routes a bypassed plugin here instead of processBlock(), so
+  // the intent of the render has to be recorded on this path too.
+  if (araDocumentController != nullptr)
+    araDocumentController->setBypassIntentForDiagnostics(1.0f);
+#endif
 
   // Transport sync still runs when bypassed so cursor stays in sync
   transportController.processBlock(getPlayHead(), hostSampleRate);
