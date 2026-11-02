@@ -862,6 +862,21 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       if (stable)
         record.writeFlags |= 1;
       record.readTimeMs = juce::Time::getMillisecondCounterHiRes();
+      // D-139 pre-test: what the renderer itself can read as "host bypass
+      // parameter", from the processor this document controller is bound to.
+      if (auto *docCtrl = getDocController()) {
+        if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
+          record.owningInstance = processor->getDiagInstanceId();
+          record.owningParamMilli =
+              static_cast<int>(std::lround(processor->getBypassParamForDiagnostics() * 1000.0f));
+        } else {
+          record.owningInstance = -1;
+          record.owningParamMilli = -2;
+        }
+      } else {
+        record.owningInstance = -2;
+        record.owningParamMilli = -2;
+      }
     }
 #endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED

@@ -497,6 +497,10 @@ public:
   const Project *getDocumentProjectSnapshot() const {
     return documentProjectSnapshot.get();
   }
+  // D-139 pre-test: the processor this document controller is bound to.
+  PitchNetAudioProcessor *getOwningProcessorForDiagnostics() const {
+    return owningProcessor;
+  }
 #endif
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(

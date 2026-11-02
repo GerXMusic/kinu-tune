@@ -113,6 +113,11 @@ struct AraBlockTrace {
   int prevSite = -1;
   int prevInstance = -1;
   int prevOffline = -1;
+  // D-139 pre-test: the bypass parameter of the processor that owns the
+  // renderer, as the renderer sees it, plus that processor's instance id.
+  // -2 = no owning processor, -3 = parameter unavailable.
+  int owningParamMilli = -4;
+  int owningInstance = -1;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -189,6 +194,8 @@ inline void araBlockTraceFlush() {
         << " prevSite=" << r.prevSite
         << " prevInstance=" << r.prevInstance
         << " prevOffline=" << r.prevOffline
+        << " owningParamMilli=" << r.owningParamMilli
+        << " owningInstance=" << r.owningInstance
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
