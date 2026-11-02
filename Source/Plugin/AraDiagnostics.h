@@ -15,6 +15,8 @@
 
 #include "../Utils/AppLogger.h"
 
+#include <cstdlib>
+
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
 
 #define ARA_DIAG(msg) AppLogger::log(juce::String("[ARA] ") + (msg))
@@ -498,6 +500,24 @@ inline juce::int64 araHashName(const char *text) {
       hash *= 1099511628211ull;
     }
   return static_cast<juce::int64>(hash);
+}
+
+// D-150: diagnostic-only forcing of track A's output, so the mixed render can
+// be measured with A fixed. Read once from the environment; -1 = no forcing,
+// 0 = force processed, 1 = force raw. It never affects the production build.
+inline int araDiagForceTrackA() {
+  static const int value = [] {
+    const char *env = std::getenv("PITCHCORE_DIAG_FORCE_A");
+    if (env == nullptr)
+      return -1;
+    const juce::String text(env);
+    if (text.equalsIgnoreCase("processed"))
+      return 0;
+    if (text.equalsIgnoreCase("raw"))
+      return 1;
+    return -1;
+  }();
+  return value;
 }
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,

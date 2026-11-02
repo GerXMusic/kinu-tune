@@ -541,10 +541,29 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   const juce::uint64 diagWriteWordBefore =
       araBypassValueSeq.load(std::memory_order_acquire);
 #endif
-  const bool bypassRaw = bypassRendersRawSources();
+  bool bypassRaw = bypassRendersRawSources();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   const juce::uint64 diagWriteWordAfter =
       araBypassValueSeq.load(std::memory_order_acquire);
+  // D-150: diagnostic-only forcing of track A's output (environment variable,
+  // never in the production build). B is untouched.
+  {
+    const int forceA = araDiagForceTrackA();
+    if (forceA >= 0) {
+      juce::int64 trackHash = 0;
+      for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+        if (region == nullptr)
+          continue;
+        auto *sequence = region->getRegionSequence();
+        if (sequence == nullptr)
+          continue;
+        trackHash = araHashName(sequence->getName());
+        break;
+      }
+      if (trackHash == araHashName("A"))
+        bypassRaw = (forceA == 1);
+    }
+  }
 #endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-134: per-block accounting. Read-only; it never changes which audio is
