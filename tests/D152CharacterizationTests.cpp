@@ -1,0 +1,206 @@
+// D-152 characterization tests.
+//
+// These tests describe the behaviour that exists BEFORE the stability
+// implementation. They are intentionally allowed to change (and fail) when the
+// implementation lands; their job is to make that change visible.
+
+#include "../Source/Plugin/ARADocumentController.h"
+#include "../Source/Plugin/PitchNetAudioModification.h"
+#include "../Source/Plugin/PluginProcessor.h"
+#include "TestAssert.h"
+
+#include <cmath>
+#include <cstring>
+#include <iostream>
+#include <optional>
+
+namespace {
+
+class StoppedPlayHead final : public juce::AudioPlayHead {
+public:
+  juce::Optional<PositionInfo> getPosition() const override {
+    PositionInfo info;
+    info.setIsPlaying(false);
+    return info;
+  }
+};
+
+void setBoolParameter(PitchNetAudioProcessor &processor, const char *id,
+                      bool value) {
+  auto *parameter = processor.getAPVTS().getParameter(id);
+  CHECK(parameter != nullptr);
+  parameter->setValueNotifyingHost(value ? 1.0f : 0.0f);
+}
+
+void setFloatParameter(PitchNetAudioProcessor &processor, const char *id,
+                       float value) {
+  auto *parameter = processor.getAPVTS().getParameter(id);
+  CHECK(parameter != nullptr);
+  parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+}
+
+float getFloatParameter(PitchNetAudioProcessor &processor, const char *id) {
+  auto *value = processor.getAPVTS().getRawParameterValue(id);
+  CHECK(value != nullptr);
+  return value->load();
+}
+
+bool getBoolParameter(PitchNetAudioProcessor &processor, const char *id) {
+  auto *value = processor.getAPVTS().getRawParameterValue(id);
+  CHECK(value != nullptr);
+  return value->load() >= 0.5f;
+}
+
+void runBypassCharacterization() {
+  PitchNetAudioProcessor processor;
+  StoppedPlayHead playHead;
+  processor.setPlayHead(&playHead);
+  processor.prepareToPlay(44100.0, 64);
+
+  juce::AudioBuffer<float> buffer(1, 64);
+  juce::MidiBuffer midi;
+
+  // Current APVTS bypass = 0: the non-ARA path runs and, with no project and
+  // the transport stopped, clears the buffer.
+  setBoolParameter(processor, "bypass", false);
+  buffer.clear();
+  buffer.setSample(0, 0, 0.75f);
+  processor.processBlock(buffer, midi);
+  CHECK(buffer.getSample(0, 0) == 0.0f);
+
+  // Current standard JUCE bypass path: the wrapper calls
+  // processBlockBypassed when getBypassParameter() is null, and the current
+  // processor leaves the input untouched when ARA is not bound.
+  CHECK(processor.getBypassParameter() == nullptr);
+  buffer.clear();
+  buffer.setSample(0, 0, 0.75f);
+  processor.processBlockBypassed(buffer, midi);
+  CHECK(std::abs(buffer.getSample(0, 0) - 0.75f) < 1.0e-6f);
+
+  // Current APVTS bypass = 1: the bypass branch returns before the non-ARA
+  // path, so the input buffer is left untouched when ARA is not bound.
+  setBoolParameter(processor, "bypass", true);
+  buffer.clear();
+  buffer.setSample(0, 0, 0.75f);
+  processor.processBlock(buffer, midi);
+  CHECK(std::abs(buffer.getSample(0, 0) - 0.75f) < 1.0e-6f);
+
+  std::cout << "bypass: APVTS 0 clears (non-ARA, stopped), APVTS 1 and "
+               "processBlockBypassed pass input through\n";
+}
+
+void runSavedStateCharacterization() {
+  PitchNetAudioProcessor source;
+  setBoolParameter(source, "bypass", true);
+  setFloatParameter(source, "outputGain", -6.0f);
+  setFloatParameter(source, "dryWet", 50.0f);
+  setFloatParameter(source, "pitchOffset", 2.0f);
+  setFloatParameter(source, "formantShift", -1.0f);
+
+  juce::MemoryBlock state;
+  source.getStateInformation(state);
+  CHECK(state.getSize() > 0);
+
+  PitchNetAudioProcessor loaded;
+  loaded.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+
+  // Current behaviour: the instance's own bypass parameter is part of APVTS
+  // and round-trips with the rest of the parameters.
+  CHECK(getBoolParameter(loaded, "bypass"));
+  CHECK(std::abs(getFloatParameter(loaded, "outputGain") - (-6.0f)) < 1.0e-4f);
+  CHECK(std::abs(getFloatParameter(loaded, "dryWet") - 50.0f) < 1.0e-4f);
+  CHECK(std::abs(getFloatParameter(loaded, "pitchOffset") - 2.0f) < 1.0e-4f);
+  CHECK(std::abs(getFloatParameter(loaded, "formantShift") - (-1.0f)) < 1.0e-4f);
+
+  std::cout << "saved state: bypass and the other four APVTS values round-trip\n";
+}
+
+void runProcessedAudioCharacterization() {
+  // A minimal ARA model graph is enough for the modification's own slot: no
+  // document-controller callbacks are used by setProcessedAudio/copy.
+  ARA::PlugIn::Document document(nullptr);
+  juce::ARAAudioSource source(&document, nullptr);
+  PitchNetAudioModification modification(&source, nullptr, nullptr);
+
+  juce::AudioBuffer<float> first(1, 8);
+  juce::AudioBuffer<float> second(1, 4);
+  for (int i = 0; i < first.getNumSamples(); ++i)
+    first.setSample(0, i, static_cast<float>(i) / 10.0f);
+  for (int i = 0; i < second.getNumSamples(); ++i)
+    second.setSample(0, i, 10.0f + static_cast<float>(i));
+
+  modification.setProcessedAudio(first, 44100.0, 0);
+  CHECK(modification.hasProcessedAudio());
+
+  juce::AudioBuffer<float> read;
+  double rate = 0.0;
+  juce::int64 start = 0;
+  CHECK(modification.copyProcessedAudio(read, rate, start));
+  CHECK(rate == 44100.0);
+  CHECK(start == 0);
+  CHECK(read.getNumSamples() == first.getNumSamples());
+  for (int i = 0; i < first.getNumSamples(); ++i)
+    CHECK(read.getSample(0, i) == first.getSample(0, i));
+
+  // Two consecutive publications: the second is the visible one.
+  modification.setProcessedAudio(second, 48000.0, 2);
+  CHECK(modification.copyProcessedAudio(read, rate, start));
+  CHECK(rate == 48000.0);
+  CHECK(start == 2);
+  CHECK(read.getNumSamples() == second.getNumSamples());
+  for (int i = 0; i < second.getNumSamples(); ++i)
+    CHECK(read.getSample(0, i) == second.getSample(0, i));
+
+  std::cout << "processed audio: set then copy returns the same content; the "
+               "last publication wins\n";
+}
+
+void runHydrationCharacterization() {
+  ARA::ARADocumentControllerHostInstance hostInstance{};
+  PitchNetDocumentController controller(nullptr, &hostInstance);
+
+  CHECK(controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationCreated();
+  CHECK(!controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationRestored();
+  CHECK(controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationCreated();
+  CHECK(!controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationRestored();
+  CHECK(controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationDestroyed(true);
+  CHECK(controller.diagDocumentHydrated());
+
+  controller.diagNoteModificationDestroyed(true);
+  CHECK(controller.diagDocumentHydrated());
+
+  std::cout << "hydration: 0 modifications -> 1; pending modification -> 0; "
+               "restored -> 1\n";
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+  juce::ScopedJuceInitialiser_GUI gui;
+  const juce::String group = argc > 1 ? juce::String(argv[1]) : juce::String();
+
+  if (group == "bypass")
+    runBypassCharacterization();
+  else if (group == "saved-state")
+    runSavedStateCharacterization();
+  else if (group == "processed-audio")
+    runProcessedAudioCharacterization();
+  else if (group == "hydration")
+    runHydrationCharacterization();
+  else {
+    std::cerr << "unknown group: " << group << "\n";
+    return 2;
+  }
+
+  return 0;
+}

@@ -116,3 +116,37 @@ foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
                      -DRULE=${guard_rule}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceGuard.cmake)
 endforeach()
+
+# D-152 characterization: describes the pre-implementation behaviour. It needs
+# the ARA diagnostics definitions, because the hydration flag is diagnostic-only.
+if(ARA_AVAILABLE AND PITCHNET_ARA_DIAGNOSTICS)
+    add_executable(D152CharacterizationTests D152CharacterizationTests.cpp)
+    target_link_libraries(D152CharacterizationTests PRIVATE
+        PitchNetPlugin
+        pitchnet_ui
+        pitchnet_core
+        juce::juce_audio_processors
+        juce::juce_audio_plugin_client
+        juce::juce_audio_utils
+        juce::juce_gui_extra
+        juce::juce_recommended_config_flags)
+    target_compile_definitions(D152CharacterizationTests PRIVATE
+        JucePlugin_Enable_ARA=1
+        PITCHNET_ARA_DIAGNOSTICS=1)
+    target_include_directories(D152CharacterizationTests PRIVATE
+        ${ARA_SDK_PATH})
+    # The plug-in's VST3 wrapper normally supplies the ARA library from
+    # juce_audio_plugin_client_ARA.cpp. This test is not a plug-in wrapper, so
+    # compile the same library sources into the test executable.
+    target_sources(D152CharacterizationTests PRIVATE
+        ${ARA_SDK_PATH}/ARA_Library/PlugIn/ARAPlug.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAChannelFormat.cpp)
+    target_compile_features(D152CharacterizationTests PRIVATE cxx_std_17)
+
+    foreach(D152_GROUP IN ITEMS bypass saved-state processed-audio hydration)
+        add_test(NAME D152_${D152_GROUP}
+                 COMMAND D152CharacterizationTests ${D152_GROUP})
+    endforeach()
+endif()
