@@ -323,6 +323,10 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-146: instance identity for the processed-audio lock owner tracker.
+  araDiagLockInstance = diagInstanceId;
+#endif
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-142 route (c): "the FX registers itself here" attempt. Only diagnostics:
   // the last registration wins, and the render trace records which instance
   // that is and what bypass value it holds.
@@ -627,6 +631,10 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
   bool didProcessHostSync = false;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-146: instance identity for the processed-audio lock owner tracker.
+  araDiagLockInstance = diagInstanceId;
+#endif
 
   // Check bypass — if bypassed, pass through input unchanged
   const bool bypassed = bypassParamValue->load() >= 0.5f;

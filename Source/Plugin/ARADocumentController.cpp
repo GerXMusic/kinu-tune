@@ -559,6 +559,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   int diagProcLocked = -1;
   int diagProcHasAudio = -1;
   float diagProcFingerprint = 0.0f;
+  int diagLockFailCount = -1;
+  int diagLockOwnerKind = -1;
+  juce::int64 diagLockOwnerThread = 0;
+  int diagLockOwnerInstance = -1;
+  double diagLockHeldMs = -1.0;
   const juce::int64 diagThread = araDiagThreadId();
 #endif
 
@@ -598,6 +603,13 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       const auto lock = modification->tryLockProcessedAudio();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
       diagProcLocked = lock.isLocked() ? 1 : 0;
+      if (!lock.isLocked()) {
+        diagLockFailCount = araLockFailureCount.load(std::memory_order_relaxed);
+        diagLockOwnerKind = araLockFailOwnerKind.load(std::memory_order_relaxed);
+        diagLockOwnerThread = araLockFailOwnerThread.load(std::memory_order_relaxed);
+        diagLockOwnerInstance = araLockFailOwnerInstance.load(std::memory_order_relaxed);
+        diagLockHeldMs = araLockFailOwnerHeldMs.load(std::memory_order_relaxed);
+      }
 #endif
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
@@ -958,6 +970,12 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                            getDocController()->getMainComponent() != nullptr)
                               ? 1
                               : 0;
+      // D-146: if the processed try-lock failed, who held it.
+      record.lockFailCount = diagLockFailCount;
+      record.lockOwnerKind = diagLockOwnerKind;
+      record.lockOwnerThread = diagLockOwnerThread;
+      record.lockOwnerInstance = diagLockOwnerInstance;
+      record.lockHeldMs = static_cast<float>(diagLockHeldMs);
       // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {

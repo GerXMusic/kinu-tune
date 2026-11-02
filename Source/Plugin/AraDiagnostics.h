@@ -148,6 +148,12 @@ struct AraBlockTrace {
   float msSincePublish = -1.0f;
   int editorOpen = -1;      // this document controller has a main component
   int publisherInstance = -1; // instance that published last (-1 = none)
+  // D-146: the failed try-lock of the processed audio and its owner.
+  int lockFailCount = -1;
+  int lockOwnerKind = -1;   // 0=free, 1=render try-lock, 2=full lock
+  juce::int64 lockOwnerThread = 0;
+  int lockOwnerInstance = -1;
+  float lockHeldMs = -1.0f;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -248,6 +254,11 @@ inline void araBlockTraceFlush() {
         << " msSincePublish=" << juce::String(r.msSincePublish, 3)
         << " editorOpen=" << r.editorOpen
         << " publisherInstance=" << r.publisherInstance
+        << " lockFailCount=" << r.lockFailCount
+        << " lockOwnerKind=" << r.lockOwnerKind
+        << " lockOwnerThread=" << juce::String::toHexString(r.lockOwnerThread)
+        << " lockOwnerInstance=" << r.lockOwnerInstance
+        << " lockHeldMs=" << juce::String(r.lockHeldMs, 3)
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -275,6 +286,77 @@ inline juce::int64 araDiagThreadId() {
   return static_cast<juce::int64>(
       reinterpret_cast<juce::pointer_sized_int>(juce::Thread::getCurrentThreadId()));
 }
+
+// D-146: ownership tracking for the processed-audio lock. The owner (thread,
+// instance, kind, acquisition time) is stored in atomics so a failed try-lock
+// can report who held the lock at that instant. Diagnostics only: enter/exit
+// have exactly the same semantics as juce::SpinLock.
+enum AraLockKind {
+  kAraLockFree = 0,
+  kAraLockRender = 1,
+  kAraLockFull = 2
+};
+
+inline thread_local int araDiagLockInstance = -1;
+inline std::atomic<juce::int64> araLockOwnerThread{-1};
+inline std::atomic<int> araLockOwnerInstance{-1};
+inline std::atomic<int> araLockOwnerKind{kAraLockFree};
+inline std::atomic<double> araLockOwnerTimeMs{0.0};
+inline std::atomic<int> araLockFailureCount{0};
+inline std::atomic<juce::int64> araLockFailThread{-1};
+inline std::atomic<int> araLockFailInstance{-1};
+inline std::atomic<juce::int64> araLockFailOwnerThread{-1};
+inline std::atomic<int> araLockFailOwnerInstance{-1};
+inline std::atomic<int> araLockFailOwnerKind{-1};
+inline std::atomic<double> araLockFailOwnerHeldMs{-1.0};
+
+struct AraTrackedLock {
+  void noteAcquired(int kind) const noexcept {
+    araLockOwnerThread.store(araDiagThreadId(), std::memory_order_relaxed);
+    araLockOwnerInstance.store(araDiagLockInstance, std::memory_order_relaxed);
+    araLockOwnerKind.store(kind, std::memory_order_relaxed);
+    araLockOwnerTimeMs.store(juce::Time::getMillisecondCounterHiRes(),
+                             std::memory_order_relaxed);
+  }
+
+  void enter() const noexcept {
+    lock.enter();
+    noteAcquired(kAraLockFull);
+  }
+
+  void exit() const noexcept {
+    araLockOwnerKind.store(kAraLockFree, std::memory_order_relaxed);
+    araLockOwnerThread.store(-1, std::memory_order_relaxed);
+    araLockOwnerInstance.store(-1, std::memory_order_relaxed);
+    lock.exit();
+  }
+
+  bool tryEnter() const noexcept {
+    if (lock.tryEnter()) {
+      noteAcquired(kAraLockRender);
+      return true;
+    }
+    araLockFailureCount.fetch_add(1, std::memory_order_relaxed);
+    araLockFailThread.store(araDiagThreadId(), std::memory_order_relaxed);
+    araLockFailInstance.store(araDiagLockInstance, std::memory_order_relaxed);
+    const int ownerKind = araLockOwnerKind.load(std::memory_order_relaxed);
+    araLockFailOwnerThread.store(araLockOwnerThread.load(std::memory_order_relaxed),
+                                 std::memory_order_relaxed);
+    araLockFailOwnerInstance.store(
+        araLockOwnerInstance.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    araLockFailOwnerKind.store(ownerKind, std::memory_order_relaxed);
+    const double acquired = araLockOwnerTimeMs.load(std::memory_order_relaxed);
+    araLockFailOwnerHeldMs.store(
+        ownerKind == kAraLockFree || acquired <= 0.0
+            ? -1.0
+            : juce::Time::getMillisecondCounterHiRes() - acquired,
+        std::memory_order_relaxed);
+    return false;
+  }
+
+  mutable juce::SpinLock lock;
+};
 
 inline void araBypassNoteWrite(int value, int site, int instance, int offline) {
   const auto seq = araBypassWriteCount.fetch_add(1) + 1;

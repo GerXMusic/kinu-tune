@@ -8,6 +8,8 @@
 #include <atomic>
 #include <memory>
 
+#include "AraDiagnostics.h"
+
 // PROCESSED audio and project archive owned by the ARA audio modification, so
 // the analysed/processed result lives independently of the editor: the timeline
 // draws each clip from here and the playback renderer mixes from here, both of
@@ -27,6 +29,17 @@
 // is getLiveKey(), a process-local serial minted at construction.
 class PitchNetAudioModification final : public juce::ARAAudioModification {
 public:
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-146: the lock tracks its owner (thread, instance, kind) so a failed
+  // tryLock can report who held it. Same semantics as juce::SpinLock.
+  using ProcessedLockType = AraTrackedLock;
+  using ProcessedScopedLock = juce::GenericScopedLock<ProcessedLockType>;
+  using ProcessedScopedTryLock = juce::GenericScopedTryLock<ProcessedLockType>;
+#else
+  using ProcessedLockType = juce::SpinLock;
+  using ProcessedScopedLock = juce::SpinLock::ScopedLockType;
+  using ProcessedScopedTryLock = juce::SpinLock::ScopedTryLockType;
+#endif
   struct ProcessedRegionData {
     juce::AudioBuffer<float> audio;
     double sampleRate = 0.0;
@@ -76,7 +89,7 @@ public:
     if (const auto *sourceModification =
             dynamic_cast<const PitchNetAudioModification *>(
                 optionalModificationToClone)) {
-      const juce::SpinLock::ScopedLockType lock(
+      const ProcessedScopedLock lock(
           sourceModification->processedAudioLock);
       if (sourceModification->processedAudio != nullptr &&
           sourceModification->processedAudio->hasAudio()) {
@@ -106,14 +119,14 @@ public:
   void setProcessedAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRateIn,
                          juce::int64 startSampleInModificationIn) {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     if (processedAudio == nullptr)
       processedAudio = std::make_unique<ProcessedRegionData>();
     processedAudio->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
   }
 
   void clearProcessedAudio() {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     processedAudio.reset();
   }
 
@@ -121,14 +134,14 @@ public:
     if (data == nullptr || sizeInBytes == 0)
       return;
 
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     projectArchive = juce::MemoryBlock(data, sizeInBytes);
   }
 
   //============================================================================
   // Queries
   bool copyProjectArchive(juce::MemoryBlock &dest) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     if (projectArchive.getSize() == 0)
       return false;
 
@@ -137,19 +150,19 @@ public:
   }
 
   bool hasProjectArchive() const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     return projectArchive.getSize() > 0;
   }
 
   bool hasProcessedAudio() const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     return processedAudio != nullptr && processedAudio->hasAudio();
   }
 
   bool copyProcessedAudio(juce::AudioBuffer<float> &buffer,
                           double &sampleRateOut,
                           juce::int64 &startSampleOut) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     if (processedAudio == nullptr || !processedAudio->hasAudio())
       return false;
 
@@ -162,8 +175,8 @@ public:
   // Read access must hold the lock while the returned pointer is used on the
   // audio thread. tryLockProcessedAudio() gives a try-lock for the renderer so
   // it never blocks; getProcessedData() returns the raw pointer.
-  juce::SpinLock::ScopedTryLockType tryLockProcessedAudio() const {
-    return juce::SpinLock::ScopedTryLockType(processedAudioLock);
+  ProcessedScopedTryLock tryLockProcessedAudio() const {
+    return ProcessedScopedTryLock(processedAudioLock);
   }
 
   const ProcessedRegionData *getProcessedData() const noexcept {
@@ -182,7 +195,7 @@ public:
   //============================================================================
   // Persistence. Stream this modification's processed audio.
   bool writeProcessedAudioToStream(juce::OutputStream &output) const {
-    const juce::SpinLock::ScopedLockType lock(processedAudioLock);
+    const ProcessedScopedLock lock(processedAudioLock);
     if (processedAudio == nullptr || !processedAudio->hasAudio())
       return false;
 
@@ -244,7 +257,7 @@ private:
   }
 
   const juce::String liveKey;
-  mutable juce::SpinLock processedAudioLock;
+  mutable ProcessedLockType processedAudioLock;
   std::unique_ptr<ProcessedRegionData> processedAudio;
   mutable juce::MemoryBlock projectArchive;
 };
