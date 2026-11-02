@@ -154,10 +154,6 @@ struct AraBlockTrace {
   juce::int64 lockOwnerThread = 0;
   int lockOwnerInstance = -1;
   float lockHeldMs = -1.0f;
-  // D-147: bounded-wait outcome after a failed try-lock.
-  int lockWaited = 0;
-  int lockResolved = 0;
-  float lockWaitMs = 0.0f;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -263,9 +259,6 @@ inline void araBlockTraceFlush() {
         << " lockOwnerThread=" << juce::String::toHexString(r.lockOwnerThread)
         << " lockOwnerInstance=" << r.lockOwnerInstance
         << " lockHeldMs=" << juce::String(r.lockHeldMs, 3)
-        << " lockWaited=" << r.lockWaited
-        << " lockResolved=" << r.lockResolved
-        << " lockWaitMs=" << juce::String(r.lockWaitMs, 3)
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }

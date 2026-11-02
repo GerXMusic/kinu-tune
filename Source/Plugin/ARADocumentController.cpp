@@ -564,9 +564,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   juce::int64 diagLockOwnerThread = 0;
   int diagLockOwnerInstance = -1;
   double diagLockHeldMs = -1.0;
-  int diagLockWaited = 0;
-  int diagLockResolved = 0;
-  double diagLockWaitMs = 0.0;
   const juce::int64 diagThread = araDiagThreadId();
 #endif
 
@@ -603,11 +600,10 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     if (!bypassRaw) {
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
-      auto lock = modification->tryLockProcessedAudio();
+      const auto lock = modification->tryLockProcessedAudio();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
       diagProcLocked = lock.isLocked() ? 1 : 0;
       if (!lock.isLocked()) {
-        diagLockWaited = 1;
         diagLockFailCount = araLockFailureCount.load(std::memory_order_relaxed);
         diagLockOwnerKind = araLockFailOwnerKind.load(std::memory_order_relaxed);
         diagLockOwnerThread = araLockFailOwnerThread.load(std::memory_order_relaxed);
@@ -615,21 +611,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         diagLockHeldMs = araLockFailOwnerHeldMs.load(std::memory_order_relaxed);
       }
 #endif
-      // D-147: another render thread may hold this lock for a very short
-      // critical section (measured: 0.003-0.03 ms). Retry with a bounded wait
-      // (5 ms) before falling back to the raw source, so a block that asks for
-      // the processed audio gets it instead of dropping to raw.
-      if (!lock.isLocked()) {
-        const double waitStart = juce::Time::getMillisecondCounterHiRes();
-        const double deadline = waitStart + 5.0;
-        while (!lock.retryLock() &&
-               juce::Time::getMillisecondCounterHiRes() < deadline)
-          juce::Thread::yield();
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-        diagLockResolved = lock.isLocked() ? 1 : 0;
-        diagLockWaitMs = juce::Time::getMillisecondCounterHiRes() - waitStart;
-#endif
-      }
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
         // referencing it is a window onto that one edit layer, so they all
@@ -995,9 +976,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       record.lockOwnerThread = diagLockOwnerThread;
       record.lockOwnerInstance = diagLockOwnerInstance;
       record.lockHeldMs = static_cast<float>(diagLockHeldMs);
-      record.lockWaited = diagLockWaited;
-      record.lockResolved = diagLockResolved;
-      record.lockWaitMs = static_cast<float>(diagLockWaitMs);
       // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
