@@ -118,6 +118,11 @@ struct AraBlockTrace {
   // -2 = no owning processor, -3 = parameter unavailable.
   int owningParamMilli = -4;
   int owningInstance = -1;
+  // D-140: identity of the renderer and of the document controller it is
+  // bound to, plus the render number (1..N from the trace batches).
+  juce::int64 rendererId = 0;
+  juce::int64 docControllerId = 0;
+  int renderNumber = -1;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -196,6 +201,9 @@ inline void araBlockTraceFlush() {
         << " prevOffline=" << r.prevOffline
         << " owningParamMilli=" << r.owningParamMilli
         << " owningInstance=" << r.owningInstance
+        << " rendererId=" << juce::String::toHexString(r.rendererId)
+        << " docControllerId=" << juce::String::toHexString(r.docControllerId)
+        << " renderNumber=" << r.renderNumber
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -212,6 +220,9 @@ inline void araBlockTracePush(const AraBlockTrace &r) {
     araBlockTraceFlush();
   AraBlockTrace stored = r;
   stored.renderEpoch = araDiagRenderEpoch.load();
+  // D-140: the render number is the epoch (one increment per new block-time
+  // range: a new render or playback starts).
+  stored.renderNumber = stored.renderEpoch;
   araBlockTrace[araBlockTraceCount++] = stored;
   araBlockTraceLastT = r.t;
 }

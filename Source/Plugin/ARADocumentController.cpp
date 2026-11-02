@@ -862,6 +862,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       if (stable)
         record.writeFlags |= 1;
       record.readTimeMs = juce::Time::getMillisecondCounterHiRes();
+      // D-140: identity of the renderer and of its document controller.
+      record.rendererId =
+          static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(this));
+      record.docControllerId = static_cast<juce::int64>(
+          reinterpret_cast<juce::pointer_sized_int>(getDocController()));
       // D-139 pre-test: what the renderer itself can read as "host bypass
       // parameter", from the processor this document controller is bound to.
       if (auto *docCtrl = getDocController()) {
