@@ -77,6 +77,12 @@ namespace {
 constexpr std::uint32_t kPluginStateMagic = 0x504E5053u; // PNPS
 constexpr int kPluginStateBinaryVersion = 1;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-138: identity of each plugin instance in this process, so a write to the
+// static bypass flag can be attributed to the instance that made it.
+std::atomic<int> diagProcessorInstanceCounter{0};
+#endif
+
 bool writeStateString(juce::OutputStream &out, const juce::String &text) {
   const auto bytes = text.getNumBytesAsUTF8();
   return out.writeInt64(static_cast<juce::int64>(bytes)) &&
@@ -233,6 +239,11 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     :
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-138: identity of this plugin instance, so a write to the static bypass
+  // flag can be attributed to the instance that made it.
+  diagInstanceId = ++diagProcessorInstanceCounter;
+#endif
   // The standalone app does this at startup; a plug-in instance has no such
   // entry point, so the saved (or system) language is applied here instead.
   Localization::loadFromSettings();
@@ -558,6 +569,9 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     // processBlockForARA below), so "return, input passes through" mutes the
     // track. Render each region's raw source instead; the flag is cleared
     // before returning so the next non-bypassed block behaves normally.
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBypassNoteWrite(1, 0, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
     PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
     const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
     ARA_DIAG(juce::String("processBlock bypass: handled=") +
@@ -565,11 +579,17 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
              juce::String(buffer.getNumSamples()));
     if (handled) {
       sanitiseARAOutput(buffer);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      araBypassNoteWrite(0, 1, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
       PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
       return; // Bypass output = original ARA source audio
     }
     // Non-ARA (e.g. capture attempt): restore the flag and let the input
     // buffer pass through unchanged.
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBypassNoteWrite(0, 2, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
     PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
 #endif
     return; // Non-ARA: input buffer passes through unchanged
@@ -658,6 +678,9 @@ void PitchNetAudioProcessor::processBlockBypassed(
   // Same reason as the bypass branch of processBlock(): in ARA the input
   // buffer is not the audible track, so bypass here must render the regions'
   // raw ARA sources instead of leaving whatever the host handed in.
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  araBypassNoteWrite(1, 3, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
   PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
   const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
   ARA_DIAG(juce::String("processBlockBypassed: handled=") +
@@ -665,10 +688,16 @@ void PitchNetAudioProcessor::processBlockBypassed(
            juce::String(buffer.getNumSamples()));
   if (handled) {
     sanitiseARAOutput(buffer);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBypassNoteWrite(0, 4, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
     PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
     return; // Bypass output = original ARA source audio
   }
   // Non-ARA context: restore the flag and leave the input untouched.
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  araBypassNoteWrite(0, 5, diagInstanceId, isNonRealtime() ? 1 : 0);
+#endif
   PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
 #endif
 

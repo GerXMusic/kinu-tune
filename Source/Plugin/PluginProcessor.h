@@ -299,6 +299,11 @@ public:
 private:
   void handleAsyncUpdate() override;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-138: identity of this plugin instance (see the write trace).
+  int diagInstanceId = -1;
+#endif
+
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
     std::atomic<bool> posPending{false};

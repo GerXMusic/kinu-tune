@@ -534,7 +534,18 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 
   // Bypass: play every region's raw source, regardless of edits (see
   // setBypassRendersRawSources in the header).
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-138: pin the exact write that produces the value read below. The
+  // published word carries (value, sequence); if it does not change around
+  // the flag read, the metadata of that sequence is the writer.
+  const juce::uint64 diagWriteWordBefore =
+      araBypassValueSeq.load(std::memory_order_acquire);
+#endif
   const bool bypassRaw = bypassRendersRawSources();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  const juce::uint64 diagWriteWordAfter =
+      araBypassValueSeq.load(std::memory_order_acquire);
+#endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-134: per-block accounting. Read-only; it never changes which audio is
   // selected. rawAttempted/rawHadResources are aggregated over the regions
@@ -823,6 +834,36 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.maxDiffRaw = diagMaxDiffRaw;
     record.maxDiffProcessed = diagMaxDiffProcessed;
     record.refFlags = diagRefFlags;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-138: the write that produced the value this block read.
+    {
+      const bool stable = (diagWriteWordBefore == diagWriteWordAfter);
+      const juce::uint64 seq =
+          diagWriteWordBefore & ~(juce::uint64(1) << 63);
+      AraBypassWriteInfo info;
+      if (araBypassLookupWrite(seq, info)) {
+        record.writeValue = info.value;
+        record.writeSite = info.site;
+        record.writeInstance = info.instance;
+        record.writeOffline = info.offline;
+        record.writeThread = info.thread;
+        record.writeSeq = info.seq;
+        record.writeTimeMs = info.timeMs;
+        if (info.value == (bypassRaw ? 1 : 0))
+          record.writeFlags |= 2;
+        AraBypassWriteInfo previous;
+        if (seq > 1 && araBypassLookupWrite(seq - 1, previous)) {
+          record.prevValue = previous.value;
+          record.prevSite = previous.site;
+          record.prevInstance = previous.instance;
+          record.prevOffline = previous.offline;
+        }
+      }
+      if (stable)
+        record.writeFlags |= 1;
+      record.readTimeMs = juce::Time::getMillisecondCounterHiRes();
+    }
+#endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     // D-137: the bypass parameter of the project at this instant (the intent
     // of the render), next to the static flag the renderer read.
