@@ -140,6 +140,14 @@ struct AraBlockTrace {
   int keyAParamMilli = -2;
   int keyBInstance = -1;
   int keyBParamMilli = -2;
+  // D-145: why a B block renders processed or raw.
+  int procLocked = -1;      // tryLockProcessedAudio() succeeded
+  int procHasAudio = -1;    // processed data present and non-empty
+  float procFingerprint = 0.0f;
+  int publishCount = -1;    // publish[edit]/[render] events since process start
+  float msSincePublish = -1.0f;
+  int editorOpen = -1;      // this document controller has a main component
+  int publisherInstance = -1; // instance that published last (-1 = none)
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -233,6 +241,13 @@ inline void araBlockTraceFlush() {
         << " keyAParamMilli=" << r.keyAParamMilli
         << " keyBInstance=" << r.keyBInstance
         << " keyBParamMilli=" << r.keyBParamMilli
+        << " procLocked=" << r.procLocked
+        << " procHasAudio=" << r.procHasAudio
+        << " procFingerprint=" << juce::String(r.procFingerprint, 6)
+        << " publishCount=" << r.publishCount
+        << " msSincePublish=" << juce::String(r.msSincePublish, 3)
+        << " editorOpen=" << r.editorOpen
+        << " publisherInstance=" << r.publisherInstance
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -328,6 +343,19 @@ inline void araSnapshotProcessors(std::vector<AraProcessorEntry> &out) {
 // single slot: "the FX registers itself" attempt). Value in milli-units.
 inline std::atomic<int> araPrepareInstance{-1};
 inline std::atomic<int> araPrepareParamMilli{-2};
+
+// D-145: publish events (publish[edit]/publish[render]) and who published
+// last. Only diagnostics: it does not change what is published.
+inline std::atomic<int> araPublishCount{0};
+inline std::atomic<double> araPublishLastMs{0.0};
+inline std::atomic<int> araPublishInstance{-1};
+
+inline void araNotePublish(int instance) {
+  araPublishCount.fetch_add(1, std::memory_order_relaxed);
+  araPublishLastMs.store(juce::Time::getMillisecondCounterHiRes(),
+                         std::memory_order_relaxed);
+  araPublishInstance.store(instance, std::memory_order_relaxed);
+}
 
 // D-143: track identity. The host's region-sequence host reference is the
 // track id (never the controller pointer). Each processor that sees a region

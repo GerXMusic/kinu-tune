@@ -1685,6 +1685,9 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                        " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
                        " changedRanges=" +
                        juce::String(static_cast<int>(renderChangedSampleRanges.size())));
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+              araNotePublish(diagInstanceId);
+#endif
               renderModification->setProcessedAudio(
                   processedSlice, processedRate,
                   /*startSampleInModification*/ 0);
@@ -1820,6 +1823,9 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
                  juce::String(processed.getNumSamples()) + " rate=" +
                  juce::String(processedRate, 1) + " offset=0" +
                  " fp=" + juce::String(araDiagFingerprint(processed), 6));
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        araNotePublish(diagInstanceId);
+#endif
         activeModification->setProcessedAudio(processed, processedRate,
                                               /*startSampleInModification*/ 0);
 

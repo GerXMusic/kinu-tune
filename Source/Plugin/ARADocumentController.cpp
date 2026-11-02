@@ -556,6 +556,9 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   int diagRawHadResources = 0;
   int diagProcessedRendered = 0;
   bool diagRawPathRan = false;
+  int diagProcLocked = -1;
+  int diagProcHasAudio = -1;
+  float diagProcFingerprint = 0.0f;
   const juce::int64 diagThread = araDiagThreadId();
 #endif
 
@@ -593,6 +596,9 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
       const auto lock = modification->tryLockProcessedAudio();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      diagProcLocked = lock.isLocked() ? 1 : 0;
+#endif
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
         // referencing it is a window onto that one edit layer, so they all
@@ -600,6 +606,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         // existed when regions owned their own state and a shared fallback
         // would have made an unedited region play an edited sibling's audio.
         const auto *data = modification->getProcessedData();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        diagProcHasAudio = (data != nullptr && data->hasAudio()) ? 1 : 0;
+        if (data != nullptr && data->hasAudio())
+          diagProcFingerprint = araDiagFingerprint(data->audio);
+#endif
         if (data != nullptr && data->hasAudio()) {
           auto *source = modification->getAudioSource();
           const double modificationRate =
@@ -932,6 +943,21 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         record.keyAInstance = -1; // no host track id exists at creation
         record.keyAParamMilli = -2;
       }
+      // D-145: why this block rendered processed or raw.
+      record.procLocked = diagProcLocked;
+      record.procHasAudio = diagProcHasAudio;
+      record.procFingerprint = diagProcFingerprint;
+      record.publishCount = araPublishCount.load(std::memory_order_relaxed);
+      const double lastPublish = araPublishLastMs.load(std::memory_order_relaxed);
+      record.msSincePublish =
+          lastPublish > 0.0
+              ? static_cast<float>(juce::Time::getMillisecondCounterHiRes() - lastPublish)
+              : -1.0f;
+      record.publisherInstance = araPublishInstance.load(std::memory_order_relaxed);
+      record.editorOpen = (getDocController() != nullptr &&
+                           getDocController()->getMainComponent() != nullptr)
+                              ? 1
+                              : 0;
       // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
