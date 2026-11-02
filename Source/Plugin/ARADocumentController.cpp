@@ -901,6 +901,37 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         record.editorInstance = -2;
         record.maxParamInstance = -2;
       }
+      // D-143: identity key. The renderer's own track is the region sequence of
+      // its playback regions; key (b) looks up the instance registered under
+      // that host ref. Key (a) is the marker registered at processor creation,
+      // where no host track id exists (-1 = not available).
+      {
+        juce::uint64 trackRef = 0;
+        juce::int64 trackHash = 0;
+        for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+          if (region == nullptr)
+            continue;
+          auto *sequence = region->getRegionSequence();
+          if (sequence == nullptr)
+            continue;
+          trackRef = static_cast<juce::uint64>(
+              reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+          trackHash = araHashName(sequence->getName());
+          break;
+        }
+        record.trackRef = static_cast<juce::int64>(trackRef);
+        record.trackHash = trackHash;
+        int instance = -1;
+        void *processor = nullptr;
+        if (araLookupTrackRef(trackRef, instance, processor)) {
+          record.keyBInstance = instance;
+          if (auto *p = static_cast<PitchNetAudioProcessor *>(processor))
+            record.keyBParamMilli = static_cast<int>(std::lround(
+                p->getBypassParamForDiagnostics() * 1000.0f));
+        }
+        record.keyAInstance = -1; // no host track id exists at creation
+        record.keyAParamMilli = -2;
+      }
       // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {

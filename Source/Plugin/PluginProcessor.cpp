@@ -347,6 +347,76 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   if (isPlaybackRenderer())
     ensureHeadlessAraBinding();
 #endif
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-143: which role is this instance, which region sequences (tracks) it
+  // sees, and their host refs (the track identity used by key (b)).
+  {
+    juce::String roles;
+    if (isPlaybackRenderer())
+      roles += "P";
+    if (isEditorRenderer())
+      roles += "E";
+    juce::String sequences;
+    auto collect = [this, &sequences](auto *renderer) {
+      for (auto *region : renderer->getPlaybackRegions()) {
+        if (region == nullptr)
+          continue;
+        auto *sequence = region->getRegionSequence();
+        if (sequence == nullptr)
+          continue;
+        const char *name = sequence->getName();
+        const auto ref = static_cast<juce::uint64>(
+            reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+        sequences << " [" << (name != nullptr ? name : "?") << " ref="
+                  << juce::String::toHexString(static_cast<juce::int64>(ref))
+                  << " h=" << juce::String::toHexString(araHashName(name)) << "]";
+        // D-143: only the FX role registers as the identity source; the
+        // playback renderer just reports its own track. Registering from the
+        // renderer would map the track to the renderer instance, not the FX.
+      }
+    };
+    if (auto *playback = getPlaybackRenderer<PitchNetPlaybackRenderer>())
+      collect(playback);
+    if (auto *editor = getEditorRenderer<PitchNetEditorRenderer>()) {
+      // The editor renderer may have no playback regions but it does have the
+      // document's region sequences (tracks) - that is the key the FX instance
+      // can read for itself.
+      for (auto *sequence : editor->getRegionSequences()) {
+        if (sequence == nullptr)
+          continue;
+        const char *name = sequence->getName();
+        const auto ref = static_cast<juce::uint64>(
+            reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+        sequences << " [" << (name != nullptr ? name : "?") << " ref="
+                  << juce::String::toHexString(static_cast<juce::int64>(ref))
+                  << " h=" << juce::String::toHexString(araHashName(name)) << "]";
+        araRegisterTrackRef(ref, diagInstanceId, this);
+      }
+      // Also the document's sequences (what the FX instance can reach through
+      // its editor renderer's document controller): informational only, they
+      // are NOT registered - the document is shared and would map a track id
+      // to the wrong instance (D-143).
+      if (auto *dc = editor->getDocumentController()) {
+        if (auto *doc = dc->getDocument()) {
+          for (auto *sequence : doc->getRegionSequences()) {
+            if (sequence == nullptr)
+              continue;
+            const char *name = sequence->getName();
+            const auto ref = static_cast<juce::uint64>(
+                reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+            sequences << " {doc:" << (name != nullptr ? name : "?") << " ref="
+                      << juce::String::toHexString(static_cast<juce::int64>(ref))
+                      << "}";
+          }
+        }
+      }
+    }
+    ARA_DIAG("D143 role: instance=" + juce::String(diagInstanceId) + " roles=" +
+             roles + " bypass=" +
+             juce::String(getBypassParamForDiagnostics(), 3) + " seqs=" +
+             sequences);
+  }
+#endif
 
   // Non-ARA capture controller.
   //

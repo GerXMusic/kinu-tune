@@ -131,6 +131,15 @@ struct AraBlockTrace {
   // D-142: route (c): the last processor that called prepareToPlay.
   int routeCInstance = -1;
   int routeCParamMilli = -2;
+  // D-143: identity key. trackHash = hash of the renderer's own track name;
+  // keyB = instance resolved by the track-host-ref registry; keyA = marker
+  // registered at processor creation (no host track id exists then).
+  juce::int64 trackHash = 0;
+  juce::int64 trackRef = 0;
+  int keyAInstance = -1;
+  int keyAParamMilli = -2;
+  int keyBInstance = -1;
+  int keyBParamMilli = -2;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -218,6 +227,12 @@ inline void araBlockTraceFlush() {
         << " maxParamMilli=" << r.maxParamMilli
         << " routeCInstance=" << r.routeCInstance
         << " routeCParamMilli=" << r.routeCParamMilli
+        << " trackHash=" << juce::String::toHexString(r.trackHash)
+        << " trackRef=" << juce::String::toHexString(r.trackRef)
+        << " keyAInstance=" << r.keyAInstance
+        << " keyAParamMilli=" << r.keyAParamMilli
+        << " keyBInstance=" << r.keyBInstance
+        << " keyBParamMilli=" << r.keyBParamMilli
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -313,6 +328,60 @@ inline void araSnapshotProcessors(std::vector<AraProcessorEntry> &out) {
 // single slot: "the FX registers itself" attempt). Value in milli-units.
 inline std::atomic<int> araPrepareInstance{-1};
 inline std::atomic<int> araPrepareParamMilli{-2};
+
+// D-143: track identity. The host's region-sequence host reference is the
+// track id (never the controller pointer). Each processor that sees a region
+// sequence registers its instance under that id; the renderer looks up its own.
+struct AraTrackEntry {
+  juce::uint64 ref = 0;
+  int instance = -1;
+  void *processor = nullptr;
+};
+inline juce::SpinLock araTrackRegistryLock;
+inline std::vector<AraTrackEntry> araTrackRegistry;
+
+inline void araRegisterTrackRef(juce::uint64 ref, int instance,
+                                void *processor) {
+  if (ref == 0)
+    return;
+  const juce::SpinLock::ScopedLockType lock(araTrackRegistryLock);
+  for (auto &entry : araTrackRegistry) {
+    if (entry.ref == ref) {
+      entry.instance = instance;
+      entry.processor = processor;
+      return;
+    }
+  }
+  araTrackRegistry.push_back({ref, instance, processor});
+}
+
+inline bool araLookupTrackRef(juce::uint64 ref, int &instance,
+                              void *&processor) {
+  if (ref == 0)
+    return false;
+  const juce::SpinLock::ScopedTryLockType lock(araTrackRegistryLock);
+  if (!lock.isLocked())
+    return false;
+  for (const auto &entry : araTrackRegistry) {
+    if (entry.ref == ref) {
+      instance = entry.instance;
+      processor = entry.processor;
+      return true;
+    }
+  }
+  return false;
+}
+
+inline juce::int64 araHashName(const char *text) {
+  // FNV-1a 64
+  juce::uint64 hash = 1469598103934665603ull;
+  if (text != nullptr)
+    for (const char *p = text; *p != '\0'; ++p) {
+      hash ^= static_cast<unsigned char>(*p);
+      hash *= 1099511628211ull;
+    }
+  return static_cast<juce::int64>(hash);
+}
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,
                                   juce::int64 thread) {
