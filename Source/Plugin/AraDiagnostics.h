@@ -140,9 +140,6 @@ struct AraBlockTrace {
   int keyAParamMilli = -2;
   int keyBInstance = -1;
   int keyBParamMilli = -2;
-  // D-144: 0 = static flag fallback, 1 = intent read from this track's FX
-  // instance via the host-ref key.
-  int bypassSource = -1;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -236,7 +233,6 @@ inline void araBlockTraceFlush() {
         << " keyAParamMilli=" << r.keyAParamMilli
         << " keyBInstance=" << r.keyBInstance
         << " keyBParamMilli=" << r.keyBParamMilli
-        << " bypassSource=" << r.bypassSource
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }

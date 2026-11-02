@@ -7,7 +7,6 @@
 #include "../Utils/Constants.h"
 #include "PluginProcessor.h"
 #include "PitchNetAudioModification.h"
-#include "FxTrackRegistry.h"
 #include "../UI/IMainView.h"
 
 #include <algorithm>
@@ -542,35 +541,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   const juce::uint64 diagWriteWordBefore =
       araBypassValueSeq.load(std::memory_order_acquire);
 #endif
-  bool bypassRaw = bypassRendersRawSources();
+  const bool bypassRaw = bypassRendersRawSources();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   const juce::uint64 diagWriteWordAfter =
       araBypassValueSeq.load(std::memory_order_acquire);
-  int diagBypassSource = 0;
 #endif
-  // D-144: the bypass intent belongs to this track's FX instance, not to a
-  // process-wide flag. Resolve this renderer's track by the host's region
-  // sequence reference and read the intent from that instance. The static
-  // flag above stays as the fallback when the key does not resolve.
-  {
-    juce::uint64 trackKey = 0;
-    for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
-      if (region == nullptr)
-        continue;
-      auto *sequence = region->getRegionSequence();
-      if (sequence == nullptr)
-        continue;
-      trackKey = static_cast<juce::uint64>(
-          reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
-      break;
-    }
-    if (auto *fx = PitchNetFxTrackRegistry::findTrack(trackKey)) {
-      bypassRaw = fx->isBypassRequestedByHost();
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-      diagBypassSource = 1;
-#endif
-    }
-  }
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-134: per-block accounting. Read-only; it never changes which audio is
   // selected. rawAttempted/rawHadResources are aggregated over the regions
@@ -956,7 +931,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         }
         record.keyAInstance = -1; // no host track id exists at creation
         record.keyAParamMilli = -2;
-        record.bypassSource = diagBypassSource;
       }
       // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {

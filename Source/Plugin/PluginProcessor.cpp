@@ -12,7 +12,6 @@
 #include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
 #include "ARADocumentController.h"
-#include "FxTrackRegistry.h"
 #include "AraDiagnostics.h"
 #include "PitchNetAudioModification.h"
 #include "PluginEditor.h"
@@ -347,22 +346,6 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   // source) regardless of whether state restore ran before or after this.
   if (isPlaybackRenderer())
     ensureHeadlessAraBinding();
-#endif
-#if JucePlugin_Enable_ARA
-  // D-144: the FX instance registers its own track identity (the host's region
-  // sequence reference) so the playback renderer can read the bypass intent
-  // from THIS instance. The editor renderer exposes the track even when the
-  // plugin UI is closed.
-  if (auto *editor = getEditorRenderer<PitchNetEditorRenderer>()) {
-    for (auto *sequence : editor->getRegionSequences()) {
-      if (sequence == nullptr)
-        continue;
-      PitchNetFxTrackRegistry::registerTrack(
-          static_cast<juce::uint64>(
-              reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef())),
-          this);
-    }
-  }
 #endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-143: which role is this instance, which region sequences (tracks) it
@@ -3617,10 +3600,6 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
-#if JucePlugin_Enable_ARA
-  // D-144: no stale FX pointers in the track registry.
-  PitchNetFxTrackRegistry::unregisterProcessor(this);
-#endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   ARA_DIAG("D141 instance destroyed: " + juce::String(diagInstanceId));
   araUnregisterProcessor(diagInstanceId);
