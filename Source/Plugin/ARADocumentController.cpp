@@ -867,13 +867,43 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
           static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(this));
       record.docControllerId = static_cast<juce::int64>(
           reinterpret_cast<juce::pointer_sized_int>(getDocController()));
-      // D-139 pre-test: what the renderer itself can read as "host bypass
-      // parameter", from the processor this document controller is bound to.
+      // D-141: editor processor and the highest bypass parameter among the
+      // live instances (candidate B-b, measured, not assumed).
+      if (auto *docCtrl = getDocController()) {
+        if (auto *editor = docCtrl->getEditorProcessorForDiagnostics()) {
+          record.editorInstance = editor->getDiagInstanceId();
+          record.editorParamMilli = static_cast<int>(std::lround(
+              editor->getBypassParamForDiagnostics() * 1000.0f));
+        }
+        static thread_local std::vector<AraProcessorEntry> diagEntries;
+        diagEntries.clear();
+        araSnapshotProcessors(diagEntries);
+        int bestInstance = -1;
+        float bestValue = -1.0f;
+        for (const auto &entry : diagEntries) {
+          auto *processor =
+              static_cast<PitchNetAudioProcessor *>(entry.processor);
+          if (processor == nullptr)
+            continue;
+          const float value = processor->getBypassParamForDiagnostics();
+          if (value > bestValue) {
+            bestValue = value;
+            bestInstance = processor->getDiagInstanceId();
+          }
+        }
+        record.maxParamInstance = bestInstance;
+        record.maxParamMilli =
+            bestValue < 0.0f ? -2 : static_cast<int>(std::lround(bestValue * 1000.0f));
+      } else {
+        record.editorInstance = -2;
+        record.maxParamInstance = -2;
+      }
+      // D-139/D-140: the processor this controller is bound to (owning key).
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
           record.owningInstance = processor->getDiagInstanceId();
-          record.owningParamMilli =
-              static_cast<int>(std::lround(processor->getBypassParamForDiagnostics() * 1000.0f));
+          record.owningParamMilli = static_cast<int>(std::lround(
+              processor->getBypassParamForDiagnostics() * 1000.0f));
         } else {
           record.owningInstance = -1;
           record.owningParamMilli = -2;
@@ -1726,8 +1756,7 @@ PitchNetDocumentController::~PitchNetDocumentController() {
     analysisJoinerThread.join();
 }
 
-void PitchNetDocumentController::setMainComponent(IMainView *mc) {
-  if (mc == nullptr && mainComponent != nullptr) {
+void PitchNetDocumentController::setMainComponent(IMainView *mc) {  if (mc == nullptr && mainComponent != nullptr) {
     stopAnalysisThread();
     currentAudioSource = nullptr;
   }
@@ -1814,6 +1843,11 @@ void PitchNetDocumentController::setOwningProcessor(
     return;
   }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("D141 bind owning: instance=" +
+           juce::String(processor->getDiagInstanceId()) + " dc=" +
+           ARA_DIAG_PTR(this));
+#endif
   owningProcessor = processor;
   ensureHeadlessPlaybackBinding();
   flushPendingAraRegionProjects();
@@ -1833,6 +1867,12 @@ void PitchNetDocumentController::releaseOwningProcessor(
 
 void PitchNetDocumentController::setEditorProcessor(
     PitchNetAudioProcessor *processor) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  if (processor != nullptr)
+    ARA_DIAG("D141 bind editor: instance=" +
+             juce::String(processor->getDiagInstanceId()) + " dc=" +
+             ARA_DIAG_PTR(this));
+#endif
   editorProcessor = processor;
   flushPendingAraRegionProjects();
 }

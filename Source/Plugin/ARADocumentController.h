@@ -501,6 +501,10 @@ public:
   PitchNetAudioProcessor *getOwningProcessorForDiagnostics() const {
     return owningProcessor;
   }
+  // D-141: the editor processor, if any, as another association key.
+  PitchNetAudioProcessor *getEditorProcessorForDiagnostics() const {
+    return editorProcessor;
+  }
 #endif
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(

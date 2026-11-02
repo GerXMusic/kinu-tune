@@ -123,6 +123,11 @@ struct AraBlockTrace {
   juce::int64 rendererId = 0;
   juce::int64 docControllerId = 0;
   int renderNumber = -1;
+  // D-141: the other association keys and the bypass candidates.
+  int editorInstance = -1;
+  int editorParamMilli = -2;
+  int maxParamInstance = -1;
+  int maxParamMilli = -2;
 };
 
 // D-138: last writes to the static bypass flag (multi-writer, diag only).
@@ -204,6 +209,10 @@ inline void araBlockTraceFlush() {
         << " rendererId=" << juce::String::toHexString(r.rendererId)
         << " docControllerId=" << juce::String::toHexString(r.docControllerId)
         << " renderNumber=" << r.renderNumber
+        << " editorInstance=" << r.editorInstance
+        << " editorParamMilli=" << r.editorParamMilli
+        << " maxParamInstance=" << r.maxParamInstance
+        << " maxParamMilli=" << r.maxParamMilli
         << " renderEpoch=" << r.renderEpoch
         << " thread=" << juce::String::toHexString(r.thread) << "\n";
   }
@@ -261,6 +270,38 @@ inline bool araBypassLookupWrite(juce::uint64 seq, AraBypassWriteInfo &out) {
   out.thread = slot.thread;
   out.timeMs = slot.timeMs;
   return slot.seq.load(std::memory_order_acquire) == seq;
+}
+
+// D-141: diagnostic registry of live processor instances, keyed by instance id
+// (never by controller pointer). It is only used to read each instance's
+// bypass parameter for the render trace.
+struct AraProcessorEntry {
+  int instance = -1;
+  void *processor = nullptr;
+};
+inline juce::SpinLock araProcessorRegistryLock;
+inline std::vector<AraProcessorEntry> araProcessorRegistry;
+
+inline void araRegisterProcessor(int instance, void *processor) {
+  const juce::SpinLock::ScopedLockType lock(araProcessorRegistryLock);
+  araProcessorRegistry.push_back({instance, processor});
+}
+
+inline void araUnregisterProcessor(int instance) {
+  const juce::SpinLock::ScopedLockType lock(araProcessorRegistryLock);
+  araProcessorRegistry.erase(
+      std::remove_if(araProcessorRegistry.begin(), araProcessorRegistry.end(),
+                     [instance](const AraProcessorEntry &entry) {
+                       return entry.instance == instance;
+                     }),
+      araProcessorRegistry.end());
+}
+
+inline void araSnapshotProcessors(std::vector<AraProcessorEntry> &out) {
+  const juce::SpinLock::ScopedTryLockType lock(araProcessorRegistryLock);
+  if (!lock.isLocked())
+    return;
+  out = araProcessorRegistry;
 }
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,

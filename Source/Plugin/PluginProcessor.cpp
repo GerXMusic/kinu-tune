@@ -243,6 +243,9 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   // D-138: identity of this plugin instance, so a write to the static bypass
   // flag can be attributed to the instance that made it.
   diagInstanceId = ++diagProcessorInstanceCounter;
+  // D-141: registry of live instances (key = id, never a controller pointer).
+  araRegisterProcessor(diagInstanceId, this);
+  ARA_DIAG("D141 instance created: " + juce::String(diagInstanceId));
 #endif
   // The standalone app does this at startup; a plug-in instance has no such
   // entry point, so the saved (or system) language is applied here instead.
@@ -3485,6 +3488,9 @@ void PitchNetAudioProcessor::ensureHeadlessAraBinding() {
   // so loading a saved project with the UI closed still wires the playback
   // renderer to the realtime processor and can restore project state.
   if (auto *pr = getPlaybackRenderer<PitchNetPlaybackRenderer>()) {
+    ARA_DIAG("D141 headless: instance=" + juce::String(diagInstanceId) +
+             " renderer=" + ARA_DIAG_PTR(pr) + " dc=" +
+             ARA_DIAG_PTR(pr->getDocController()));
     if (auto *dc = pr->getDocController()) {
       setAraDocumentController(dc);
 
@@ -3515,6 +3521,10 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("D141 instance destroyed: " + juce::String(diagInstanceId));
+  araUnregisterProcessor(diagInstanceId);
+#endif
   // Cancel every backend before member destruction starts joining workers.
   for (auto& entry : modificationRenders)
     if (entry.second.controller) entry.second.controller->requestShutdown();
