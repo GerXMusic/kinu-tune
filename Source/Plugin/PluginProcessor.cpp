@@ -419,6 +419,39 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
              roles + " bypass=" +
              juce::String(getBypassParamForDiagnostics(), 3) + " seqs=" +
              sequences);
+
+    // D-151: the track this instance renders, resolved here (message thread)
+    // for the bypass-write suppression. The editor role (the FX instance that
+    // writes the flag) exposes its own sequence through the editor renderer;
+    // the playback role through its playback regions. If neither is available
+    // yet, leave it unresolved; the next prepare retries.
+    {
+      int state = -1;
+      auto scanPlayback = [&state](auto *renderer) {
+        for (auto *region : renderer->getPlaybackRegions()) {
+          if (region == nullptr)
+            continue;
+          auto *sequence = region->getRegionSequence();
+          if (sequence == nullptr)
+            continue;
+          state = araHashName(sequence->getName()) == araHashName("A") ? 1 : 0;
+          return;
+        }
+      };
+      if (auto *playback = getPlaybackRenderer<PitchNetPlaybackRenderer>())
+        scanPlayback(playback);
+      if (state < 0) {
+        if (auto *editor = getEditorRenderer<PitchNetEditorRenderer>()) {
+          for (auto *sequence : editor->getRegionSequences()) {
+            if (sequence == nullptr)
+              continue;
+            state = araHashName(sequence->getName()) == araHashName("A") ? 1 : 0;
+            break;
+          }
+        }
+      }
+      diagIsTrackA.store(state, std::memory_order_relaxed);
+    }
   }
 #endif
 
@@ -626,6 +659,24 @@ void PitchNetAudioProcessor::checkParameterChanges() {
 // Process Block
 // ============================================================================
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+bool PitchNetAudioProcessor::diagShouldSuppressBypassWrites() noexcept {
+  if (!araDiagSuppressBypassWrites())
+    return false;
+  // D-151: resolved once per prepareToPlay (message thread) from the region
+  // sequence this instance renders; the audio thread only reads the cache.
+  return diagIsTrackA.load(std::memory_order_relaxed) == 1;
+}
+
+void PitchNetAudioProcessor::diagWriteBypassFlag(bool value, int site,
+                                                 bool offline) noexcept {
+  if (diagShouldSuppressBypassWrites())
+    return;
+  araBypassNoteWrite(value ? 1 : 0, site, diagInstanceId, offline ? 1 : 0);
+  PitchNetPlaybackRenderer::setBypassRendersRawSources(value);
+}
+#endif
+
 void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                            juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
@@ -659,28 +710,19 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     // processBlockForARA below), so "return, input passes through" mutes the
     // track. Render each region's raw source instead; the flag is cleared
     // before returning so the next non-bypassed block behaves normally.
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    araBypassNoteWrite(1, 0, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-    PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
+    diagWriteBypassFlag(true, 0, isNonRealtime());
     const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
     ARA_DIAG(juce::String("processBlock bypass: handled=") +
              (handled ? "1" : "0") + " samples=" +
              juce::String(buffer.getNumSamples()));
     if (handled) {
       sanitiseARAOutput(buffer);
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-      araBypassNoteWrite(0, 1, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-      PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+      diagWriteBypassFlag(false, 1, isNonRealtime());
       return; // Bypass output = original ARA source audio
     }
     // Non-ARA (e.g. capture attempt): restore the flag and let the input
     // buffer pass through unchanged.
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    araBypassNoteWrite(0, 2, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-    PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+    diagWriteBypassFlag(false, 2, isNonRealtime());
 #endif
     return; // Non-ARA: input buffer passes through unchanged
   }
@@ -768,27 +810,18 @@ void PitchNetAudioProcessor::processBlockBypassed(
   // Same reason as the bypass branch of processBlock(): in ARA the input
   // buffer is not the audible track, so bypass here must render the regions'
   // raw ARA sources instead of leaving whatever the host handed in.
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  araBypassNoteWrite(1, 3, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-  PitchNetPlaybackRenderer::setBypassRendersRawSources(true);
+  diagWriteBypassFlag(true, 3, isNonRealtime());
   const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
   ARA_DIAG(juce::String("processBlockBypassed: handled=") +
            (handled ? "1" : "0") + " samples=" +
            juce::String(buffer.getNumSamples()));
   if (handled) {
     sanitiseARAOutput(buffer);
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    araBypassNoteWrite(0, 4, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-    PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+    diagWriteBypassFlag(false, 4, isNonRealtime());
     return; // Bypass output = original ARA source audio
   }
   // Non-ARA context: restore the flag and leave the input untouched.
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  araBypassNoteWrite(0, 5, diagInstanceId, isNonRealtime() ? 1 : 0);
-#endif
-  PitchNetPlaybackRenderer::setBypassRendersRawSources(false);
+  diagWriteBypassFlag(false, 5, isNonRealtime());
 #endif
 
   // Input passes through unchanged (buffer already contains input)

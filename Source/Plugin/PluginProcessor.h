@@ -311,6 +311,18 @@ private:
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-138: identity of this plugin instance (see the write trace).
   int diagInstanceId = -1;
+  // D-151: 1 = this instance renders track "A" (cached), 0 = another track,
+  // -1 = not resolved yet. Diagnostics only.
+  std::atomic<int> diagIsTrackA{-1};
+#endif
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  bool diagShouldSuppressBypassWrites() noexcept;
+  void diagWriteBypassFlag(bool value, int site, bool offline) noexcept;
+#else
+  static void diagWriteBypassFlag(bool value, int, bool) noexcept {
+    PitchNetPlaybackRenderer::setBypassRendersRawSources(value);
+  }
 #endif
 
   struct HostUiSyncState {

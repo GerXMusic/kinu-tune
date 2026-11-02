@@ -520,6 +520,22 @@ inline int araDiagForceTrackA() {
   return value;
 }
 
+// D-151: diagnostic-only suppression of the bypass-flag writes from the
+// processor of track "A", so the measurement can test whether B's reads of
+// the flag come from those writes. Read once from the environment; it never
+// affects the production build.
+inline bool araDiagSuppressBypassWrites() {
+  static const bool value = [] {
+    const char *env = std::getenv("PITCHCORE_DIAG_SUPPRESS_A_WRITES");
+    if (env == nullptr)
+      return false;
+    const juce::String text(env);
+    return text == "1" || text.equalsIgnoreCase("yes") ||
+           text.equalsIgnoreCase("true");
+  }();
+  return value;
+}
+
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,
                                   juce::int64 thread) {
   AraBlockTrace record;
