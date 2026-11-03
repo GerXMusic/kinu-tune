@@ -532,6 +532,14 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // it.
   bool renderedAny = false;
 
+  // D-152: before the document has consumed its archive, processed audio is
+  // not eligible even if a stale snapshot exists. The raw path below is the
+  // startup fallback; docCtrl == nullptr is handled by processBlock before
+  // this function is reached.
+  const auto *hydrationDocCtrl = getDocController();
+  const bool documentHydrated =
+      hydrationDocCtrl != nullptr && hydrationDocCtrl->isDocumentHydrated();
+
   // Bypass: play every region's raw source, regardless of edits (see
   // setBypassRendersRawSources in the header).
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
@@ -619,7 +627,7 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 
     bool renderedRegion = false;
 
-    if (!bypassRaw) {
+    if (!bypassRaw && documentHydrated) {
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
         // D-152: load the latest immutable generation once and keep it alive
@@ -847,8 +855,8 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.t = timeInSamples;
     record.n = numSamples;
     record.exitCode = 0;
-    if (auto *hydrationDocCtrl = getDocController())
-      record.hydrated = hydrationDocCtrl->diagDocumentHydrated() ? 1 : 0;
+    if (auto *traceDocCtrl = getDocController())
+      record.hydrated = traceDocCtrl->isDocumentHydrated() ? 1 : 0;
     record.bypassRaw = bypassRaw ? 1 : 0;
     record.regions = diagRegions;
     record.intersecting = diagIntersecting;
@@ -1051,7 +1059,7 @@ bool PitchNetPlaybackRenderer::processBlock(
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     araBlockTracePushExit(2, posInfo.getTimeInSamples().orFallback(0),
                            buffer.getNumSamples(), araDiagThreadId(),
-                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+                           docCtrl->isDocumentHydrated() ? 1 : 0);
 #endif
     buffer.clear();
     return true;
@@ -1101,7 +1109,7 @@ bool PitchNetPlaybackRenderer::processBlock(
   if (!isPlaying) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     araBlockTracePushExit(3, timeInSamples, numSamples, araDiagThreadId(),
-                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+                           docCtrl->isDocumentHydrated() ? 1 : 0);
 #endif
     notifyHostPlayState(false);
     notifyHostStopped();
@@ -1112,7 +1120,7 @@ bool PitchNetPlaybackRenderer::processBlock(
   if (!hasPlaybackRegions) {
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     araBlockTracePushExit(4, timeInSamples, numSamples, araDiagThreadId(),
-                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+                           docCtrl->isDocumentHydrated() ? 1 : 0);
 #endif
     notifyHostPlayState(true);
     buffer.clear();
@@ -2520,9 +2528,7 @@ void PitchNetDocumentController::willDestroyAudioModification(
   if (modification == nullptr)
     return;
 
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   diagNoteModificationDestroyed(modification->wasRestoredFromArchive());
-#endif
 
   if (currentPlaybackRegion != nullptr &&
       currentPlaybackRegion->getAudioModification() == audioModification) {
@@ -2916,9 +2922,7 @@ juce::ARAAudioModification *PitchNetDocumentController::doCreateAudioModificatio
 
   auto *created = new PitchNetAudioModification(audioSource, hostRef,
                                                optionalModificationToClone);
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   diagNoteModificationCreated();
-#endif
   ARA_DIAG("createMod mod=" + ARA_DIAG_PTR(created) +
            " src=" + ARA_DIAG_PTR(audioSource) + " clonedFrom=" +
            (optionalModificationToClone
@@ -2944,6 +2948,9 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
     // and dropped rather than restored.
     const bool payloadIsUsable =
         version >= kPitchNetAraFirstModificationTimeArchiveVersion;
+    // D-152: the renderer may only use processed audio once the document has
+    // consumed its archive. Any successful restore ends with hydrated=true.
+    setDocumentHydrated(false);
 
     auto restoreProjectArchive = [this](const juce::MemoryBlock &data) {
       if (data.getSize() == 0)
@@ -3047,13 +3054,12 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
         }
       }
 
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-      // D-152: the modification has consumed its archived state (including
-      // the zero-region case). Count it once for the per-block hydrated flag.
-      if (payloadIsUsable && pitchModification != nullptr &&
+      // D-152: the modification has consumed its archived entry, including
+      // the zero-region and unusable-payload cases. Count it once so the
+      // diagnostic model does not stay at hydrated=0 forever.
+      if (pitchModification != nullptr &&
           pitchModification->markRestoredFromArchive())
         diagNoteModificationRestored();
-#endif
 
       if (!audioModification)
         continue;
@@ -3066,11 +3072,16 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
               juce::ARAContentUpdateScopes::samplesAreAffected(), false);
     }
 
-    return !input.failed();
+    const bool ok = !input.failed();
+    if (ok)
+      setDocumentHydrated(true);
+    return ok;
   }
 
-  if (dataSize <= 0)
+  if (dataSize <= 0) {
+    setDocumentHydrated(true);
     return true;
+  }
 
   juce::MemoryBlock data;
   data.setSize(static_cast<size_t>(dataSize));
@@ -3089,7 +3100,10 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
   else
     pendingRestoredProjectData = data;
 
-  return !input.failed();
+  const bool ok = !input.failed();
+  if (ok)
+    setDocumentHydrated(true);
+  return ok;
 }
 
 bool PitchNetDocumentController::doStoreObjectsToStream(

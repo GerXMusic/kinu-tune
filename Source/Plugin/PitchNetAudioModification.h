@@ -81,9 +81,8 @@ public:
   // MUST NEVER be written to any archive. It is meaningless across runs.
   const juce::String &getLiveKey() const noexcept { return liveKey; }
 
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-152: restored state received for this modification. Diagnostic only;
-  // the flag never feeds the audio path.
+  // D-152: restored state received for this modification. The flag drives the
+  // document hydration counters; it never feeds the audio path directly.
   bool wasRestoredFromArchive() const noexcept {
     return restoredFromArchive.load(std::memory_order_relaxed);
   }
@@ -91,7 +90,6 @@ public:
   bool markRestoredFromArchive() noexcept {
     return !restoredFromArchive.exchange(true, std::memory_order_relaxed);
   }
-#endif
 
   //============================================================================
   // Mutators
@@ -237,9 +235,7 @@ private:
   mutable juce::MemoryBlock projectArchive;
   std::atomic<juce::uint64> nextProcessedGeneration{0};
   std::shared_ptr<const ProcessedAudioSnapshot> processedAudio;
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   std::atomic<bool> restoredFromArchive{false};
-#endif
 };
 
 #endif // JucePlugin_Enable_ARA
