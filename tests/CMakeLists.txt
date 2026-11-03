@@ -145,7 +145,8 @@ if(ARA_AVAILABLE AND PITCHNET_ARA_DIAGNOSTICS)
         ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAChannelFormat.cpp)
     target_compile_features(D152CharacterizationTests PRIVATE cxx_std_17)
 
-    foreach(D152_GROUP IN ITEMS bypass saved-state processed-audio hydration)
+    foreach(D152_GROUP IN ITEMS bypass saved-state processed-audio
+                              concurrent-generations hydration)
         add_test(NAME D152_${D152_GROUP}
                  COMMAND D152CharacterizationTests ${D152_GROUP})
     endforeach()

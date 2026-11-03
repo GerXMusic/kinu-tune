@@ -9,10 +9,11 @@
 #include "../Source/Plugin/PluginProcessor.h"
 #include "TestAssert.h"
 
+#include <atomic>
 #include <cmath>
-#include <cstring>
 #include <iostream>
 #include <optional>
+#include <thread>
 
 namespace {
 
@@ -155,6 +156,85 @@ void runProcessedAudioCharacterization() {
                "last publication wins\n";
 }
 
+void runConcurrentGenerationsCharacterization() {
+  ARA::PlugIn::Document document(nullptr);
+  juce::ARAAudioSource source(&document, nullptr);
+  PitchNetAudioModification modification(&source, nullptr, nullptr);
+
+  constexpr int kSamples = 64;
+  constexpr int kGenerations = 500;
+  const auto makeGeneration = [kSamples](int generation) {
+    juce::AudioBuffer<float> buffer(1, kSamples);
+    for (int i = 0; i < kSamples; ++i)
+      buffer.setSample(0, i, static_cast<float>(generation));
+    return buffer;
+  };
+
+  modification.setProcessedAudio(makeGeneration(0), 44100.0, 0);
+
+  std::atomic<bool> start{false};
+  std::atomic<bool> done{false};
+  std::atomic<int> reads{0};
+
+  std::thread writer([&] {
+    while (!start.load(std::memory_order_acquire))
+      std::this_thread::yield();
+
+    for (int generation = 0; generation < kGenerations; ++generation) {
+      modification.setProcessedAudio(makeGeneration(generation), 44100.0,
+                                     generation);
+      // Ensure the reader is actually running before the writer finishes.
+      if (generation == 0)
+        while (reads.load(std::memory_order_acquire) == 0)
+          std::this_thread::yield();
+    }
+    done.store(true, std::memory_order_release);
+  });
+
+  std::thread reader([&] {
+    while (!start.load(std::memory_order_acquire))
+      std::this_thread::yield();
+
+    int lastGeneration = -1;
+    while (!done.load(std::memory_order_acquire)) {
+      juce::AudioBuffer<float> copy;
+      double rate = 0.0;
+      juce::int64 startSample = 0;
+      if (!modification.copyProcessedAudio(copy, rate, startSample))
+        continue;
+      reads.fetch_add(1, std::memory_order_release);
+
+      CHECK(copy.getNumSamples() == kSamples);
+      CHECK(rate == 44100.0);
+      CHECK(startSample >= 0 && startSample < kGenerations);
+      const int generation = static_cast<int>(startSample);
+      CHECK(generation >= lastGeneration);
+      lastGeneration = generation;
+
+      const float expected = static_cast<float>(generation);
+      for (int i = 0; i < kSamples; ++i)
+        CHECK(copy.getSample(0, i) == expected);
+    }
+  });
+
+  start.store(true, std::memory_order_release);
+  writer.join();
+  reader.join();
+
+  juce::AudioBuffer<float> finalCopy;
+  double finalRate = 0.0;
+  juce::int64 finalStart = 0;
+  CHECK(modification.copyProcessedAudio(finalCopy, finalRate, finalStart));
+  CHECK(finalRate == 44100.0);
+  CHECK(finalStart == kGenerations - 1);
+  CHECK(finalCopy.getNumSamples() == kSamples);
+  for (int i = 0; i < kSamples; ++i)
+    CHECK(finalCopy.getSample(0, i) == static_cast<float>(finalStart));
+
+  std::cout << "concurrent generations: copies are internally consistent and "
+               "the visible generation never decreases\n";
+}
+
 void runHydrationCharacterization() {
   ARA::ARADocumentControllerHostInstance hostInstance{};
   PitchNetDocumentController controller(nullptr, &hostInstance);
@@ -195,6 +275,8 @@ int main(int argc, char **argv) {
     runSavedStateCharacterization();
   else if (group == "processed-audio")
     runProcessedAudioCharacterization();
+  else if (group == "concurrent-generations")
+    runConcurrentGenerationsCharacterization();
   else if (group == "hydration")
     runHydrationCharacterization();
   else {
