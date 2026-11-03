@@ -290,39 +290,22 @@ public:
   juce::AudioProcessorValueTreeState &getAPVTS() { return apvts; }
 
   // Parameter IDs (stable across versions for automation compatibility)
-  static constexpr const char *PARAM_BYPASS = "bypass";
   static constexpr const char *PARAM_OUTPUT_GAIN = "outputGain";
   static constexpr const char *PARAM_DRY_WET = "dryWet";
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-139 pre-test: the instance id and the bypass parameter of THIS processor,
-  // so the renderer can compare what it reads with the host's value.
+  // D-139 pre-test: the instance id of THIS processor.
   int getDiagInstanceId() const { return diagInstanceId; }
-  float getBypassParamForDiagnostics() const {
-    return bypassParamValue != nullptr ? bypassParamValue->load() : -1.0f;
-  }
 #endif
 
 private:
   void handleAsyncUpdate() override;
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-138: identity of this plugin instance (see the write trace).
+  // D-138: identity of this plugin instance.
   int diagInstanceId = -1;
-  // D-151: 1 = this instance renders track "A" (cached), 0 = another track,
-  // -1 = not resolved yet. Diagnostics only.
-  std::atomic<int> diagIsTrackA{-1};
-#endif
-
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  bool diagShouldSuppressBypassWrites() noexcept;
-  void diagWriteBypassFlag(bool value, int site, bool offline) noexcept;
-#else
-  static void diagWriteBypassFlag(bool value, int, bool) noexcept {
-    PitchNetPlaybackRenderer::setBypassRendersRawSources(value);
-  }
 #endif
 
   struct HostUiSyncState {
@@ -375,7 +358,6 @@ private:
   juce::AudioProcessorValueTreeState apvts;
 
   // Raw parameter value pointers for lock-free audio-thread access
-  std::atomic<float> *bypassParamValue = nullptr;
   std::atomic<float> *outputGainParamValue = nullptr;
   std::atomic<float> *dryWetParamValue = nullptr;
   std::atomic<float> *pitchOffsetParamValue = nullptr;

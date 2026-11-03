@@ -146,38 +146,11 @@ public:
   // closed).
   PitchNetDocumentController *getDocController() const;
 
-  // Host/plugin bypass in ARA playback.
-  //
-  // In ARA the host input buffer carries no audio (regions come through the
-  // playback renderer), so a bypass that "passes through the input" passes
-  // through silence. Bypass audio must be rendered from each region's raw ARA
-  // source instead. The processor sets this flag for the duration of bypassed
-  // blocks; renderProcessedRegions() then skips the processed-audio layer and
-  // reads the original source even for edited regions.
-  //
-  // Static (not per-instance): the processor does not own the renderer the
-  // host created, and one bypass state is consistent for every instance that
-  // is bypassed in the same block. Multiple plugin instances each keep the
-  // flag active only inside their own bypassed block, matching how ARA gives
-  // every instance the same model graph anyway.
-  static void setBypassRendersRawSources(bool enabled) noexcept {
-    bypassRawSourcesRequested.store(enabled, std::memory_order_relaxed);
-  }
-  static bool bypassRendersRawSources() noexcept {
-    return bypassRawSourcesRequested.load(std::memory_order_relaxed);
-  }
-
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-137: the bypass parameter as the project has it (the INTENT of the
-  // render), kept next to the static flag the renderer reads. The processor
-  // that renders writes it before every block, so the trace can compare the
-  // two per block.
-#endif
+  // D-153: per-track bypass is the host's responsibility. The plugin does not
+  // read a bypass flag in the playback renderer; disabling the FX in the host
+  // removes this renderer from the chain instead.
 
 private:
-  static std::atomic<bool> bypassRawSourcesRequested;
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-#endif
 
   struct HostUiSyncState {
     std::atomic<bool> latestPlaying{false};
