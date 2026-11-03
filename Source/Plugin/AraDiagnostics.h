@@ -69,7 +69,6 @@ struct AraBlockTrace {
   // 0 = renderProcessedRegions ran; 1..4 = early exits of the renderer's
   // processBlock; 5 = the processor's ARA branch did not handle the block.
   int exitCode = 0;
-  int bypassRaw = 0;
   int regions = 0;
   int intersecting = 0;
   int processedRendered = 0;
@@ -79,8 +78,8 @@ struct AraBlockTrace {
   int nonZero = 0;
   int bound = -1; // only for exitCode 5: isBoundToARA()
   juce::int64 thread = 0;
-  // D-136: reference measurements for this block (read at the same point as
-  // bypassRaw). framesRatioNotOne counts the analysis frames of the block
+  // D-136: reference measurements for this block. framesRatioNotOne counts the
+  // analysis frames of the block
   // window whose pitch ratio differs from 1 (-1 = not computable). maxDiffRaw
   // and maxDiffProcessed are the maximum sample-wise differences between the
   // block output and, respectively, the raw source and the processed audio
@@ -91,30 +90,12 @@ struct AraBlockTrace {
   float maxDiffRaw = -1.0f;
   float maxDiffProcessed = -1.0f;
   int refFlags = 0;
-  // D-137: the bypass parameter as the project has it right now (the INTENT),
-  // as opposed to the static flag the renderer reads. -1 = not available.
+  // D-137: the bypass intent as the project reports it, plus the thread that
+  // wrote it last. -1 = not available.
   float bypassParam = -1.0f;
-  // D-137: which thread wrote that intent last (-1 = none).
   juce::int64 bypassWriterThread = -1;
-  // D-138: the last write to the static bypass flag before this block read it.
-  int writeValue = -2;      // 1 = raw (bypass), 0 = processed, -2 = no write
-  int writeSite = -1;       // 0..5, see D-138; -1 = none
-  int writeInstance = -1;   // processor instance id; -1 = none
-  int writeOffline = -1;    // 1 = the writing call was non-realtime
-  juce::int64 writeThread = 0;
-  juce::uint64 writeSeq = 0;   // number of writes when the record was taken
-  double writeTimeMs = 0.0;
   double readTimeMs = 0.0;
   int renderEpoch = -1;     // D-138: counter of the render/playback this block belongs to
-  // D-138: bit 0 = no write happened while the flag was read (attribution is
-  // exact); bit 1 = the attributed write's value equals the value read.
-  int writeFlags = 0;
-  // D-138: the write before that one, for the case where the flag was read in
-  // the middle of a write (the value read is then the previous one).
-  int prevValue = -2;
-  int prevSite = -1;
-  int prevInstance = -1;
-  int prevOffline = -1;
   // D-139 pre-test: the bypass parameter of the processor that owns the
   // renderer, as the renderer sees it, plus that processor's instance id.
   // -2 = no owning processor, -3 = parameter unavailable.
@@ -165,36 +146,6 @@ struct AraBlockTrace {
   float lockWaitMs = 0.0f;
 };
 
-// D-138: last writes to the static bypass flag (multi-writer, diag only).
-// Every write publishes a single 64-bit word (value in the top bit, sequence
-// in the rest) and its full metadata in a ring slot indexed by the sequence,
-// so a reader can pin the exact write that produced the value it read: take
-// the word, read the flag, take the word again; if it did not change, the
-// metadata of that sequence is the writer.
-struct AraBypassWriteInfo {
-  juce::uint64 seq = 0;
-  int value = -2;
-  int site = -1;
-  int instance = -1;
-  int offline = -1;
-  juce::int64 thread = 0;
-  double timeMs = 0.0;
-};
-
-inline constexpr int kAraBypassWriteRing = 512;
-struct AraBypassWriteSlot {
-  std::atomic<juce::uint64> seq{0};
-  int value = -2;
-  int site = -1;
-  int instance = -1;
-  int offline = -1;
-  juce::int64 thread = 0;
-  double timeMs = 0.0;
-};
-inline AraBypassWriteSlot araBypassRing[kAraBypassWriteRing];
-inline std::atomic<juce::uint64> araBypassValueSeq{0};
-inline std::atomic<juce::uint64> araBypassWriteCount{0};
-
 // D-138: incremented when the block time goes backwards (a new render or
 // playback starts), so a write and a read can be placed in the same run.
 inline std::atomic<int> araDiagRenderEpoch{0};
@@ -212,7 +163,7 @@ inline void araBlockTraceFlush() {
   for (int i = 0; i < araBlockTraceCount; ++i) {
     const auto &r = araBlockTrace[i];
     out << "blk t=" << r.t << " n=" << r.n << " exit=" << r.exitCode
-        << " bypassRaw=" << r.bypassRaw << " regions=" << r.regions
+        << " regions=" << r.regions
         << " intersecting=" << r.intersecting
         << " processedRendered=" << r.processedRendered
         << " rawAttempted=" << r.rawAttempted
@@ -226,19 +177,7 @@ inline void araBlockTraceFlush() {
         << " bypassParam=" << r.bypassParam
         << " bypassWriterThread="
         << juce::String::toHexString(r.bypassWriterThread)
-        << " writeValue=" << r.writeValue
-        << " writeSite=" << r.writeSite
-        << " writeInstance=" << r.writeInstance
-        << " writeOffline=" << r.writeOffline
-        << " writeThread=" << juce::String::toHexString(r.writeThread)
-        << " writeSeq=" << r.writeSeq
-        << " writeTimeMs=" << juce::String(r.writeTimeMs, 3)
         << " readTimeMs=" << juce::String(r.readTimeMs, 3)
-        << " writeFlags=" << r.writeFlags
-        << " prevValue=" << r.prevValue
-        << " prevSite=" << r.prevSite
-        << " prevInstance=" << r.prevInstance
-        << " prevOffline=" << r.prevOffline
         << " owningParamMilli=" << r.owningParamMilli
         << " owningInstance=" << r.owningInstance
         << " rendererId=" << juce::String::toHexString(r.rendererId)
@@ -371,40 +310,8 @@ struct AraTrackedLock {
   mutable juce::SpinLock lock;
 };
 
-inline void araBypassNoteWrite(int value, int site, int instance, int offline) {
-  const auto seq = araBypassWriteCount.fetch_add(1) + 1;
-  auto &slot = araBypassRing[seq % kAraBypassWriteRing];
-  slot.seq.store(0, std::memory_order_relaxed);
-  slot.value = value;
-  slot.site = site;
-  slot.instance = instance;
-  slot.offline = offline;
-  slot.thread = araDiagThreadId();
-  slot.timeMs = juce::Time::getMillisecondCounterHiRes();
-  slot.seq.store(seq, std::memory_order_release);
-  araBypassValueSeq.store((static_cast<juce::uint64>(value & 1) << 63) | seq,
-                          std::memory_order_release);
-}
-
-inline bool araBypassLookupWrite(juce::uint64 seq, AraBypassWriteInfo &out) {
-  if (seq == 0)
-    return false;
-  auto &slot = araBypassRing[seq % kAraBypassWriteRing];
-  if (slot.seq.load(std::memory_order_acquire) != seq)
-    return false;
-  out.seq = seq;
-  out.value = slot.value;
-  out.site = slot.site;
-  out.instance = slot.instance;
-  out.offline = slot.offline;
-  out.thread = slot.thread;
-  out.timeMs = slot.timeMs;
-  return slot.seq.load(std::memory_order_acquire) == seq;
-}
-
 // D-141: diagnostic registry of live processor instances, keyed by instance id
-// (never by controller pointer). It is only used to read each instance's
-// bypass parameter for the render trace.
+// (never by controller pointer).
 struct AraProcessorEntry {
   int instance = -1;
   void *processor = nullptr;
@@ -504,40 +411,6 @@ inline juce::int64 araHashName(const char *text) {
       hash *= 1099511628211ull;
     }
   return static_cast<juce::int64>(hash);
-}
-
-// D-150: diagnostic-only forcing of track A's output, so the mixed render can
-// be measured with A fixed. Read once from the environment; -1 = no forcing,
-// 0 = force processed, 1 = force raw. It never affects the production build.
-inline int araDiagForceTrackA() {
-  static const int value = [] {
-    const char *env = std::getenv("PITCHCORE_DIAG_FORCE_A");
-    if (env == nullptr)
-      return -1;
-    const juce::String text(env);
-    if (text.equalsIgnoreCase("processed"))
-      return 0;
-    if (text.equalsIgnoreCase("raw"))
-      return 1;
-    return -1;
-  }();
-  return value;
-}
-
-// D-151: diagnostic-only suppression of the bypass-flag writes from the
-// processor of track "A", so the measurement can test whether B's reads of
-// the flag come from those writes. Read once from the environment; it never
-// affects the production build.
-inline bool araDiagSuppressBypassWrites() {
-  static const bool value = [] {
-    const char *env = std::getenv("PITCHCORE_DIAG_SUPPRESS_A_WRITES");
-    if (env == nullptr)
-      return false;
-    const juce::String text(env);
-    return text == "1" || text.equalsIgnoreCase("yes") ||
-           text.equalsIgnoreCase("true");
-  }();
-  return value;
 }
 
 inline void araBlockTracePushExit(int exitCode, juce::int64 t, int n,

@@ -525,30 +525,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // it.
   bool renderedAny = false;
 
-  // D-153: no per-plugin bypass path. A host bypass disables the FX and this
-  // renderer does not run; when it runs, it always renders the program.
-  bool bypassRaw = false;
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-150: diagnostic-only forcing of track A's output (environment variable,
-  // never in the production build). B is untouched.
-  {
-    const int forceA = araDiagForceTrackA();
-    if (forceA >= 0) {
-      juce::int64 trackHash = 0;
-      for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
-        if (region == nullptr)
-          continue;
-        auto *sequence = region->getRegionSequence();
-        if (sequence == nullptr)
-          continue;
-        trackHash = araHashName(sequence->getName());
-        break;
-      }
-      if (trackHash == araHashName("A"))
-        bypassRaw = (forceA == 1);
-    }
-  }
-#endif
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-134: per-block accounting. Read-only; it never changes which audio is
   // selected. rawAttempted/rawHadResources are aggregated over the regions
@@ -603,7 +579,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 
     bool renderedRegion = false;
 
-    if (!bypassRaw) {
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
       auto lock = modification->tryLockProcessedAudio();
@@ -680,32 +655,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         }
       }
       }
-    }
-
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-    // D-136: with bypass the processed path does not run, but the reference
-    // still needs to say what the processed path WOULD produce. The stateful
-    // path resets after a gap, which is exactly what a fresh (null state)
-    // render does.
-    if (bypassRaw && diagProcessedBuffer != nullptr) {
-      if (auto *modification =
-              region->getAudioModification<PitchNetAudioModification>()) {
-        const auto lock = modification->tryLockProcessedAudio();
-        if (lock.isLocked()) {
-          const auto *data = modification->getProcessedData();
-          if (data != nullptr && data->hasAudio()) {
-            auto *source = modification->getAudioSource();
-            const double modificationRate =
-                source != nullptr ? source->getSampleRate() : 0.0;
-            mixProcessedRegionAudio(
-                *diagProcessedBuffer, *region, data->audio, data->sampleRate,
-                data->startSampleInModification, modificationRate, sampleRate,
-                timeInSamples, nullptr);
-          }
-        }
-      }
-    }
-#endif
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
     if (renderedRegion)
@@ -869,7 +818,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     record.exitCode = 0;
     if (auto *hydrationDocCtrl = getDocController())
       record.hydrated = hydrationDocCtrl->diagDocumentHydrated() ? 1 : 0;
-    record.bypassRaw = bypassRaw ? 1 : 0;
     record.regions = diagRegions;
     record.intersecting = diagIntersecting;
     record.processedRendered = diagProcessedRendered;
