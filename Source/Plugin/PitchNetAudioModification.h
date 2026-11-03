@@ -29,45 +29,14 @@
 // is getLiveKey(), a process-local serial minted at construction.
 class PitchNetAudioModification final : public juce::ARAAudioModification {
 public:
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-  // D-146: the lock tracks its owner (thread, instance, kind) so a failed
-  // tryLock can report who held it. Same semantics as juce::SpinLock.
-  using ProcessedLockType = AraTrackedLock;
-  using ProcessedScopedLock = juce::GenericScopedLock<ProcessedLockType>;
-  using ProcessedScopedTryLock = juce::GenericScopedTryLock<ProcessedLockType>;
-#else
-  using ProcessedLockType = juce::SpinLock;
-  using ProcessedScopedLock = juce::SpinLock::ScopedLockType;
-  using ProcessedScopedTryLock = juce::SpinLock::ScopedTryLockType;
-#endif
-  struct ProcessedRegionData {
+  // D-152: one immutable publication of the processed audio. A new generation
+  // is created for every setProcessedAudio() call; readers load the latest
+  // shared pointer and keep it alive for as long as they use it.
+  struct ProcessedAudioSnapshot {
     juce::AudioBuffer<float> audio;
     double sampleRate = 0.0;
     juce::int64 startSampleInModification = 0;
-
-    juce::AudioFormatManager thumbnailFormatManager;
-    juce::AudioThumbnailCache thumbnailCache{8};
-    juce::AudioThumbnail thumbnail;
-
-    ProcessedRegionData() : thumbnail(128, thumbnailFormatManager, thumbnailCache) {
-      thumbnailFormatManager.registerBasicFormats();
-    }
-
-    void setAudio(const juce::AudioBuffer<float> &buffer, double sampleRateIn,
-                  juce::int64 startSampleInModificationIn) {
-      audio.makeCopyOf(buffer);
-      sampleRate = sampleRateIn;
-      startSampleInModification = startSampleInModificationIn;
-      thumbnail.reset(audio.getNumChannels(), sampleRate, audio.getNumSamples());
-      thumbnail.addBlock(0, audio, 0, audio.getNumSamples());
-    }
-
-    void clear() {
-      audio.setSize(0, 0);
-      sampleRate = 0.0;
-      startSampleInModification = 0;
-      thumbnail.clear();
-    }
+    juce::uint64 generation = 0;
 
     bool hasAudio() const {
       return audio.getNumSamples() > 0 && sampleRate > 0.0;
@@ -89,17 +58,15 @@ public:
     if (const auto *sourceModification =
             dynamic_cast<const PitchNetAudioModification *>(
                 optionalModificationToClone)) {
-      const ProcessedScopedLock lock(
-          sourceModification->processedAudioLock);
-      if (sourceModification->processedAudio != nullptr &&
-          sourceModification->processedAudio->hasAudio()) {
-        processedAudio = std::make_unique<ProcessedRegionData>();
-        processedAudio->setAudio(
-            sourceModification->processedAudio->audio,
-            sourceModification->processedAudio->sampleRate,
-            sourceModification->processedAudio->startSampleInModification);
-      }
-      projectArchive = sourceModification->projectArchive;
+      if (const auto sourceAudio =
+              sourceModification->getProcessedAudioSnapshot();
+          sourceAudio != nullptr && sourceAudio->hasAudio())
+        setProcessedAudio(sourceAudio->audio, sourceAudio->sampleRate,
+                          sourceAudio->startSampleInModification);
+
+      juce::MemoryBlock sourceArchive;
+      if (sourceModification->copyProjectArchive(sourceArchive))
+        setProjectArchive(sourceArchive.getData(), sourceArchive.getSize());
     }
   }
 
@@ -131,29 +98,36 @@ public:
   void setProcessedAudio(const juce::AudioBuffer<float> &buffer,
                          double sampleRateIn,
                          juce::int64 startSampleInModificationIn) {
-    const ProcessedScopedLock lock(processedAudioLock);
-    if (processedAudio == nullptr)
-      processedAudio = std::make_unique<ProcessedRegionData>();
-    processedAudio->setAudio(buffer, sampleRateIn, startSampleInModificationIn);
+    auto snapshot = std::make_shared<ProcessedAudioSnapshot>();
+    snapshot->audio.makeCopyOf(buffer);
+    snapshot->sampleRate = sampleRateIn;
+    snapshot->startSampleInModification = startSampleInModificationIn;
+    snapshot->generation = nextProcessedGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    std::atomic_store_explicit(
+        &processedAudio,
+        std::shared_ptr<const ProcessedAudioSnapshot>(std::move(snapshot)),
+        std::memory_order_release);
   }
 
   void clearProcessedAudio() {
-    const ProcessedScopedLock lock(processedAudioLock);
-    processedAudio.reset();
+    std::atomic_store_explicit(
+        &processedAudio, std::shared_ptr<const ProcessedAudioSnapshot>{},
+        std::memory_order_release);
   }
 
   void setProjectArchive(const void *data, size_t sizeInBytes) const {
     if (data == nullptr || sizeInBytes == 0)
       return;
 
-    const ProcessedScopedLock lock(processedAudioLock);
+    const juce::ScopedLock lock(projectArchiveLock);
     projectArchive = juce::MemoryBlock(data, sizeInBytes);
   }
 
   //============================================================================
   // Queries
   bool copyProjectArchive(juce::MemoryBlock &dest) const {
-    const ProcessedScopedLock lock(processedAudioLock);
+    const juce::ScopedLock lock(projectArchiveLock);
     if (projectArchive.getSize() == 0)
       return false;
 
@@ -162,41 +136,31 @@ public:
   }
 
   bool hasProjectArchive() const {
-    const ProcessedScopedLock lock(processedAudioLock);
+    const juce::ScopedLock lock(projectArchiveLock);
     return projectArchive.getSize() > 0;
   }
 
+  std::shared_ptr<const ProcessedAudioSnapshot>
+  getProcessedAudioSnapshot() const {
+    return std::atomic_load_explicit(&processedAudio, std::memory_order_acquire);
+  }
+
   bool hasProcessedAudio() const {
-    const ProcessedScopedLock lock(processedAudioLock);
-    return processedAudio != nullptr && processedAudio->hasAudio();
+    const auto snapshot = getProcessedAudioSnapshot();
+    return snapshot != nullptr && snapshot->hasAudio();
   }
 
   bool copyProcessedAudio(juce::AudioBuffer<float> &buffer,
                           double &sampleRateOut,
                           juce::int64 &startSampleOut) const {
-    const ProcessedScopedLock lock(processedAudioLock);
-    if (processedAudio == nullptr || !processedAudio->hasAudio())
+    const auto snapshot = getProcessedAudioSnapshot();
+    if (snapshot == nullptr || !snapshot->hasAudio())
       return false;
 
-    buffer.makeCopyOf(processedAudio->audio);
-    sampleRateOut = processedAudio->sampleRate;
-    startSampleOut = processedAudio->startSampleInModification;
+    buffer.makeCopyOf(snapshot->audio);
+    sampleRateOut = snapshot->sampleRate;
+    startSampleOut = snapshot->startSampleInModification;
     return true;
-  }
-
-  // Read access must hold the lock while the returned pointer is used on the
-  // audio thread. tryLockProcessedAudio() gives a try-lock for the renderer so
-  // it never blocks; getProcessedData() returns the raw pointer.
-  ProcessedScopedTryLock tryLockProcessedAudio() const {
-    return ProcessedScopedTryLock(processedAudioLock);
-  }
-
-  const ProcessedRegionData *getProcessedData() const noexcept {
-    return processedAudio.get();
-  }
-
-  ProcessedRegionData *getProcessedData() noexcept {
-    return processedAudio.get();
   }
 
   // Every playback region referencing this modification shares its edit layer,
@@ -207,11 +171,11 @@ public:
   //============================================================================
   // Persistence. Stream this modification's processed audio.
   bool writeProcessedAudioToStream(juce::OutputStream &output) const {
-    const ProcessedScopedLock lock(processedAudioLock);
-    if (processedAudio == nullptr || !processedAudio->hasAudio())
+    const auto snapshot = getProcessedAudioSnapshot();
+    if (snapshot == nullptr || !snapshot->hasAudio())
       return false;
 
-    const auto &data = *processedAudio;
+    const auto &data = *snapshot;
     output.writeDouble(data.sampleRate);
     output.writeInt64(data.startSampleInModification);
     output.writeInt(data.audio.getNumChannels());
@@ -269,9 +233,10 @@ private:
   }
 
   const juce::String liveKey;
-  mutable ProcessedLockType processedAudioLock;
-  std::unique_ptr<ProcessedRegionData> processedAudio;
+  mutable juce::CriticalSection projectArchiveLock;
   mutable juce::MemoryBlock projectArchive;
+  std::atomic<juce::uint64> nextProcessedGeneration{0};
+  std::shared_ptr<const ProcessedAudioSnapshot> processedAudio;
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   std::atomic<bool> restoredFromArchive{false};
 #endif

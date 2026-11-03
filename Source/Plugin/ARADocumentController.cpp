@@ -622,41 +622,12 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     if (!bypassRaw) {
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
-      auto lock = modification->tryLockProcessedAudio();
+        // D-152: load the latest immutable generation once and keep it alive
+        // for the whole block. No try-lock, no retry and no pointer into a
+        // buffer another thread can rewrite.
+        const auto data = modification->getProcessedAudioSnapshot();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-      diagProcLocked = lock.isLocked() ? 1 : 0;
-      if (!lock.isLocked()) {
-        diagLockWaited = 1;
-        diagLockFailCount = araLockFailureCount.load(std::memory_order_relaxed);
-        diagLockOwnerKind = araLockFailOwnerKind.load(std::memory_order_relaxed);
-        diagLockOwnerThread = araLockFailOwnerThread.load(std::memory_order_relaxed);
-        diagLockOwnerInstance = araLockFailOwnerInstance.load(std::memory_order_relaxed);
-        diagLockHeldMs = araLockFailOwnerHeldMs.load(std::memory_order_relaxed);
-      }
-#endif
-      // D-147: another render thread may hold this lock for a very short
-      // critical section (measured: 0.003-0.03 ms). Retry with a bounded wait
-      // (5 ms) before falling back to the raw source, so a block that asks for
-      // the processed audio gets it instead of dropping to raw.
-      if (!lock.isLocked()) {
-        const double waitStart = juce::Time::getMillisecondCounterHiRes();
-        const double deadline = waitStart + 5.0;
-        while (!lock.retryLock() &&
-               juce::Time::getMillisecondCounterHiRes() < deadline)
-          juce::Thread::yield();
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
-        diagLockResolved = lock.isLocked() ? 1 : 0;
-        diagLockWaitMs = juce::Time::getMillisecondCounterHiRes() - waitStart;
-#endif
-      }
-      if (lock.isLocked()) {
-        // The modification owns one processed buffer and every region
-        // referencing it is a window onto that one edit layer, so they all
-        // render from it. This replaces the former per-region rule, which
-        // existed when regions owned their own state and a shared fallback
-        // would have made an unedited region play an edited sibling's audio.
-        const auto *data = modification->getProcessedData();
-#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        diagProcLocked = data != nullptr ? 1 : 0;
         diagProcHasAudio = (data != nullptr && data->hasAudio()) ? 1 : 0;
         if (data != nullptr && data->hasAudio())
           diagProcFingerprint = araDiagFingerprint(data->audio);
@@ -665,9 +636,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
           auto *source = modification->getAudioSource();
           const double modificationRate =
               source != nullptr ? source->getSampleRate() : 0.0;
-          // Never operator[] here: it would insert and allocate on the audio
-          // thread. A missing slot degrades resampling quality for a block
-          // rather than dropping the region.
           auto processedState = processedResamplingStates.find(region);
           renderedRegion = mixProcessedRegionAudio(
               buffer, *region, data->audio, data->sampleRate,
@@ -695,7 +663,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 #endif
         }
       }
-      }
     }
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
@@ -706,18 +673,15 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
     if (bypassRaw && diagProcessedBuffer != nullptr) {
       if (auto *modification =
               region->getAudioModification<PitchNetAudioModification>()) {
-        const auto lock = modification->tryLockProcessedAudio();
-        if (lock.isLocked()) {
-          const auto *data = modification->getProcessedData();
-          if (data != nullptr && data->hasAudio()) {
-            auto *source = modification->getAudioSource();
-            const double modificationRate =
-                source != nullptr ? source->getSampleRate() : 0.0;
-            mixProcessedRegionAudio(
-                *diagProcessedBuffer, *region, data->audio, data->sampleRate,
-                data->startSampleInModification, modificationRate, sampleRate,
-                timeInSamples, nullptr);
-          }
+        const auto data = modification->getProcessedAudioSnapshot();
+        if (data != nullptr && data->hasAudio()) {
+          auto *source = modification->getAudioSource();
+          const double modificationRate =
+              source != nullptr ? source->getSampleRate() : 0.0;
+          mixProcessedRegionAudio(
+              *diagProcessedBuffer, *region, data->audio, data->sampleRate,
+              data->startSampleInModification, modificationRate, sampleRate,
+              timeInSamples, nullptr);
         }
       }
     }
@@ -1417,21 +1381,18 @@ void PitchNetEditorRenderer::renderPreviewBuffer(
   bool renderedPreview = false;
   if (auto *modification =
           region->getAudioModification<PitchNetAudioModification>()) {
-    const auto lock = modification->tryLockProcessedAudio();
-    if (lock.isLocked()) {
-      // One modification, one processed buffer - see the playback renderer.
-      const auto *data = modification->getProcessedData();
-      if (data != nullptr && data->hasAudio()) {
-        auto *source = modification->getAudioSource();
-        const double modificationRate =
-            source != nullptr ? source->getSampleRate() : 0.0;
-        const auto previewStartSample = static_cast<juce::int64>(
-            std::llround(previewRange.getStart() * sampleRate));
-        renderedPreview = mixProcessedRegionAudio(
-            input, *region, data->audio, data->sampleRate,
-            data->startSampleInModification, modificationRate, sampleRate,
-            previewStartSample);
-      }
+    // D-152: same immutable generation the playback renderer would read.
+    const auto data = modification->getProcessedAudioSnapshot();
+    if (data != nullptr && data->hasAudio()) {
+      auto *source = modification->getAudioSource();
+      const double modificationRate =
+          source != nullptr ? source->getSampleRate() : 0.0;
+      const auto previewStartSample = static_cast<juce::int64>(
+          std::llround(previewRange.getStart() * sampleRate));
+      renderedPreview = mixProcessedRegionAudio(
+          input, *region, data->audio, data->sampleRate,
+          data->startSampleInModification, modificationRate, sampleRate,
+          previewStartSample);
     }
   }
 

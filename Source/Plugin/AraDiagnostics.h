@@ -143,7 +143,7 @@ struct AraBlockTrace {
   int keyBInstance = -1;
   int keyBParamMilli = -2;
   // D-145: why a B block renders processed or raw.
-  int procLocked = -1;      // tryLockProcessedAudio() succeeded
+  int procLocked = -1;      // D-152: processed snapshot was present
   int procHasAudio = -1;    // processed data present and non-empty
   float procFingerprint = 0.0f;
   int publishCount = -1;    // publish[edit]/[render] events since process start
