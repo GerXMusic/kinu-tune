@@ -338,13 +338,6 @@ static bool mixProcessedRegionAudio(juce::AudioBuffer<float> &buffer,
 // PitchNetPlaybackRenderer
 //==============================================================================
 
-// One flag for all instances in the process: each set/clear happens wholly
-// inside the bypassed plugin block that needs it, so a race that mixes
-// bypassed and non-bypassed instances in one block is not representable here
-// (the host serialises process calls per thread, and two instances on
-// different threads are exactly the case the comment in the header accepts).
-std::atomic<bool>
-    PitchNetPlaybackRenderer::bypassRawSourcesRequested{false};
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
 // D-137: the bypass parameter of the project (the intent of the render),
 // written by the processor that renders before every block.
@@ -905,30 +898,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       // D-141: editor processor and the highest bypass parameter among the
       // live instances (candidate B-b, measured, not assumed).
       if (auto *docCtrl = getDocController()) {
-        if (auto *editor = docCtrl->getEditorProcessorForDiagnostics()) {
+        if (auto *editor = docCtrl->getEditorProcessorForDiagnostics())
           record.editorInstance = editor->getDiagInstanceId();
-          record.editorParamMilli = static_cast<int>(std::lround(
-              editor->getBypassParamForDiagnostics() * 1000.0f));
-        }
-        static thread_local std::vector<AraProcessorEntry> diagEntries;
-        diagEntries.clear();
-        araSnapshotProcessors(diagEntries);
-        int bestInstance = -1;
-        float bestValue = -1.0f;
-        for (const auto &entry : diagEntries) {
-          auto *processor =
-              static_cast<PitchNetAudioProcessor *>(entry.processor);
-          if (processor == nullptr)
-            continue;
-          const float value = processor->getBypassParamForDiagnostics();
-          if (value > bestValue) {
-            bestValue = value;
-            bestInstance = processor->getDiagInstanceId();
-          }
-        }
-        record.maxParamInstance = bestInstance;
-        record.maxParamMilli =
-            bestValue < 0.0f ? -2 : static_cast<int>(std::lround(bestValue * 1000.0f));
+        record.editorParamMilli = -2;
+        record.maxParamInstance = -1;
+        record.maxParamMilli = -2;
         // D-142 route (c): the instance that registered last in prepareToPlay.
         record.routeCInstance = araPrepareInstance.load(std::memory_order_relaxed);
         record.routeCParamMilli = araPrepareParamMilli.load(std::memory_order_relaxed);
@@ -958,12 +932,9 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         record.trackHash = trackHash;
         int instance = -1;
         void *processor = nullptr;
-        if (araLookupTrackRef(trackRef, instance, processor)) {
+        if (araLookupTrackRef(trackRef, instance, processor))
           record.keyBInstance = instance;
-          if (auto *p = static_cast<PitchNetAudioProcessor *>(processor))
-            record.keyBParamMilli = static_cast<int>(std::lround(
-                p->getBypassParamForDiagnostics() * 1000.0f));
-        }
+        record.keyBParamMilli = -2;
         record.keyAInstance = -1; // no host track id exists at creation
         record.keyAParamMilli = -2;
       }
@@ -995,8 +966,7 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       if (auto *docCtrl = getDocController()) {
         if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
           record.owningInstance = processor->getDiagInstanceId();
-          record.owningParamMilli = static_cast<int>(std::lround(
-              processor->getBypassParamForDiagnostics() * 1000.0f));
+          record.owningParamMilli = -2;
         } else {
           record.owningInstance = -1;
           record.owningParamMilli = -2;

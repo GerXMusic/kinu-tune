@@ -26,13 +26,6 @@ public:
   }
 };
 
-void setBoolParameter(PitchNetAudioProcessor &processor, const char *id,
-                      bool value) {
-  auto *parameter = processor.getAPVTS().getParameter(id);
-  CHECK(parameter != nullptr);
-  parameter->setValueNotifyingHost(value ? 1.0f : 0.0f);
-}
-
 void setFloatParameter(PitchNetAudioProcessor &processor, const char *id,
                        float value) {
   auto *parameter = processor.getAPVTS().getParameter(id);
@@ -46,12 +39,6 @@ float getFloatParameter(PitchNetAudioProcessor &processor, const char *id) {
   return value->load();
 }
 
-bool getBoolParameter(PitchNetAudioProcessor &processor, const char *id) {
-  auto *value = processor.getAPVTS().getRawParameterValue(id);
-  CHECK(value != nullptr);
-  return value->load() >= 0.5f;
-}
-
 void runBypassCharacterization() {
   PitchNetAudioProcessor processor;
   StoppedPlayHead playHead;
@@ -61,38 +48,30 @@ void runBypassCharacterization() {
   juce::AudioBuffer<float> buffer(1, 64);
   juce::MidiBuffer midi;
 
-  // Current APVTS bypass = 0: the non-ARA path runs and, with no project and
-  // the transport stopped, clears the buffer.
-  setBoolParameter(processor, "bypass", false);
+  // D-152: the APVTS bypass parameter is gone. JUCE's wrapper owns the bypass
+  // state and calls processBlockBypassed() when its own parameter is active.
+  CHECK(processor.getBypassParameter() == nullptr);
+  CHECK(processor.getAPVTS().getParameter("bypass") == nullptr);
+
+  // processBlock is the non-bypassed path: with no project and the transport
+  // stopped it clears the buffer.
   buffer.clear();
   buffer.setSample(0, 0, 0.75f);
   processor.processBlock(buffer, midi);
   CHECK(buffer.getSample(0, 0) == 0.0f);
 
-  // Current standard JUCE bypass path: the wrapper calls
-  // processBlockBypassed when getBypassParameter() is null, and the current
-  // processor leaves the input untouched when ARA is not bound.
-  CHECK(processor.getBypassParameter() == nullptr);
+  // processBlockBypassed leaves the input untouched when ARA is not bound.
   buffer.clear();
   buffer.setSample(0, 0, 0.75f);
   processor.processBlockBypassed(buffer, midi);
   CHECK(std::abs(buffer.getSample(0, 0) - 0.75f) < 1.0e-6f);
 
-  // Current APVTS bypass = 1: the bypass branch returns before the non-ARA
-  // path, so the input buffer is left untouched when ARA is not bound.
-  setBoolParameter(processor, "bypass", true);
-  buffer.clear();
-  buffer.setSample(0, 0, 0.75f);
-  processor.processBlock(buffer, midi);
-  CHECK(std::abs(buffer.getSample(0, 0) - 0.75f) < 1.0e-6f);
-
-  std::cout << "bypass: APVTS 0 clears (non-ARA, stopped), APVTS 1 and "
-               "processBlockBypassed pass input through\n";
+  std::cout << "bypass: no APVTS bypass; processBlock clears, "
+               "processBlockBypassed passes input through\n";
 }
 
 void runSavedStateCharacterization() {
   PitchNetAudioProcessor source;
-  setBoolParameter(source, "bypass", true);
   setFloatParameter(source, "outputGain", -6.0f);
   setFloatParameter(source, "dryWet", 50.0f);
   setFloatParameter(source, "pitchOffset", 2.0f);
@@ -105,15 +84,17 @@ void runSavedStateCharacterization() {
   PitchNetAudioProcessor loaded;
   loaded.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
 
-  // Current behaviour: the instance's own bypass parameter is part of APVTS
-  // and round-trips with the rest of the parameters.
-  CHECK(getBoolParameter(loaded, "bypass"));
+  // D-152: the four remaining APVTS parameters round-trip. The old bypass
+  // parameter is simply absent; an old archive carrying it is ignored by
+  // APVTS and no migration is attempted.
+  CHECK(loaded.getAPVTS().getParameter("bypass") == nullptr);
   CHECK(std::abs(getFloatParameter(loaded, "outputGain") - (-6.0f)) < 1.0e-4f);
   CHECK(std::abs(getFloatParameter(loaded, "dryWet") - 50.0f) < 1.0e-4f);
   CHECK(std::abs(getFloatParameter(loaded, "pitchOffset") - 2.0f) < 1.0e-4f);
   CHECK(std::abs(getFloatParameter(loaded, "formantShift") - (-1.0f)) < 1.0e-4f);
 
-  std::cout << "saved state: bypass and the other four APVTS values round-trip\n";
+  std::cout << "saved state: the four APVTS values round-trip without a "
+               "bypass parameter\n";
 }
 
 void runProcessedAudioCharacterization() {
