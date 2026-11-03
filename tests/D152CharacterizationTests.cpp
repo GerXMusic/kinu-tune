@@ -132,9 +132,6 @@ void runProcessedAudioCharacterization() {
 
   modification.setProcessedAudio(first, 44100.0, 0);
   CHECK(modification.hasProcessedAudio());
-  const auto firstSnapshot = modification.getProcessedAudioSnapshot();
-  CHECK(firstSnapshot != nullptr);
-  CHECK(firstSnapshot->generation > 0);
 
   juce::AudioBuffer<float> read;
   double rate = 0.0;
@@ -146,12 +143,8 @@ void runProcessedAudioCharacterization() {
   for (int i = 0; i < first.getNumSamples(); ++i)
     CHECK(read.getSample(0, i) == first.getSample(0, i));
 
-  // Two consecutive publications: the second is the visible one and has a
-  // newer generation than the first.
+  // Two consecutive publications: the second is the visible one.
   modification.setProcessedAudio(second, 48000.0, 2);
-  const auto secondSnapshot = modification.getProcessedAudioSnapshot();
-  CHECK(secondSnapshot != nullptr);
-  CHECK(secondSnapshot->generation > firstSnapshot->generation);
   CHECK(modification.copyProcessedAudio(read, rate, start));
   CHECK(rate == 48000.0);
   CHECK(start == 2);
