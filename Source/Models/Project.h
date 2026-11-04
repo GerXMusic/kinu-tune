@@ -198,6 +198,13 @@ public:
     // choice changes what should be rendered. Otherwise the neutral reset
     // would overwrite the very synthesis the edit asked for.
     bool shouldResetNeutralNoteToOriginal(const Note &note) const;
+    // True when the project's audio differs from the raw ARA source and must
+    // therefore be published with the region. It is the inverse of "every
+    // note is neutral", extended with the edits that live outside a note's
+    // pitch fields: a project-wide pitch/formant offset and an explicit
+    // per-note engine choice (the engine changes the rendered timbre even
+    // when the note's pitch is untouched).
+    bool hasRegionEdits() const;
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
     void clearAllDirty();

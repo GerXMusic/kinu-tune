@@ -306,6 +306,24 @@ void testNeutralResetHonoursEngineAndGlobalPitch() {
     CHECK(project.shouldResetNeutralNoteToOriginal(notes[3]));
 }
 
+void testRegionEditsSeeExplicitEngine() {
+    // An explicit per-note engine changes the timbre even when the note's
+    // pitch fields are untouched. If hasRegionEdits() only compares pitch
+    // fields, the ARA store path treats the region as unedited and publishes
+    // no audio: save after an engine-only change loses the render.
+    Project project = makeProject();
+    CHECK(!project.hasRegionEdits());
+
+    project.getNotes()[0].setEngine(NoteEngine::Psola);
+    CHECK(project.hasRegionEdits());
+
+    project.getNotes()[0].setEngine(NoteEngine::Inherit);
+    CHECK(!project.hasRegionEdits());
+
+    project.setGlobalPitchOffset(0.01f);
+    CHECK(project.hasRegionEdits());
+}
+
 } // namespace
 
 int main() {
@@ -317,6 +335,7 @@ int main() {
     testOldProjectKeepsItsAudio();
     testRenderedStateClearsPersistentDirty();
     testNeutralResetHonoursEngineAndGlobalPitch();
+    testRegionEditsSeeExplicitEngine();
 
     std::cout << "NoteEngineTests: all checks passed\n";
     return 0;

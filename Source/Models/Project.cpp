@@ -161,6 +161,24 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     return note.isNeutralForOriginalWaveform();
 }
 
+bool Project::hasRegionEdits() const
+{
+    if (globalPitchOffset != 0.0f || formantShift != 0.0f)
+        return true;
+
+    for (const auto &note : notes)
+    {
+        if (note.isRest())
+            continue;
+        if (note.getEngine() != NoteEngine::Inherit)
+            return true;
+        if (!note.isNeutralForOriginalWaveform())
+            return true;
+    }
+
+    return false;
+}
+
 void Project::clearAllDirty()
 {
     for (auto &note : notes)

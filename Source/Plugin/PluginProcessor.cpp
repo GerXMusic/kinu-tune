@@ -1781,28 +1781,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
 
 #if JucePlugin_Enable_ARA
 bool PitchNetAudioProcessor::projectHasRegionEdits(const Project &project) {
-  if (project.getGlobalPitchOffset() != 0.0f ||
-      project.getFormantShift() != 0.0f)
-    return true;
-
-  // Compare each note against the original rather than trusting
-  // hasRenderedEdit(). That flag is historical: it records that a note once
-  // contributed to the persisted composite, and it is only refreshed for
-  // commit anchors, so resetting one note cleared its own flag while every
-  // other previously-edited note kept the whole region on the resynthesis
-  // path. A fully reset region therefore never fell back to the untouched ARA
-  // source, and stayed on a re-synthesised blob whose splice boundaries are
-  // audible as a click on every syllable.
-  //
-  // isNeutralForOriginalWaveform() checks timing, pitch, baked delta, offset,
-  // formant, volume, tilt, vibrato, drift, smoothing and delta scale, so a
-  // note it calls neutral is one the original audio already represents
-  // exactly.
-  for (const auto &note : project.getNotes())
-    if (!note.isRest() && !note.isNeutralForOriginalWaveform())
-      return true;
-
-  return false;
+  return project.hasRegionEdits();
 }
 #endif
 const Project *PitchNetAudioProcessor::projectForPersistentState() const {
