@@ -1694,8 +1694,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // sort before looking for contiguity.
             std::vector<std::pair<int, int>> neutralFrameRanges;
             for (const auto &note : capturedProject->getNotes()) {
-              if (note.isRest() || !note.isDirty() ||
-                  !note.isNeutralForOriginalWaveform())
+              if (!capturedProject->shouldResetNeutralNoteToOriginal(note))
                 continue;
               neutralFrameRanges.emplace_back(note.getStartFrame(),
                                               note.getEndFrame());

@@ -134,6 +134,33 @@ std::vector<Note *> Project::getDirtyNotes()
     return result;
 }
 
+void Project::applyRenderedNoteState(const Project &rendered)
+{
+    auto &targetNotes = notes;
+    const auto &renderedNotes = rendered.getNotes();
+    if (targetNotes.size() != renderedNotes.size())
+        return;
+    for (size_t i = 0; i < targetNotes.size(); ++i)
+    {
+        targetNotes[i].setRenderedEdit(renderedNotes[i].hasRenderedEdit());
+        targetNotes[i].setSynthDirty(renderedNotes[i].isSynthDirty());
+        targetNotes[i].clearDirty();
+    }
+}
+
+bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
+{
+    constexpr float kGlobalEditEpsilon = 1.0e-6f;
+    if (note.isRest() || !note.isDirty())
+        return false;
+    if (note.getEngine() != NoteEngine::Inherit)
+        return false;
+    if (std::abs(globalPitchOffset) > kGlobalEditEpsilon ||
+        std::abs(formantShift) > kGlobalEditEpsilon)
+        return false;
+    return note.isNeutralForOriginalWaveform();
+}
+
 void Project::clearAllDirty()
 {
     for (auto &note : notes)

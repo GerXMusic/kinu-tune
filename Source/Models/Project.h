@@ -189,6 +189,15 @@ public:
     std::vector<Note *> getSelectedNotes();
     bool removeNoteByStartFrame(int startFrame);
     std::vector<Note *> getDirtyNotes();
+    // A completed render clears the dirty flags on the project it rendered.
+    // The persistent project must take that state back as well, or the next
+    // edit re-renders every note and untouched blocks stop being bit-exact.
+    void applyRenderedNoteState(const Project &rendered);
+    // A dirty note is restored from the pristine source only when it is
+    // neutral *and* no project-wide edit (pitch/formant) or per-note engine
+    // choice changes what should be rendered. Otherwise the neutral reset
+    // would overwrite the very synthesis the edit asked for.
+    bool shouldResetNeutralNoteToOriginal(const Note &note) const;
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
     void clearAllDirty();

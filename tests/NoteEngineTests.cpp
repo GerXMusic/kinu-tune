@@ -260,6 +260,52 @@ void testOldProjectKeepsItsAudio() {
         CHECK(note.getEngine() == NoteEngine::Inherit);
 }
 
+void testRenderedStateClearsPersistentDirty() {
+    Project target = makeProject();
+    target.getNotes()[0].markDirty();
+    target.getNotes()[1].markDirty();
+    Project rendered = target;
+    rendered.clearAllDirty();
+    rendered.getNotes()[0].setRenderedEdit(true);
+    rendered.getNotes()[1].setSynthDirty(false);
+
+    target.applyRenderedNoteState(rendered);
+    CHECK(!target.getNotes()[0].isDirty());
+    CHECK(!target.getNotes()[1].isDirty());
+    CHECK(target.getNotes()[0].hasRenderedEdit());
+    CHECK(!target.getNotes()[1].isSynthDirty());
+}
+
+void testNeutralResetHonoursEngineAndGlobalPitch() {
+    // The renderer restores a dirty neutral note from the pristine source.
+    // That policy must not swallow an explicit engine choice or a global
+    // pitch/formant edit: those are edits even when the note's own fields are
+    // neutral. A note only resets when it is neutral *and* nothing outside it
+    // changes the rendered result.
+    Project project = makeProject();
+    auto &notes = project.getNotes();
+
+    notes[0].markDirty();
+    CHECK(project.shouldResetNeutralNoteToOriginal(notes[0]));
+
+    notes[1].setEngine(NoteEngine::Pitchcore);
+    notes[1].markDirty();
+    CHECK(!project.shouldResetNeutralNoteToOriginal(notes[1]));
+
+    notes[1].setEngine(NoteEngine::Inherit);
+    project.setGlobalPitchOffset(1.0f);
+    notes[2].markDirty();
+    CHECK(!project.shouldResetNeutralNoteToOriginal(notes[2]));
+
+    project.setGlobalPitchOffset(0.0f);
+    project.setFormantShift(1.0f);
+    notes[3].markDirty();
+    CHECK(!project.shouldResetNeutralNoteToOriginal(notes[3]));
+
+    project.setFormantShift(0.0f);
+    CHECK(project.shouldResetNeutralNoteToOriginal(notes[3]));
+}
+
 } // namespace
 
 int main() {
@@ -269,6 +315,8 @@ int main() {
     testLegacyJsonLoadsInherit();
     testUnknownValueLoadsInherit();
     testOldProjectKeepsItsAudio();
+    testRenderedStateClearsPersistentDirty();
+    testNeutralResetHonoursEngineAndGlobalPitch();
 
     std::cout << "NoteEngineTests: all checks passed\n";
     return 0;

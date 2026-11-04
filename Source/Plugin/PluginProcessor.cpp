@@ -114,15 +114,7 @@ void mergeRenderedState(Project &target, const Project &rendered) {
   targetAudio.timelineOffsetSeconds = renderedAudio.timelineOffsetSeconds;
   targetAudio.playbackRegionRanges = renderedAudio.playbackRegionRanges;
 
-  auto &targetNotes = target.getNotes();
-  const auto &renderedNotes = rendered.getNotes();
-  if (targetNotes.size() == renderedNotes.size()) {
-    for (size_t i = 0; i < targetNotes.size(); ++i) {
-      const auto &renderedNote = renderedNotes[i];
-      targetNotes[i].setRenderedEdit(renderedNote.hasRenderedEdit());
-      targetNotes[i].setSynthDirty(renderedNote.isSynthDirty());
-    }
-  }
+  target.applyRenderedNoteState(rendered);
 }
 
 // Some AAX hosts deactivate an effect as soon as a rendered block contains an
