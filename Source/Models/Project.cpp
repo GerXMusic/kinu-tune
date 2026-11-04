@@ -161,8 +161,22 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     return note.isNeutralForOriginalWaveform();
 }
 
+void Project::setPreserveFormants(bool enabled)
+{
+    if (preserveFormants == enabled)
+        return;
+    preserveFormants = enabled;
+    modified = true;
+}
+
 bool Project::hasRegionEdits() const
 {
+    // The formant switch changes the Pitchcore render even when every note's
+    // pitch fields are neutral, so it is an edit of the region: the ARA store
+    // path must keep publishing the processed audio (D-163 family).
+    if (preserveFormants)
+        return true;
+
     if (globalPitchOffset != 0.0f || formantShift != 0.0f)
         return true;
 

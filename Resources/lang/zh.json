@@ -153,6 +153,7 @@
   "param.note_info": "音符信息",
   "param.pitch": "音高",
   "param.pitch_offset": "音高偏移 (半音)",
+  "param.preserve_formants": "保留共振峰",
   "param.pitch_reference": "音高基准",
   "param.reference_a4": "基准 (A4)",
   "param.scale": "音阶",

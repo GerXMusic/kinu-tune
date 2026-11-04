@@ -186,6 +186,10 @@ juce::var ProjectSerializer::toJson(const Project& project,
     // Global parameters
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
     obj->setProperty("formantShift", project.getFormantShift());
+    // Off is the default, so it stays out of the JSON of untouched and legacy
+    // projects (same rule as the per-note engine field).
+    if (project.getPreserveFormants())
+        obj->setProperty("preserveFormants", true);
     obj->setProperty("volume", project.getVolume());
     obj->setProperty("pitchCenter", project.getPitchCenter());
     obj->setProperty("scaleMode", static_cast<int>(project.getScaleMode()));
@@ -314,6 +318,9 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     // Global parameters
     project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
+    // Missing in every project written before D-166: load off, never an error.
+    project.setPreserveFormants(
+        static_cast<bool>(json.getProperty("preserveFormants", false)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     project.setPitchCenter(static_cast<float>(json.getProperty("pitchCenter", 0.0)));
     {

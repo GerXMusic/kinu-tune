@@ -210,6 +210,12 @@ PitchNetAudioProcessor::createParameterLayout() {
       juce::ParameterID{PARAM_FORMANT_SHIFT, 1}, "Formant Shift",
       juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f));
 
+  // Preserve Formants — global switch for the Pitchcore engine (D-166).
+  // Off by default; the other engines ignore it.
+  params.push_back(std::make_unique<juce::AudioParameterBool>(
+      juce::ParameterID{PARAM_PRESERVE_FORMANTS, 1}, "Preserve Formants",
+      false));
+
   return {params.begin(), params.end()};
 }
 
@@ -249,6 +255,8 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
+  preserveFormantsParamValue =
+      apvts.getRawParameterValue(PARAM_PRESERVE_FORMANTS);
   {
     // Same file the editor reads, so a render that runs before the editor is
     // opened (restoring a saved project) uses the engine the editor will show.
@@ -552,21 +560,25 @@ void PitchNetAudioProcessor::checkParameterChanges() {
 
   const float pitchOffset = pitchOffsetParamValue->load();
   const float formantShift = formantShiftParamValue->load();
+  const bool preserveFormants = preserveFormantsParamValue->load() > 0.5f;
 
   const bool pitchChanged = std::abs(pitchOffset - cachedPitchOffset) > 0.001f;
   const bool formantChanged =
       std::abs(formantShift - cachedFormantShift) > 0.001f;
+  const bool preserveChanged = preserveFormants != cachedPreserveFormants;
 
-  if (!pitchChanged && !formantChanged)
+  if (!pitchChanged && !formantChanged && !preserveChanged)
     return;
 
   cachedPitchOffset = pitchOffset;
   cachedFormantShift = formantShift;
+  cachedPreserveFormants = preserveFormants;
 
   // Store latest values and dispatch to message thread (coalesced)
   auto syncState = paramSyncState;
   syncState->pitchOffset.store(pitchOffset);
   syncState->formantShift.store(formantShift);
+  syncState->preserveFormants.store(preserveFormants);
   syncState->needsResynth.store(true);
 
   if (!syncState->pending.exchange(true)) {
@@ -587,6 +599,7 @@ void PitchNetAudioProcessor::checkParameterChanges() {
       // Apply parameter values to project
       const float po = syncState->pitchOffset.load();
       const float fs = syncState->formantShift.load();
+      const bool pf = syncState->preserveFormants.load();
       bool changed = false;
 
       if (std::abs(project->getGlobalPitchOffset() - po) > 0.001f) {
@@ -595,6 +608,10 @@ void PitchNetAudioProcessor::checkParameterChanges() {
       }
       if (std::abs(project->getFormantShift() - fs) > 0.001f) {
         project->setFormantShift(fs);
+        changed = true;
+      }
+      if (project->getPreserveFormants() != pf) {
+        project->setPreserveFormants(pf);
         changed = true;
       }
 
@@ -1704,12 +1721,22 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
       araRegionScopedProject != nullptr ? *araRegionScopedProject : project;
 
   araAnalysisProjectSnapshot = std::make_unique<Project>(stateProject);
+  // Only a canvas project scoped to the active region can stand in for that
+  // region's archive; a document/composite snapshot must not (D-166).
+  araAnalysisSnapshotRegionKey =
+      araRegionScopedProject != nullptr ? activeRegionKey : juce::String();
   invalidateAraAnalysisProjectJson();
   araAnalysisReady =
       stateProject.getAudioData().waveform.getNumSamples() > 0 &&
       !stateProject.getAudioData().f0.empty();
   cachedPitchOffset = stateProject.getGlobalPitchOffset();
   cachedFormantShift = stateProject.getFormantShift();
+  cachedPreserveFormants = stateProject.getPreserveFormants();
+  // The project is the source of truth: an editor toggle writes the project
+  // first, and the host parameter must follow it, not the other way round.
+  if ((preserveFormantsParamValue->load() > 0.5f) != cachedPreserveFormants)
+    apvts.getParameter(PARAM_PRESERVE_FORMANTS)
+        ->setValueNotifyingHost(cachedPreserveFormants ? 1.0f : 0.0f);
   publishPersistentProjectSnapshot(stateProject);
 
 #if JucePlugin_Enable_ARA
@@ -2033,6 +2060,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
         !restoredProject->getAudioData().f0.empty();
     cachedPitchOffset = restoredProject->getGlobalPitchOffset();
     cachedFormantShift = restoredProject->getFormantShift();
+    cachedPreserveFormants = restoredProject->getPreserveFormants();
 
     if (!araAnalysisController)
       araAnalysisController = makeRenderController();
@@ -2169,10 +2197,13 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
 
       const float po = pitchOffsetParamValue->load();
       const float fs = formantShiftParamValue->load();
+      const bool pf = preserveFormantsParamValue->load() > 0.5f;
       if (std::abs(po) > 0.001f)
         project->setGlobalPitchOffset(po);
       if (std::abs(fs) > 0.001f)
         project->setFormantShift(fs);
+      if (!restoredPersistentProject && pf)
+        project->setPreserveFormants(true);
 
       if (restoredPersistentProject) {
         apvts.getParameter(PARAM_PITCH_OFFSET)
@@ -2183,6 +2214,10 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
             ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
                                        ->convertTo0to1(
                                            project->getFormantShift()));
+        apvts.getParameter(PARAM_PRESERVE_FORMANTS)
+            ->setValueNotifyingHost(project->getPreserveFormants() ? 1.0f
+                                                                   : 0.0f);
+        cachedPreserveFormants = project->getPreserveFormants();
         araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
         invalidateAraAnalysisProjectJson();
         araAnalysisReady =
@@ -2373,6 +2408,7 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
                               : araAnalysisController->getProject()) {
           cachedPitchOffset = project->getGlobalPitchOffset();
           cachedFormantShift = project->getFormantShift();
+          cachedPreserveFormants = project->getPreserveFormants();
         }
         return;
       }
@@ -2393,8 +2429,12 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
             ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
                                        ->convertTo0to1(
                                            project->getFormantShift()));
+        apvts.getParameter(PARAM_PRESERVE_FORMANTS)
+            ->setValueNotifyingHost(project->getPreserveFormants() ? 1.0f
+                                                                   : 0.0f);
         cachedPitchOffset = project->getGlobalPitchOffset();
         cachedFormantShift = project->getFormantShift();
+        cachedPreserveFormants = project->getPreserveFormants();
       }
       return;
     }
@@ -3093,6 +3133,14 @@ bool PitchNetAudioProcessor::serializeAraRegionProject(
   if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
       mainComponent != nullptr)
     project = mainComponent->getProject();
+  // Editor already closed (or the canvas no longer owns the project): the
+  // processor's snapshot is the last editor state and is fresher than the
+  // region cache, which is only refreshed when the canvas is released. Without
+  // this, a global switch changed just before saving was written to the VST
+  // state but not to the ARA region archive (D-166).
+  if (project == nullptr && regionKey == araAnalysisSnapshotRegionKey &&
+      araAnalysisProjectSnapshot)
+    project = araAnalysisProjectSnapshot.get();
   if (project == nullptr) {
     const auto it = araRegions.find(regionKey);
     if (it != araRegions.end())

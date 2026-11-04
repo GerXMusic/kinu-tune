@@ -153,6 +153,7 @@
   "param.note_info": "Información de la nota",
   "param.pitch": "Tono",
   "param.pitch_offset": "Desplazamiento de tono (st)",
+  "param.preserve_formants": "Preservar formantes",
   "param.pitch_reference": "Referencia de tono",
   "param.reference_a4": "Referencia (A4)",
   "param.scale": "Escala",

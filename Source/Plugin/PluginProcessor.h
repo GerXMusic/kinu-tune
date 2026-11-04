@@ -294,6 +294,9 @@ public:
   static constexpr const char *PARAM_DRY_WET = "dryWet";
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
+  // Global Pitchcore formant-preservation switch (D-166). Default off; old
+  // states and projects without the field load off.
+  static constexpr const char *PARAM_PRESERVE_FORMANTS = "preserveFormants";
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-139 pre-test: the instance id of THIS processor.
@@ -362,10 +365,12 @@ private:
   std::atomic<float> *dryWetParamValue = nullptr;
   std::atomic<float> *pitchOffsetParamValue = nullptr;
   std::atomic<float> *formantShiftParamValue = nullptr;
+  std::atomic<float> *preserveFormantsParamValue = nullptr;
 
   // Cached parameter values for change detection (audio thread only)
   float cachedPitchOffset = 0.0f;
   float cachedFormantShift = 0.0f;
+  bool cachedPreserveFormants = false;
   std::shared_ptr<MacroParameters> macroParameters =
       std::make_shared<MacroParameters>();
 
@@ -374,6 +379,7 @@ private:
     std::atomic<bool> pending{false};
     std::atomic<float> pitchOffset{0.0f};
     std::atomic<float> formantShift{0.0f};
+    std::atomic<bool> preserveFormants{false};
     std::atomic<bool> needsResynth{false};
   };
   std::shared_ptr<ParamSyncState> paramSyncState =
@@ -417,6 +423,11 @@ private:
   bool araAnalysisReady = false;
   double araAnalysisTimelineOffsetSeconds = 0.0;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
+  // Region whose live project the snapshot above was built from. Empty when
+  // the snapshot is a document/composite project. serializeAraRegionProject
+  // uses it as the freshest copy when the editor has already closed but the
+  // region cache still holds an older project (D-166).
+  juce::String araAnalysisSnapshotRegionKey;
   // Built on demand from araAnalysisProjectSnapshot. Serialising a
   // multi-minute take to JSON text costs tens of MB of string work, and
   // nothing in non-ARA plug-in mode ever reads it, so only pay for it where it
