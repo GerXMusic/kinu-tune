@@ -1,5 +1,7 @@
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
+#include "AraViewFocusPolicy.h"
+#include "../Plugin/AraDiagnostics.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
@@ -1399,8 +1401,19 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject() && !regionActivationFromCanvas && !pianoRoll.isTrackViewMode())
+    if (pitchnet::shouldFitPitchRange(!project->getNotes().empty(),
+                                     hasAnalyzedProject()) &&
+        !regionActivationFromCanvas)
       fitAnalyzedPitchRangeToView(*project);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("exchangeProject notes=" +
+             juce::String(static_cast<int>(project->getNotes().size())) +
+             " waveform=" +
+             juce::String(project->getAudioData().waveform.getNumSamples()) +
+             " analyzed=" + (hasAnalyzedProject() ? "1" : "0") +
+             " regionFromCanvas=" + (regionActivationFromCanvas ? "1" : "0") +
+             " trackView=" + (pianoRoll.isTrackViewMode() ? "1" : "0"));
+#endif
   }
   repaint();
   return previousProject;
@@ -1575,6 +1588,21 @@ void MainComponent::resized()
 
   if (enableAudioDeviceFlag && settingsManager)
     settingsManager->setWindowSize(getWidth(), getHeight());
+
+  if (hasPendingTimelineFocus)
+  {
+    const double start = pendingTimelineFocusStart;
+    const double end = pendingTimelineFocusEnd;
+    hasPendingTimelineFocus = false;
+    focusTimelineRange(start, end);
+  }
+
+  if (hasPendingPitchFit)
+    if (auto *project = getProject())
+    {
+      hasPendingPitchFit = false;
+      fitAnalyzedPitchRangeToView(*project);
+    }
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent &e)
@@ -2192,6 +2220,26 @@ void MainComponent::zoomToFull()
 
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
+  if (pianoRoll.getVisibleContentHeight() <= 0)
+  {
+    // D-176: the initial ARA selection can attach the project before the
+    // canvas is sized; retry after layout instead of leaving the previous
+    // track's pitch range on screen.
+    hasPendingPitchFit = true;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("fitPitchRange deferred notes=" +
+             juce::String(static_cast<int>(project.getNotes().size())) +
+             " height=0");
+#endif
+    return;
+  }
+  hasPendingPitchFit = false;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("fitPitchRange run notes=" +
+           juce::String(static_cast<int>(project.getNotes().size())) +
+           " height=" + juce::String(pianoRoll.getVisibleContentHeight()));
+#endif
+
   float minMidi = std::numeric_limits<float>::max();
   float maxMidi = std::numeric_limits<float>::lowest();
 
@@ -2229,7 +2277,15 @@ void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
   {
     maxMidi = std::min(maxMidi + 1.0f, static_cast<float>(MAX_MIDI_NOTE));
     pianoRoll.fitPitchRangeToView(minMidi, maxMidi);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("fitPitchRange applied min=" + juce::String(minMidi, 2) +
+             " max=" + juce::String(maxMidi, 2));
+#endif
   }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  else
+    ARA_DIAG("fitPitchRange noData");
+#endif
 }
 
 void MainComponent::exportFile()
@@ -3284,12 +3340,14 @@ void MainComponent::applyProjectSynthesisEngine()
   auto *project = getProject();
   if (project == nullptr)
     return;
-  const auto engine = project->getSynthesisEngine();
-  if (!engine)
-    return;
+  const auto preference = settingsManager != nullptr
+                              ? settingsManager->getSynthesisEngineType()
+                              : defaultSynthesisEngineType();
+  const auto engine = pitchnet::displayedSynthesisEngine(
+      project->getSynthesisEngine(), preference);
   if (editorController)
-    editorController->setSynthesisEngineType(*engine);
-  parameterPanel.setSynthesisEngine(*engine);
+    editorController->setSynthesisEngineType(engine);
+  parameterPanel.setSynthesisEngine(engine);
 }
 
 void MainComponent::undo()
@@ -3913,22 +3971,72 @@ void MainComponent::clearHostAudio()
 
 void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
 {
-  const double start = std::max(pianoRoll.getTimelineStart(), startSeconds);
-  const double end = std::max(start, endSeconds);
   const double pixelsPerSecond = pianoRoll.getPixelsPerSecond();
   const int visibleWidth = pianoRoll.getVisibleContentWidth();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("focusTimelineRange start=" + juce::String(startSeconds, 3) +
+           " end=" + juce::String(endSeconds, 3) +
+           " timelineStart=" + juce::String(pianoRoll.getTimelineStart(), 3) +
+           " duration=" + juce::String(pianoRoll.getTimelineDuration(), 3) +
+           " pps=" + juce::String(pixelsPerSecond, 3) +
+           " width=" + juce::String(visibleWidth) +
+           " scrollBefore=" + juce::String(pianoRoll.getScrollX(), 1));
+#endif
   if (pixelsPerSecond <= 0.0 || visibleWidth <= 0)
+  {
+    // D-176: setupARAMode applies the initial host selection before the editor
+    // is sized. Keep the span and retry after the layout has run.
+    hasPendingTimelineFocus = true;
+    pendingTimelineFocusStart = startSeconds;
+    pendingTimelineFocusEnd = endSeconds;
+    if (!pendingViewRetryScheduled && pendingViewRetries < 10)
+    {
+      pendingViewRetryScheduled = true;
+      juce::Component::SafePointer<MainComponent> safeThis(this);
+      juce::Timer::callAfterDelay(200, [safeThis]() {
+        if (safeThis == nullptr)
+          return;
+        safeThis->pendingViewRetryScheduled = false;
+        ++safeThis->pendingViewRetries;
+        if (safeThis->hasPendingPitchFit)
+          if (auto *pendingProject = safeThis->getProject())
+          {
+            safeThis->hasPendingPitchFit = false;
+            safeThis->fitAnalyzedPitchRangeToView(*pendingProject);
+          }
+        if (safeThis->hasPendingTimelineFocus)
+        {
+          const double pendingStart = safeThis->pendingTimelineFocusStart;
+          const double pendingEnd = safeThis->pendingTimelineFocusEnd;
+          safeThis->hasPendingTimelineFocus = false;
+          safeThis->focusTimelineRange(pendingStart, pendingEnd);
+        }
+      });
+    }
     return;
+  }
 
-  const double rangeWidth = (end - start) * pixelsPerSecond;
-  double newScrollX = start * pixelsPerSecond;
+  hasPendingTimelineFocus = false;
+  pendingViewRetries = 0;
 
-  if (rangeWidth > 0.0 && rangeWidth < static_cast<double>(visibleWidth) * 0.75)
-    newScrollX += rangeWidth * 0.5 - static_cast<double>(visibleWidth) * 0.5;
-  else
-    newScrollX -= static_cast<double>(visibleWidth) * 0.12;
+  const double timelineStart = pianoRoll.getTimelineStart();
+  const double timelineDuration = pianoRoll.getTimelineDuration();
+  const auto focus = pitchnet::computeAraViewFocus(
+      startSeconds, endSeconds, timelineStart, timelineDuration,
+      pixelsPerSecond, visibleWidth);
 
-  pianoRoll.setScrollX(newScrollX); // clamps to the timeline start/end
+  // D-176: cover the selected region before clamping the scroll. Otherwise a
+  // region beyond the current project window is unreachable until playback
+  // extends the timeline.
+  if (focus.timelineEnd > timelineStart + timelineDuration)
+    pianoRoll.extendTimelineTo(focus.timelineEnd);
+
+  pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("focusTimelineRange applied timelineEnd=" +
+           juce::String(focus.timelineEnd, 3) +
+           " scrollAfter=" + juce::String(pianoRoll.getScrollX(), 1));
+#endif
   pianoRollView.repaintOverviewViewport();
 
   // Let a host selection visually win over the playback follow cursor for a

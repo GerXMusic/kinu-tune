@@ -16,6 +16,7 @@ set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     AraSelectionPolicyTests.cpp
+    AraViewFocusTests.cpp
     DocumentEngineTests.cpp
     EngineBlocksTests.cpp
     FormantRetirementTests.cpp

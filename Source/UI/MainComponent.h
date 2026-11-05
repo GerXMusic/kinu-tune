@@ -497,6 +497,14 @@ private:
   bool cachedHostLoopEnabled = false;
   bool cachedHostLoopHasRange = false;
   double suppressPlaybackFollowUntilMs = 0.0;
+  // D-176: the initial ARA selection arrives before the editor is sized. Keep
+  // the span and apply it once the canvas has a visible width.
+  bool hasPendingTimelineFocus = false;
+  bool hasPendingPitchFit = false;
+  bool pendingViewRetryScheduled = false;
+  int pendingViewRetries = 0;
+  double pendingTimelineFocusStart = 0.0;
+  double pendingTimelineFocusEnd = 0.0;
   juce::int64 lastCursorUpdateTime = 0;
 
 #if JUCE_MAC
