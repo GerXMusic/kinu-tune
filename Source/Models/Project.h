@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "Note.h"
+#include <optional>
 #include <vector>
 #include <memory>
 #include <utility>
@@ -219,6 +220,24 @@ public:
     float getVolume() const { return volume; }
     void setVolume(float vol) { volume = vol; }
 
+    // Engine this document was last rendered with (D-174, I-19). Absent in
+    // documents written before the field existed and in fresh projects: those
+    // follow the process/user preference, which stays the default for new
+    // work. Once the user picks an engine for a document, the choice travels
+    // inside the Project (and therefore inside the ARA/plugin archive), so a
+    // second document with a different engine is not overwritten by whichever
+    // one was modified last.
+    const std::optional<SynthesisEngineType> &getSynthesisEngine() const
+    {
+        return synthesisEngine;
+    }
+    void setSynthesisEngine(SynthesisEngineType type)
+    {
+        synthesisEngine = type;
+        modified = true;
+    }
+    void clearSynthesisEngine() { synthesisEngine.reset(); }
+
     // Per-project pitch-center correction strength (0-100%).  ARA regions
     // carry their own Project, so this remains independent per region.
     float getPitchCenter() const { return pitchCenter; }
@@ -342,6 +361,9 @@ private:
     float formantShift = 0.0f;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
+
+    // Per-document engine choice; absent = follow the shared preference.
+    std::optional<SynthesisEngineType> synthesisEngine;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

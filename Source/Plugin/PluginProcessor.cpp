@@ -1681,8 +1681,15 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       pendingRerun, true);
 }
 
+void PitchNetAudioProcessor::applyDocumentSynthesisEngine(
+    const Project &project) {
+  if (const auto engine = project.getSynthesisEngine())
+    renderEngine->value.store(*engine);
+}
+
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
+  applyDocumentSynthesisEngine(project);
   ++araCanvasEditSerial;
   std::unique_ptr<Project> araRegionScopedProject;
 #if JucePlugin_Enable_ARA
@@ -1996,6 +2003,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
   if (!ProjectSerializer::fromJson(*restoredProject, parsed))
     return false;
   adoptMacroParameters(*restoredProject);
+  applyDocumentSynthesisEngine(*restoredProject);
 
   araAnalysisTimelineOffsetSeconds =
       restoredProject->getAudioData().timelineOffsetSeconds;
@@ -2026,6 +2034,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
                                             sizeInBytes)) {
     adoptMacroParameters(*restoredProject);
+    applyDocumentSynthesisEngine(*restoredProject);
     pendingStateJson.clear();
     araAnalysisTimelineOffsetSeconds =
         restoredProject->getAudioData().timelineOffsetSeconds;
@@ -3342,6 +3351,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
   auto installRestoredProject = [this, &regionKey](
                                     std::unique_ptr<Project> project) {
     attachMacroParameters(*project);
+    applyDocumentSynthesisEngine(*project);
 
     // Restored state is filed under the live key by the document controller, so
     // there is no archived-to-live migration left to do. What stood here

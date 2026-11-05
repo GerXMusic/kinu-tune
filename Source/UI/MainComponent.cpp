@@ -871,6 +871,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     settingsManager->setSynthesisEngineType(type);
     settingsManager->saveConfig();
+    // The preference above is the default for new documents. This document
+    // records its own choice so save/reopen does not hand it the engine of
+    // whichever other audio was modified last (D-174, I-19).
+    if (auto *project = getProject())
+      project->setSynthesisEngine(type);
     if (editorController)
       editorController->setSynthesisEngineType(type);
     // In plugin mode this controller writes the shared engine preference, so
@@ -878,6 +883,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // Otherwise the switch is only a setting: the audio already rendered by
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
+    notifyProjectDataChanged();
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
@@ -1328,6 +1334,7 @@ void MainComponent::bindBackendController(EditorController *controller)
   }
 
   auto *project = getProject();
+  applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
@@ -1382,6 +1389,7 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   editorController->setProject(std::move(newProject));
 
   auto *project = getProject();
+  applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
@@ -1605,6 +1613,20 @@ void MainComponent::pollMcpControl()
         ? static_cast<int>(project->getNotes().size()) : 0);
     instance->setProperty("render_pending", mcpRenderPending);
     instance->setProperty("render_generation", static_cast<int>(mcpRenderGeneration));
+    // D-174: read the engine this instance will render with. The document
+    // value is what survives save/reopen; "none" means it follows the shared
+    // preference (legacy document).
+    instance->setProperty(
+        "synthesis_engine",
+        synthesisEngineTypeToString(editorController
+                                        ? editorController->getSynthesisEngineType()
+                                        : defaultSynthesisEngineType()));
+    const auto documentEngine =
+        project != nullptr ? project->getSynthesisEngine() : std::nullopt;
+    instance->setProperty(
+        "document_synthesis_engine",
+        documentEngine ? synthesisEngineTypeToString(*documentEngine)
+                       : juce::String("none"));
     writeMcpJsonAtomically(
         getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json"),
         juce::var(instance));
@@ -1636,6 +1658,16 @@ void MainComponent::pollMcpControl()
       const auto &notes = project->getNotes();
       response->setProperty("sample_rate", project->getAudioData().sampleRate);
       response->setProperty("hop_size", HOP_SIZE);
+      response->setProperty(
+          "synthesis_engine",
+          synthesisEngineTypeToString(editorController
+                                          ? editorController->getSynthesisEngineType()
+                                          : defaultSynthesisEngineType()));
+      response->setProperty(
+          "document_synthesis_engine",
+          project->getSynthesisEngine()
+              ? synthesisEngineTypeToString(*project->getSynthesisEngine())
+              : juce::String("none"));
       for (int i = 0; i < static_cast<int>(notes.size()); ++i)
       {
         const auto &note = notes[static_cast<size_t>(i)];
@@ -1700,6 +1732,37 @@ void MainComponent::pollMcpControl()
           if (refused > 0)
             response->setProperty("error", "D-129 rechazó notas sin silencio válido; ver refused y unchanged_indices.");
         }
+      }
+    }
+    else if (command == "set_synthesis_engine")
+    {
+      const auto engineText = request.getProperty("engine", "").toString();
+      SynthesisEngineType engine = SynthesisEngineType::Psola;
+      bool valid = true;
+      if (engineText == "PSOLA")
+        engine = SynthesisEngineType::Psola;
+      else if (engineText == "Pitchcore")
+        engine = SynthesisEngineType::Pitchcore;
+      else if (engineText == "Vocoder")
+        engine = SynthesisEngineType::Vocoder;
+      else
+        valid = false;
+
+      if (!valid)
+        response->setProperty("error", "engine debe ser PSOLA, Pitchcore o Vocoder.");
+      else
+      {
+        // Same path as the Rendering card, so the document records its own
+        // engine instead of only the shared preference (D-174, I-19).
+        settingsManager->setSynthesisEngineType(engine);
+        settingsManager->saveConfig();
+        project->setSynthesisEngine(engine);
+        if (editorController)
+          editorController->setSynthesisEngineType(engine);
+        rerenderEditedNotes();
+        notifyProjectDataChanged();
+        response->setProperty("synthesis_engine", engineText);
+        response->setProperty("ok", true);
       }
     }
     else
@@ -3216,6 +3279,19 @@ void MainComponent::notifyProjectDataChanged()
     onProjectDataChanged();
 }
 
+void MainComponent::applyProjectSynthesisEngine()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+  const auto engine = project->getSynthesisEngine();
+  if (!engine)
+    return;
+  if (editorController)
+    editorController->setSynthesisEngineType(*engine);
+  parameterPanel.setSynthesisEngine(*engine);
+}
+
 void MainComponent::undo()
 {
   // Restore any transient anchor preview before changing history.
@@ -3999,6 +4075,7 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
       if (!ProjectSerializer::fromJson(*project, json))
         return false;
 
+      applyProjectSynthesisEngine();
       pianoRoll.setProject(project);
       pianoRollView.setProject(project);
       restoreProjectPresentation();
@@ -4027,6 +4104,7 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
     *project = snapshot;
     if (macroParameters)
       project->setMacroParameters(macroParameters);
+    applyProjectSynthesisEngine();
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
     restoreProjectPresentation();

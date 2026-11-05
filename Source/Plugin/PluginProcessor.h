@@ -101,6 +101,11 @@ public:
   void requestPluginProjectRender(const Project &project,
                                   PitchNetAudioModification* target = nullptr);
   void updateProjectStateFromEditor(const Project &project);
+  // D-174: the engine choice belongs to the document. Applying a restored
+  // project updates the shared render preference of THIS processor (never the
+  // process/user settings file), so background/ARA controllers agree with the
+  // editor and a second document keeps its own engine.
+  void applyDocumentSynthesisEngine(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);

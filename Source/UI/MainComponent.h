@@ -337,6 +337,9 @@ private:
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
+  // D-174: a restored document carries its own engine; apply it to the panel
+  // and to the controllers after the project lands in the canvas.
+  void applyProjectSynthesisEngine();
   void fitAnalyzedPitchRangeToView(Project &project);
   // Whole timeline horizontally, the sung range vertically (Shift+F).
   void zoomToFull();
