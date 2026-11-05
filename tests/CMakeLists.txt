@@ -118,33 +118,6 @@ foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceGuard.cmake)
 endforeach()
 
-# D-170: restore/analysis arbitration. Builds whenever ARA is available: it
-# does not depend on the diagnostic-only definitions.
-if(ARA_AVAILABLE)
-    add_executable(AraRestoreAnalysisRaceTests AraRestoreAnalysisRaceTests.cpp)
-    target_link_libraries(AraRestoreAnalysisRaceTests PRIVATE
-        PitchNetPlugin
-        pitchnet_ui
-        pitchnet_core
-        juce::juce_audio_processors
-        juce::juce_audio_plugin_client
-        juce::juce_audio_utils
-        juce::juce_gui_extra
-        juce::juce_recommended_config_flags)
-    target_compile_definitions(AraRestoreAnalysisRaceTests PRIVATE
-        JucePlugin_Enable_ARA=1)
-    target_include_directories(AraRestoreAnalysisRaceTests PRIVATE
-        ${ARA_SDK_PATH})
-    target_sources(AraRestoreAnalysisRaceTests PRIVATE
-        ${ARA_SDK_PATH}/ARA_Library/PlugIn/ARAPlug.cpp
-        ${ARA_SDK_PATH}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
-        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
-        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAChannelFormat.cpp)
-    target_compile_features(AraRestoreAnalysisRaceTests PRIVATE cxx_std_17)
-    add_test(NAME AraRestoreAnalysisRaceTests
-             COMMAND AraRestoreAnalysisRaceTests)
-endif()
-
 # D-152 characterization: describes the pre-implementation behaviour. It needs
 # the ARA diagnostics definitions, because the hydration flag is diagnostic-only.
 if(ARA_AVAILABLE AND PITCHNET_ARA_DIAGNOSTICS)

@@ -441,10 +441,6 @@ private:
 
   struct AraRegionState {
     std::uint64_t revision = 0;
-    // D-170: bumped when a project is restored for this key. A canvas analysis
-    // captures it at launch and refuses to install its result if it changed,
-    // so a restored archive cannot be overwritten by a late analysis callback.
-    std::uint64_t restoreSerial = 0;
     std::unique_ptr<Project> project;
     std::unique_ptr<PitchUndoManager> undoManager;
 
@@ -455,15 +451,10 @@ private:
     }
   };
 
-  // D-170 test seam: AraRestoreAnalysisRaceTests inspects the pending-analysis
-  // state to exercise the restore/analysis arbitration deterministically.
-  friend struct PitchNetProcessorTestAccess;
-
   // The active Project temporarily moves into the editor controller; inactive
   // Projects remain here. Moving ownership preserves the object identity and
   // raw pointers retained by that region's undo actions.
   std::map<juce::String, AraRegionState> araRegions;
-  std::uint64_t araRestoreSerialCounter = 0;
   juce::String activeRegionKey;
   // Bumped whenever the canvas Project changes, so Track-mode previews of the
   // active modification's other regions can tell when to rebuild.

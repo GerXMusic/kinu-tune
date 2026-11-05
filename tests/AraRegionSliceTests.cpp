@@ -1,5 +1,6 @@
 #include "../Source/Models/ProjectRegionSlice.h"
 #include "../Source/Models/ProjectSerializer.h"
+#include "TestAssert.h"
 #include <cassert>
 #include <iostream>
 
@@ -69,10 +70,10 @@ int main() {
   // edits independently of hydration from the shorter host region.
   for (const auto *part : {&left, &right}) {
     juce::MemoryBlock archive;
-    assert(ProjectSerializer::toBinaryArchive(*part, archive,
+    CHECK(ProjectSerializer::toBinaryArchive(*part, archive,
         ProjectSerializer::BinaryArchiveMode::hostBackedARA));
     Project reopened;
-    assert(ProjectSerializer::fromBinaryArchive(reopened, archive.getData(), archive.getSize()));
+    CHECK(ProjectSerializer::fromBinaryArchive(reopened, archive.getData(), archive.getSize()));
     assert(reopened.getAudioData().waveform.getNumSamples() == 0);
     assert(reopened.getAudioData().melSpectrogram.empty());
     assert(reopened.getAudioData().playbackRegionRanges.size() == 1);
