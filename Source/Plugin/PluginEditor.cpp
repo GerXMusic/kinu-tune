@@ -965,6 +965,19 @@ void PitchNetAudioProcessorEditor::refreshAraRegionList() {
   if (mainView == nullptr || getARAEditorView() == nullptr)
     return;
 
+  // D-180: measurement only. The 8 Hz poll must not be the hidden cost behind a
+  // slow repaint.
+  const double refreshStartMs = juce::Time::getMillisecondCounterHiRes();
+  struct RefreshReporter {
+    IMainView *view = nullptr;
+    double startMs = 0.0;
+    ~RefreshReporter() {
+      if (view != nullptr)
+        view->noteAraRegionRefreshDuration(
+            juce::Time::getMillisecondCounterHiRes() - startMs);
+    }
+  } refreshReporter{mainView.get(), refreshStartMs};
+
   const auto regions = collectAraPlaybackRegions();
 
   std::vector<MainViewRegionEntry> entries;
@@ -1449,7 +1462,20 @@ void PitchNetAudioProcessorEditor::activateAraRegion(
     }
   }
 
+  const double activationStartMs = juce::Time::getMillisecondCounterHiRes();
   audioProcessor.setActiveAraRegion(target);
+  const auto activationMs =
+      juce::Time::getMillisecondCounterHiRes() - activationStartMs;
+  if (mainView != nullptr)
+  {
+    mainView->noteAraActivationDuration(activationMs);
+    mainView->noteAraArchiveRestoreDuration(
+        audioProcessor.getLastArchiveRestoreMs());
+    const auto timing = audioProcessor.getLastAraActivationTiming();
+    mainView->noteAraActivationBreakdown(
+        timing.cancelMs, timing.copyMs, timing.parseMs, timing.installMs,
+        timing.focusMs, timing.bindMs, timing.totalMs);
+  }
   if (focusView) {
     // The canvas is in modification time; the region's host position is not.
     const auto span = audioProcessor.activeRegionSpanInModificationTime();
@@ -1473,6 +1499,11 @@ void PitchNetAudioProcessorEditor::onNewSelection(
     refreshAraRegionList();
     return;
   }
+
+  // D-180: measurement only. Starts the clock for selection -> first correct
+  // repaint; the project binding and the paint are reported separately.
+  if (mainView != nullptr)
+    mainView->noteAraSelectionStarted();
 
   // Switch the canvas to whichever region the user selected in the host. Each
   // region/track carries its own persistent Project, so this swaps what is
@@ -1620,10 +1651,24 @@ void PitchNetAudioProcessorEditor::onNewSelection(
           pitchDocController->setCurrentPlaybackRegion(target);
       }
     }
+    const double activationStartMs = juce::Time::getMillisecondCounterHiRes();
     audioProcessor.setActiveAraRegion(target);
+    const auto activationMs =
+        juce::Time::getMillisecondCounterHiRes() - activationStartMs;
+    if (mainView != nullptr)
+    {
+      mainView->noteAraActivationDuration(activationMs);
+      mainView->noteAraArchiveRestoreDuration(
+          audioProcessor.getLastArchiveRestoreMs());
+      const auto timing = audioProcessor.getLastAraActivationTiming();
+      mainView->noteAraActivationBreakdown(
+          timing.cancelMs, timing.copyMs, timing.parseMs, timing.installMs,
+          timing.focusMs, timing.bindMs, timing.totalMs);
+    }
     // The canvas is in modification time; the region's host position is not.
     const auto span = audioProcessor.activeRegionSpanInModificationTime();
-    mainView->focusTimelineRange(span.first, span.second);
+    if (mainView != nullptr)
+      mainView->focusTimelineRange(span.first, span.second);
   }
 
   // The selection is also what tells us which track's regions to list, so

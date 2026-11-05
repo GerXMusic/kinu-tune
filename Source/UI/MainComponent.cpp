@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
 #include "AraViewFocusPolicy.h"
+#include "CursorFollowPolicy.h"
 #include "../Plugin/AraDiagnostics.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
@@ -1387,6 +1388,10 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   if (!isPluginMode() || editorController == nullptr)
     return newProject;
 
+  // D-180: measurement only.
+  const double exchangeStartMs = nowMs();
+  const bool incomingProject = newProject != nullptr;
+
   auto previousProject = editorController->takeProject();
   editorController->setProject(std::move(newProject));
 
@@ -1416,6 +1421,17 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
 #endif
   }
   repaint();
+
+  // D-180: measurement only. The project is bound now; the timer reports the
+  // first paint after this point.
+  if (incomingProject)
+  {
+    latencyTrace.selectionBoundMs = nowMs();
+    latencyTrace.selectionPaintBase = pianoRoll.getPaintCount();
+  }
+  latencyTrace.lastExchangeMs = nowMs() - exchangeStartMs;
+  latencyTrace.maxExchangeMs =
+      std::max(latencyTrace.maxExchangeMs, latencyTrace.lastExchangeMs);
   return previousProject;
 }
 
@@ -1793,6 +1809,112 @@ void MainComponent::pollMcpControl()
         response->setProperty("ok", true);
       }
     }
+    else if (command == "ui_state")
+    {
+      // D-180: measurement only. Internal timestamps let the probe compute the
+      // latency without trusting the file-poll interval.
+      auto span = [](double fromMs, double toMs) {
+        return (fromMs > 0.0 && toMs >= fromMs) ? toMs - fromMs : -1.0;
+      };
+      response->setProperty("now_ms", nowMs());
+      response->setProperty("wall_ms",
+                            static_cast<double>(juce::Time::currentTimeMillis()));
+      response->setProperty("playback_active", isPlaying);
+      response->setProperty("paint_count",
+                            static_cast<juce::int64>(pianoRoll.getPaintCount()));
+      response->setProperty("paint_last_ms", pianoRoll.getLastPaintDurationMs());
+      response->setProperty("paint_max_ms", pianoRoll.getMaxPaintDurationMs());
+      response->setProperty("timer_gap_max_ms", latencyTrace.maxTimerGapMs);
+      response->setProperty("exchange_last_ms", latencyTrace.lastExchangeMs);
+      response->setProperty("exchange_max_ms", latencyTrace.maxExchangeMs);
+      response->setProperty("region_refresh_last_ms",
+                            latencyTrace.lastRegionRefreshMs);
+      response->setProperty("region_refresh_max_ms",
+                            latencyTrace.maxRegionRefreshMs);
+      response->setProperty("archive_restore_last_ms",
+                            latencyTrace.lastArchiveRestoreMs);
+      response->setProperty("archive_restore_max_ms",
+                            latencyTrace.maxArchiveRestoreMs);
+      response->setProperty("activation_last_ms",
+                            latencyTrace.lastActivationMs);
+      response->setProperty("activation_max_ms",
+                            latencyTrace.maxActivationMs);
+      response->setProperty("activation_cancel_ms",
+                            latencyTrace.lastActivationCancelMs);
+      response->setProperty("activation_copy_ms",
+                            latencyTrace.lastActivationCopyMs);
+      response->setProperty("activation_parse_ms",
+                            latencyTrace.lastActivationParseMs);
+      response->setProperty("activation_install_ms",
+                            latencyTrace.lastActivationInstallMs);
+      response->setProperty("activation_focus_ms",
+                            latencyTrace.lastActivationFocusMs);
+      response->setProperty("activation_bind_ms",
+                            latencyTrace.lastActivationBindMs);
+      response->setProperty("activation_total_ms",
+                            latencyTrace.lastActivationTotalMs);
+
+      response->setProperty("selection_start_ms",
+                            latencyTrace.selectionStartedMs);
+      response->setProperty("selection_bound_ms",
+                            latencyTrace.selectionBoundMs);
+      response->setProperty("selection_first_paint_ms",
+                            latencyTrace.selectionFirstPaintMs);
+      response->setProperty("selection_bind_ms",
+                            span(latencyTrace.selectionStartedMs,
+                                 latencyTrace.selectionBoundMs));
+      response->setProperty("selection_paint_ms",
+                            span(latencyTrace.selectionBoundMs,
+                                 latencyTrace.selectionFirstPaintMs));
+      response->setProperty("selection_total_ms",
+                            span(latencyTrace.selectionStartedMs,
+                                 latencyTrace.selectionFirstPaintMs));
+
+      response->setProperty("play_state_ms", latencyTrace.playStateMs);
+      response->setProperty("play_first_paint_ms",
+                            latencyTrace.playFirstPaintMs);
+      response->setProperty("play_state_to_paint_ms",
+                            span(latencyTrace.playStateMs,
+                                 latencyTrace.playFirstPaintMs));
+      response->setProperty("play_cursor_ms", latencyTrace.playCursorMs);
+      response->setProperty("play_cursor_first_paint_ms",
+                            latencyTrace.playCursorFirstPaintMs);
+      response->setProperty("play_cursor_to_paint_ms",
+                            span(latencyTrace.playCursorMs,
+                                 latencyTrace.playCursorFirstPaintMs));
+      response->setProperty("play_cursor_visible",
+                            latencyTrace.playCursorVisible);
+
+      response->setProperty("stopped_seek_ms", latencyTrace.stoppedSeekMs);
+      response->setProperty("stopped_seek_applied_ms",
+                            latencyTrace.stoppedSeekAppliedMs);
+      response->setProperty("stopped_seek_first_paint_ms",
+                            latencyTrace.stoppedSeekFirstPaintMs);
+      response->setProperty("stopped_seek_apply_ms",
+                            span(latencyTrace.stoppedSeekMs,
+                                 latencyTrace.stoppedSeekAppliedMs));
+      response->setProperty("stopped_seek_paint_ms",
+                            span(latencyTrace.stoppedSeekAppliedMs,
+                                 latencyTrace.stoppedSeekFirstPaintMs));
+      response->setProperty("stopped_seek_total_ms",
+                            span(latencyTrace.stoppedSeekMs,
+                                 latencyTrace.stoppedSeekFirstPaintMs));
+      response->setProperty("stopped_seek_cursor_visible",
+                            latencyTrace.stoppedSeekCursorVisible);
+
+      response->setProperty("scroll_x", pianoRoll.getScrollX());
+      response->setProperty("cursor_time", pianoRoll.getCursorTime());
+      response->setProperty("pixels_per_second",
+                            static_cast<double>(pianoRoll.getPixelsPerSecond()));
+      response->setProperty("visible_width",
+                            pianoRoll.getVisibleContentWidth());
+      response->setProperty("timeline_start", pianoRoll.getTimelineStart());
+      response->setProperty("timeline_duration",
+                            pianoRoll.getTimelineDuration());
+      response->setProperty("project_notes",
+                            static_cast<int>(project->getNotes().size()));
+      response->setProperty("ok", true);
+    }
     else
       response->setProperty("error", "Comando MCP desconocido.");
 
@@ -1804,6 +1926,17 @@ void MainComponent::pollMcpControl()
 
 void MainComponent::timerCallback()
 {
+  // D-180: measurement only. A 60 Hz tick that arrives late means the message
+  // thread was blocked, which is different from a late state change.
+  {
+    const double timerNowMs = nowMs();
+    if (latencyTrace.lastTimerMs > 0.0)
+      latencyTrace.maxTimerGapMs =
+          std::max(latencyTrace.maxTimerGapMs,
+                   timerNowMs - latencyTrace.lastTimerMs);
+    latencyTrace.lastTimerMs = timerNowMs;
+  }
+
   pollMcpControl();
   dispatchPendingDragAudition();
 
@@ -1837,25 +1970,38 @@ void MainComponent::timerCallback()
       pianoRoll.setCursorTime(position);
       toolbar.setCurrentTime(position);
 
-      // Follow playback: scroll to keep cursor visible
+      // D-180: follow a stopped host seek as well as playback. The old rule
+      // only moved the view while the transport was running, so a cursor
+      // outside the window left the notes at the project start until play.
+      const bool stoppedSeekMoved = pendingStoppedHostSeek;
       const bool suppressPlaybackFollow =
           juce::Time::getMillisecondCounterHiRes() <
           suppressPlaybackFollowUntilMs;
-      if (isPlaying && toolbar.isFollowPlayback() && !suppressPlaybackFollow)
+      if (pitchnet::shouldFollowCursor(isPlaying, stoppedSeekMoved) &&
+          toolbar.isFollowPlayback() &&
+          (!isPlaying || !suppressPlaybackFollow))
       {
-        float cursorX =
-            static_cast<float>(position * pianoRoll.getPixelsPerSecond());
-        float viewWidth =
-            static_cast<float>(pianoRoll.getVisibleContentWidth());
-        float scrollX = static_cast<float>(pianoRoll.getScrollX());
-
-        // If cursor is outside visible area, scroll to center it
-        if (cursorX < scrollX || cursorX > scrollX + viewWidth)
-        {
-          double newScrollX =
-              std::max(0.0, static_cast<double>(cursorX - viewWidth * 0.3f));
+        const double newScrollX = pitchnet::scrollXToRevealCursor(
+            position, pianoRoll.getScrollX(),
+            static_cast<double>(pianoRoll.getPixelsPerSecond()),
+            pianoRoll.getVisibleContentWidth(),
+            pianoRoll.getTimelineStart(),
+            pianoRoll.getTimelineDuration());
+        if (std::abs(newScrollX - pianoRoll.getScrollX()) > 0.01)
           pianoRoll.setScrollX(newScrollX);
+      }
+
+      // D-180: measurement only. The stopped-seek event is applied here; the
+      // first paint after this point is reported by the timer.
+      if (pendingStoppedHostSeek)
+      {
+        if (latencyTrace.stoppedSeekAppliedMs == 0.0)
+        {
+          latencyTrace.stoppedSeekAppliedMs = nowMs();
+          latencyTrace.stoppedSeekPaintBase = pianoRoll.getPaintCount();
+          latencyTrace.stoppedSeekCursorVisible = cursorIsVisible(position);
         }
+        pendingStoppedHostSeek = false;
       }
     }
   }
@@ -1906,6 +2052,8 @@ void MainComponent::timerCallback()
     hideAnalysisProgress();
     lastLoadingMessage.clear();
   }
+
+  updateUiLatencyPaintTrace();
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress &key,
@@ -4065,6 +4213,37 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   if (pianoRoll.extendTimelineTo(displayTime))
     pianoRollView.refreshOverview();
 
+  // D-180: measurement only. Split a stopped seek from playback so the first
+  // paint after each can be timed separately. pendingStoppedHostSeek is the
+  // behaviour flag: the view follows a host seek even with the transport
+  // stopped.
+  if (!isPlaying)
+  {
+    const bool newSeek =
+        latencyTrace.stoppedSeekMs == 0.0 ||
+        std::abs(displayTime - latencyTrace.stoppedSeekTarget) > 0.05;
+    if (newSeek)
+    {
+      if (latencyTrace.stoppedSeekAppliedMs != 0.0 ||
+          latencyTrace.stoppedSeekMs == 0.0)
+      {
+        latencyTrace.stoppedSeekMs = nowMs();
+        latencyTrace.stoppedSeekAppliedMs = 0.0;
+        latencyTrace.stoppedSeekFirstPaintMs = 0.0;
+        latencyTrace.stoppedSeekCursorVisible = false;
+        latencyTrace.stoppedSeekPaintBase = pianoRoll.getPaintCount();
+      }
+      latencyTrace.stoppedSeekTarget = displayTime;
+      pendingStoppedHostSeek = true;
+    }
+  }
+  else if (latencyTrace.playStateMs > 0.0 &&
+           latencyTrace.playCursorMs == 0.0)
+  {
+    latencyTrace.playCursorMs = nowMs();
+    latencyTrace.playCursorPaintBase = pianoRoll.getPaintCount();
+  }
+
   // Update cursor position using the same mechanism as AudioEngine
   pendingCursorTime.store(displayTime);
   hasPendingCursorUpdate.store(true);
@@ -4074,6 +4253,23 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 {
   if (!isPluginMode())
     return;
+
+  // D-180: measurement only. A stopped -> playing transition starts the clock
+  // for the first frame with playback.
+  if (!isPlaying && hostIsPlaying)
+  {
+    // D-180: a selection near the play start must not hide the playhead for
+    // the 1.2 s suppression window. Starting the transport is an explicit
+    // request to see where it is playing.
+    if (pitchnet::shouldClearFollowSuppression(isPlaying, hostIsPlaying))
+      suppressPlaybackFollowUntilMs = 0.0;
+    latencyTrace.playStateMs = nowMs();
+    latencyTrace.playFirstPaintMs = 0.0;
+    latencyTrace.playPaintBase = pianoRoll.getPaintCount();
+    latencyTrace.playCursorMs = 0.0;
+    latencyTrace.playCursorFirstPaintMs = 0.0;
+    latencyTrace.playCursorVisible = false;
+  }
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
@@ -4239,6 +4435,93 @@ void MainComponent::notifyHostStopped()
     return;
 
   updateHostPlaybackState(false);
+}
+
+double MainComponent::nowMs() const
+{
+  return juce::Time::getMillisecondCounterHiRes();
+}
+
+bool MainComponent::cursorIsVisible(double timeSeconds) const
+{
+  if (pianoRoll.getVisibleContentWidth() <= 0)
+    return false;
+  const double x = timeSeconds * pianoRoll.getPixelsPerSecond();
+  const double left = pianoRoll.getScrollX();
+  return x >= left &&
+         x <= left + static_cast<double>(pianoRoll.getVisibleContentWidth());
+}
+
+void MainComponent::noteAraSelectionStarted()
+{
+  latencyTrace.selectionStartedMs = nowMs();
+  latencyTrace.selectionBoundMs = 0.0;
+  latencyTrace.selectionFirstPaintMs = 0.0;
+  latencyTrace.selectionPaintBase = pianoRoll.getPaintCount();
+}
+
+void MainComponent::noteAraRegionRefreshDuration(double durationMs)
+{
+  latencyTrace.lastRegionRefreshMs = durationMs;
+  latencyTrace.maxRegionRefreshMs =
+      std::max(latencyTrace.maxRegionRefreshMs, durationMs);
+}
+
+void MainComponent::noteAraArchiveRestoreDuration(double durationMs)
+{
+  latencyTrace.lastArchiveRestoreMs = durationMs;
+  latencyTrace.maxArchiveRestoreMs =
+      std::max(latencyTrace.maxArchiveRestoreMs, durationMs);
+}
+
+void MainComponent::noteAraActivationDuration(double durationMs)
+{
+  latencyTrace.lastActivationMs = durationMs;
+  latencyTrace.maxActivationMs =
+      std::max(latencyTrace.maxActivationMs, durationMs);
+}
+
+void MainComponent::noteAraActivationBreakdown(
+    double cancelMs, double copyMs, double parseMs, double installMs,
+    double focusMs, double bindMs, double totalMs)
+{
+  latencyTrace.lastActivationCancelMs = cancelMs;
+  latencyTrace.lastActivationCopyMs = copyMs;
+  latencyTrace.lastActivationParseMs = parseMs;
+  latencyTrace.lastActivationInstallMs = installMs;
+  latencyTrace.lastActivationFocusMs = focusMs;
+  latencyTrace.lastActivationBindMs = bindMs;
+  latencyTrace.lastActivationTotalMs = totalMs;
+}
+
+void MainComponent::updateUiLatencyPaintTrace()
+{
+  const auto paintCount = pianoRoll.getPaintCount();
+  const double stamp = nowMs();
+
+  if (latencyTrace.selectionBoundMs > 0.0 &&
+      latencyTrace.selectionFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.selectionPaintBase)
+    latencyTrace.selectionFirstPaintMs = stamp;
+
+  if (latencyTrace.playStateMs > 0.0 &&
+      latencyTrace.playFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.playPaintBase)
+    latencyTrace.playFirstPaintMs = stamp;
+
+  if (latencyTrace.playCursorMs > 0.0 &&
+      latencyTrace.playCursorFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.playCursorPaintBase)
+  {
+    latencyTrace.playCursorFirstPaintMs = stamp;
+    latencyTrace.playCursorVisible =
+        cursorIsVisible(pianoRoll.getCursorTime());
+  }
+
+  if (latencyTrace.stoppedSeekAppliedMs > 0.0 &&
+      latencyTrace.stoppedSeekFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.stoppedSeekPaintBase)
+    latencyTrace.stoppedSeekFirstPaintMs = stamp;
 }
 
 void MainComponent::triggerResynthesis()

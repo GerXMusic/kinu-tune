@@ -284,6 +284,16 @@ public:
   void notifyHostStopped() override; // Called when host stops playback
   void triggerResynthesis() override; // Triggered by DAW parameter automation
 
+  // D-180: measurement only (see plan/m2/d180-criterio.md).
+  void noteAraSelectionStarted() override;
+  void noteAraRegionRefreshDuration(double durationMs) override;
+  void noteAraArchiveRestoreDuration(double durationMs) override;
+  void noteAraActivationDuration(double durationMs) override;
+  void noteAraActivationBreakdown(double cancelMs, double copyMs,
+                                  double parseMs, double installMs,
+                                  double focusMs, double bindMs,
+                                  double totalMs) override;
+
 private:
   // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
   friend struct MainComponentTestAccess;
@@ -485,6 +495,57 @@ private:
   // Cursor update throttling
   std::atomic<double> pendingCursorTime{0.0};
   std::atomic<bool> hasPendingCursorUpdate{false};
+
+  // D-180: measurement only. All fields are written and read on the message
+  // thread; the MCP poll and the 60 Hz timer live there. No value changes what
+  // the view or the renderer does.
+  struct UiLatencyTrace {
+    double selectionStartedMs = 0.0;
+    double selectionBoundMs = 0.0;
+    double selectionFirstPaintMs = 0.0;
+    juce::int64 selectionPaintBase = 0;
+
+    double playStateMs = 0.0;
+    double playFirstPaintMs = 0.0;
+    juce::int64 playPaintBase = 0;
+    double playCursorMs = 0.0;
+    double playCursorFirstPaintMs = 0.0;
+    juce::int64 playCursorPaintBase = 0;
+    bool playCursorVisible = false;
+
+    double stoppedSeekMs = 0.0;
+    double stoppedSeekTarget = 0.0;
+    double stoppedSeekAppliedMs = 0.0;
+    double stoppedSeekFirstPaintMs = 0.0;
+    juce::int64 stoppedSeekPaintBase = 0;
+    bool stoppedSeekCursorVisible = false;
+
+    double lastTimerMs = 0.0;
+    double maxTimerGapMs = 0.0;
+    double lastExchangeMs = 0.0;
+    double maxExchangeMs = 0.0;
+    double lastRegionRefreshMs = 0.0;
+    double maxRegionRefreshMs = 0.0;
+    double lastArchiveRestoreMs = 0.0;
+    double maxArchiveRestoreMs = 0.0;
+    double lastActivationMs = 0.0;
+    double maxActivationMs = 0.0;
+    double lastActivationCancelMs = 0.0;
+    double lastActivationCopyMs = 0.0;
+    double lastActivationParseMs = 0.0;
+    double lastActivationInstallMs = 0.0;
+    double lastActivationFocusMs = 0.0;
+    double lastActivationBindMs = 0.0;
+    double lastActivationTotalMs = 0.0;
+  };
+  UiLatencyTrace latencyTrace;
+  // A host seek arrived while the transport is stopped: the view must follow
+  // it without waiting for playback (D-180 A).
+  bool pendingStoppedHostSeek = false;
+
+  double nowMs() const;
+  bool cursorIsVisible(double timeSeconds) const;
+  void updateUiLatencyPaintTrace();
 
   bool hasCachedHostTimelineState = false;
   double cachedHostTempoBpm = 120.0;

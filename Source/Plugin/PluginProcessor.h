@@ -194,6 +194,27 @@ public:
   juce::String getActiveAraRegionSelector() const {
     return activeRegionSelector;
   }
+  // D-180: measurement only. Time spent decoding/restoring a region archive in
+  // the last restoreAraRegionProject() call.
+  double getLastArchiveRestoreMs() const {
+    return lastArchiveRestoreMs.load();
+  }
+  // D-180: measurement only. Breakdown of the last setActiveAraRegion() call.
+  struct AraActivationTiming {
+    double cancelMs = 0.0;
+    double copyMs = 0.0;
+    double parseMs = 0.0;
+    double installMs = 0.0;
+    double focusMs = 0.0;
+    double bindMs = 0.0;
+    double totalMs = 0.0;
+  };
+  AraActivationTiming getLastAraActivationTiming() const {
+    return {lastActivationCancelMs.load(), lastActivationCopyMs.load(),
+            lastActivationParseMs.load(), lastActivationInstallMs.load(),
+            lastActivationFocusMs.load(), lastActivationBindMs.load(),
+            lastActivationTotalMs.load()};
+  }
   // Read-only view of a modification's Project, for drawing the regions of a
   // track in Track mode. For the modification on the canvas this is the live
   // canvas Project (fromCanvas = true, revision = araCanvasEditSerial, which
@@ -493,6 +514,15 @@ private:
   // must not take over the canvas or hide the region's progress popup.
   std::atomic<bool> regionCanvasAnalysisPending{false};
   std::atomic<std::uint64_t> regionCanvasAnalysisGeneration{0};
+  // D-180: measurement only (see plan/m2/d180-criterio.md).
+  std::atomic<double> lastArchiveRestoreMs{0.0};
+  std::atomic<double> lastActivationCancelMs{0.0};
+  std::atomic<double> lastActivationCopyMs{0.0};
+  std::atomic<double> lastActivationParseMs{0.0};
+  std::atomic<double> lastActivationInstallMs{0.0};
+  std::atomic<double> lastActivationFocusMs{0.0};
+  std::atomic<double> lastActivationBindMs{0.0};
+  std::atomic<double> lastActivationTotalMs{0.0};
   juce::String pendingRegionCanvasAnalysisKey;
   // Message-thread queue bookkeeping; never retain host-owned region pointers.
   std::set<juce::String> trackAnalysisAttempted;

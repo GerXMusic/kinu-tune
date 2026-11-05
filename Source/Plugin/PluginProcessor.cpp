@@ -2548,6 +2548,17 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (key.isEmpty())
     return;
 
+  // D-180: measurement only. Stores the total even on an early return.
+  const double activationStartMs =
+      juce::Time::getMillisecondCounterHiRes();
+  struct ActivationTotalGuard {
+    std::atomic<double> &target;
+    double startMs;
+    ~ActivationTotalGuard() {
+      target.store(juce::Time::getMillisecondCounterHiRes() - startMs);
+    }
+  } activationTotal{lastActivationTotalMs, activationStartMs};
+
   const auto selector = pitchnetRegionSelector(*region);
 
   if (key != activeRegionKey && trackAnalysisRunning) {
@@ -2557,6 +2568,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     trackAnalysisCancelled = false;
     trackAnalysisAttempted.clear();
   }
+  lastActivationCancelMs.store(
+      juce::Time::getMillisecondCounterHiRes() - activationStartMs);
 
   if (key == activeRegionKey) {
     // Studio One Event FX can bind and select the playback region before the
@@ -2617,7 +2630,11 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     if ((it == araRegions.end() || !it->second.project) &&
         activeModification != nullptr) {
       juce::MemoryBlock archive;
+      const double archiveCopyStartMs =
+          juce::Time::getMillisecondCounterHiRes();
       if (activeModification->copyProjectArchive(archive)) {
+        lastActivationCopyMs.store(
+            juce::Time::getMillisecondCounterHiRes() - archiveCopyStartMs);
         restoreAraRegionProject(key, archive.getData(), archive.getSize());
         // Restoring the archive can synchronously hydrate and move the Project
         // into the canvas. Its map slot is then empty by design, not evidence
@@ -3450,32 +3467,59 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     pushTimelineDisplayOffset();
     if (auto *shown = mainComponent->getProject())
       stampActiveRegionSpan(*shown);
+    const double bindStartMs = juce::Time::getMillisecondCounterHiRes();
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    lastActivationBindMs.store(
+        juce::Time::getMillisecondCounterHiRes() - bindStartMs);
     canvasShowsActiveAraRegion = true;
     mainComponent->hideAnalysisProgress();
     {
       const auto span = activeRegionSpanInModificationTime();
+      const double focusStartMs = juce::Time::getMillisecondCounterHiRes();
       mainComponent->focusTimelineRange(span.first, span.second);
+      lastActivationFocusMs.store(
+          juce::Time::getMillisecondCounterHiRes() - focusStartMs);
     }
   };
 
   auto project = std::make_unique<Project>();
-  if (ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
-      projectHasRestorableAnalysisData(*project)) {
+  // D-180: measurement only. Includes the mel rebuild that v10+ archives do on
+  // load; that is the cost the message thread pays before the new track appears.
+  const double restoreStartMs = juce::Time::getMillisecondCounterHiRes();
+  const bool binaryRestored =
+      ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
+      projectHasRestorableAnalysisData(*project);
+  if (binaryRestored) {
+    const double parseMs =
+        juce::Time::getMillisecondCounterHiRes() - restoreStartMs;
+    lastArchiveRestoreMs.store(parseMs);
+    lastActivationParseMs.store(parseMs);
+    const double installStartMs =
+        juce::Time::getMillisecondCounterHiRes();
     installRestoredProject(std::move(project));
+    lastActivationInstallMs.store(
+        juce::Time::getMillisecondCounterHiRes() - installStartMs);
     return;
   }
 
   const juce::String json(juce::CharPointer_UTF8(static_cast<const char *>(data)),
                           sizeInBytes);
   const auto parsed = juce::JSON::parse(json);
-  if (!parsed.isObject())
-    return;
-
   project = std::make_unique<Project>();
-  if (ProjectSerializer::fromJson(*project, parsed) &&
-      projectHasRestorableAnalysisData(*project))
+  const bool jsonRestored =
+      parsed.isObject() && ProjectSerializer::fromJson(*project, parsed) &&
+      projectHasRestorableAnalysisData(*project);
+  const double parseMs =
+      juce::Time::getMillisecondCounterHiRes() - restoreStartMs;
+  lastArchiveRestoreMs.store(parseMs);
+  lastActivationParseMs.store(parseMs);
+  if (jsonRestored) {
+    const double installStartMs =
+        juce::Time::getMillisecondCounterHiRes();
     installRestoredProject(std::move(project));
+    lastActivationInstallMs.store(
+        juce::Time::getMillisecondCounterHiRes() - installStartMs);
+  }
 }
 
 void PitchNetAudioProcessor::attachMacroParameters(Project &project) {

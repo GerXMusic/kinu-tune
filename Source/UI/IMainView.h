@@ -161,6 +161,16 @@ public:
   virtual void clearHostAudio() = 0;
   virtual void focusTimelineRange(double startSeconds, double endSeconds) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
+  // D-180: measurement only. The editor reports when an ARA selection starts and
+  // how long its region-list refresh took, so the visual latency can be split
+  // between host event, project binding and paint. No view behaviour depends on
+  // these calls.
+  virtual void noteAraSelectionStarted() {}
+  virtual void noteAraRegionRefreshDuration(double) {}
+  virtual void noteAraArchiveRestoreDuration(double) {}
+  virtual void noteAraActivationDuration(double) {}
+  virtual void noteAraActivationBreakdown(double, double, double, double,
+                                          double, double, double) {}
   // Where the drawn project content sits on the host timeline, in seconds.
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;
