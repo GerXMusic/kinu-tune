@@ -59,6 +59,13 @@ option(USE_BUNDLED_CUDA_RUNTIME "Bundle minimal CUDA runtime DLLs (Windows only)
 option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)" OFF)
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
 option(PITCHNET_BUILD_TESTS "Build the unit tests in tests/ and register them with CTest" OFF)
+# D-180: measurement-only switch. ON restores the pre-fix behaviour (view only
+# follows playback, mel serial, Pitchcore used at any shift) so the same build
+# and probe can measure before/after. Never shipped ON.
+option(PITCHNET_D180_LEGACY "D-180 measurement only: pre-fix behaviour" OFF)
+if(PITCHNET_D180_LEGACY)
+    add_compile_definitions(PITCHNET_D180_LEGACY=1)
+endif()
 # CI builds the tests without the macOS Core ML vocoder, which is not in the
 # repository; the unit tests do not load any model. (The GAME models are
 # downloaded during configure and always required.)

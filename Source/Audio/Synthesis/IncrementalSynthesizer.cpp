@@ -952,7 +952,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const auto enginePlan =
       engineBlocks::buildPlan(project->getNotes(), startFrame, endFrame,
                               synthesisEngine, silenceSource,
-                              audioData.sampleRate, hopSize);
+                              audioData.sampleRate, hopSize,
+                              vocoder != nullptr && vocoder->isLoaded());
   const bool needsVocoder =
       std::any_of(enginePlan.begin(), enginePlan.end(),
                   [](const engineBlocks::Block &block) {
