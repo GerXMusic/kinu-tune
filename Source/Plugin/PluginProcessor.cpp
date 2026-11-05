@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "AraEnginePolicy.h"
 #include "../Utils/AudioResampler.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
@@ -1687,9 +1688,28 @@ void PitchNetAudioProcessor::applyDocumentSynthesisEngine(
     renderEngine->value.store(*engine);
 }
 
+void PitchNetAudioProcessor::applySharedDocumentEngine(Project &project) {
+#if JucePlugin_Enable_ARA
+  if (activeModification != nullptr)
+    if (const auto chosen = pitchnet::chooseSharedEngine(
+            activeModification->getDocumentSynthesisEngine(),
+            project.getSynthesisEngine()))
+      project.setSynthesisEngine(*chosen);
+#else
+  juce::ignoreUnused(project);
+#endif
+}
+
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
   applyDocumentSynthesisEngine(project);
+#if JucePlugin_Enable_ARA
+  // D-179: publish the engine to the shared modification so another window
+  // switching to this region sees it even if its cached Project is older.
+  if (activeModification != nullptr)
+    if (auto engine = project.getSynthesisEngine())
+      activeModification->setDocumentSynthesisEngine(engine);
+#endif
   ++araCanvasEditSerial;
   std::unique_ptr<Project> araRegionScopedProject;
 #if JucePlugin_Enable_ARA
@@ -2623,6 +2643,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       pendingRegionCanvasAnalysisKey.clear();
       regionCanvasAnalysisPending.store(false);
       attachMacroParameters(*it->second.project);
+      applySharedDocumentEngine(*it->second.project);
       auto displaced =
           mainComponent->exchangeProject(std::move(it->second.project));
       juce::ignoreUnused(displaced);
@@ -3352,6 +3373,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
                                     std::unique_ptr<Project> project) {
     attachMacroParameters(*project);
     applyDocumentSynthesisEngine(*project);
+    applySharedDocumentEngine(*project);
 
     // Restored state is filed under the live key by the document controller, so
     // there is no archived-to-live migration left to do. What stood here

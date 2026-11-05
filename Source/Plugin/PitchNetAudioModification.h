@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/SynthesisEngineType.h"
 #include <limits>
 
 #if JucePlugin_Enable_ARA
@@ -142,6 +143,20 @@ public:
     processedAudio.reset();
   }
 
+  void setDocumentSynthesisEngine(
+      std::optional<SynthesisEngineType> engine) const {
+    documentSynthesisEngine.store(
+        engine ? static_cast<int>(*engine) : -1, std::memory_order_relaxed);
+  }
+
+  std::optional<SynthesisEngineType> getDocumentSynthesisEngine() const {
+    const int value =
+        documentSynthesisEngine.load(std::memory_order_relaxed);
+    if (value < 0)
+      return std::nullopt;
+    return static_cast<SynthesisEngineType>(value);
+  }
+
   void setProjectArchive(const void *data, size_t sizeInBytes) const {
     if (data == nullptr || sizeInBytes == 0)
       return;
@@ -272,6 +287,10 @@ private:
   mutable ProcessedLockType processedAudioLock;
   std::unique_ptr<ProcessedRegionData> processedAudio;
   mutable juce::MemoryBlock projectArchive;
+  // D-179: latest engine written for this modification by any instance. The
+  // per-instance Project copies are caches; this is the shared value the other
+  // windows read when they switch to the region.
+  mutable std::atomic<int> documentSynthesisEngine{-1};
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   std::atomic<bool> restoredFromArchive{false};
 #endif

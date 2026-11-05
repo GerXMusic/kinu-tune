@@ -106,6 +106,10 @@ public:
   // process/user settings file), so background/ARA controllers agree with the
   // editor and a second document keeps its own engine.
   void applyDocumentSynthesisEngine(const Project &project);
+  // D-179: apply the modification's shared engine (written by whichever
+  // instance last changed it) to a per-instance cached project before it is
+  // shown. The cached Project is only a copy; the modification is shared.
+  void applySharedDocumentEngine(Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
