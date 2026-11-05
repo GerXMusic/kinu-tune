@@ -11,6 +11,7 @@
 
 #if JucePlugin_Enable_ARA
 #include "ARADocumentController.h"
+#include "AraSelectionPolicy.h"
 #include "PitchNetAudioModification.h"
 #endif
 
@@ -330,6 +331,13 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
   // Listen for host selection changes to switch the canvas to the clicked
   // region (per-region Projects).
   editorView->addListener(this);
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("setupARAMode instance=" +
+           juce::String(audioProcessor.getDiagInstanceId()) +
+           " editor=" + ARA_DIAG_PTR(this) +
+           " editorView=" + ARA_DIAG_PTR(editorView));
+#endif
 
   auto safeEditorForHistory = juce::Component::SafePointer<PitchNetAudioProcessorEditor>(this);
   audioProcessor.onAraUndoManagerRequested = [safeEditorForHistory](const juce::String& key) -> PitchUndoManager* {
@@ -969,10 +977,10 @@ juce::Colour araTrackColour(juce::ARARegionSequence &sequence,
 }
 } // namespace
 
-void PitchNetAudioProcessorEditor::activateAraTrackByKey(
+bool PitchNetAudioProcessorEditor::activateAraTrackByKey(
     const juce::String &trackKey) {
   if (trackKey.isEmpty())
-    return;
+    return false;
 
   auto *editorView = getARAEditorView();
   auto *docController =
@@ -982,7 +990,7 @@ void PitchNetAudioProcessorEditor::activateAraTrackByKey(
           ? static_cast<juce::ARADocument *>(docController->getDocument())
           : nullptr;
   if (document == nullptr)
-    return;
+    return false;
 
   // Resolve against live sequences: the track may have been removed since the
   // list was published.
@@ -996,7 +1004,7 @@ void PitchNetAudioProcessorEditor::activateAraTrackByKey(
 
   if (sequence == nullptr) {
     lastPublishedTrackSignature.clear();
-    return;
+    return false;
   }
 
   std::vector<juce::ARAPlaybackRegion *> candidates;
@@ -1007,7 +1015,7 @@ void PitchNetAudioProcessorEditor::activateAraTrackByKey(
 
   // A track with no usable clip has nothing to put on the canvas.
   if (candidates.empty())
-    return;
+    return false;
 
   juce::ARAPlaybackRegion *target = nullptr;
   if (const auto remembered = lastActiveRegionByTrack.find(trackKey);
@@ -1026,6 +1034,7 @@ void PitchNetAudioProcessorEditor::activateAraTrackByKey(
         });
 
   activateAraRegion(target, true);
+  return true;
 }
 
 void PitchNetAudioProcessorEditor::publishAraTrackList(
@@ -1387,29 +1396,97 @@ void PitchNetAudioProcessorEditor::onNewSelection(
     return nullptr;
   };
 
-  juce::ARAPlaybackRegion *target = nullptr;
-  if (!regions.empty())
-    target = pickAssignedRegion(regions);
-  if (target == nullptr && !effective.empty())
-    target = pickAssignedRegion(effective);
-  if (target == nullptr && !sequences.empty()) {
-    // Only a track/region-sequence was selected: focus its first region that
-    // belongs to this plugin instance. AAX can report selections from the
-    // shared ARA document, where blindly taking the first region sticks to the
-    // first track/audio source.
-    for (auto *sequence : sequences) {
-      if (sequence == nullptr)
-        continue;
+  const auto sequenceIndexOf =
+      [&sequences](juce::ARAPlaybackRegion *region) -> int {
+    if (region == nullptr)
+      return -1;
+    auto *sequence = region->getRegionSequence();
+    if (sequence == nullptr)
+      return -1;
+    for (int i = 0; i < static_cast<int>(sequences.size()); ++i)
+      if (sequences[static_cast<size_t>(i)] == sequence)
+        return i;
+    return -1;
+  };
 
-      const auto &seqRegions =
-          sequence->getPlaybackRegions<juce::ARAPlaybackRegion>();
-      target = pickAssignedRegion(seqRegions);
-      if (target != nullptr)
-        break;
+  juce::ARAPlaybackRegion *target = nullptr;
+  bool activatedByTrack = false;
+  if (sequences.empty()) {
+    if (!regions.empty())
+      target = pickAssignedRegion(regions);
+    if (target == nullptr && !effective.empty())
+      target = pickAssignedRegion(effective);
+  } else {
+    // D-175: an explicit track selection wins over stale playback regions.
+    // The first selected sequence is the most relevant one, as the host orders
+    // the list; the policy keeps an item click working when that item is on
+    // the selected track.
+    std::vector<int> regionSequences;
+    regionSequences.reserve(regions.size());
+    for (auto *region : regions)
+      regionSequences.push_back(sequenceIndexOf(region));
+
+    std::vector<int> effectiveSequences;
+    effectiveSequences.reserve(effective.size());
+    for (auto *region : effective)
+      effectiveSequences.push_back(sequenceIndexOf(region));
+
+    std::vector<int> selectedSequences;
+    selectedSequences.reserve(sequences.size());
+    for (int i = 0; i < static_cast<int>(sequences.size()); ++i)
+      selectedSequences.push_back(i);
+
+    const auto choice = pitchnet::chooseAraSelectionTarget(
+        regionSequences, effectiveSequences, selectedSequences);
+
+    if (choice.source == pitchnet::AraSelectionSource::playbackRegion &&
+        choice.index >= 0 && choice.index < static_cast<int>(regions.size()))
+      target = regions[static_cast<size_t>(choice.index)];
+    else if (choice.source ==
+                 pitchnet::AraSelectionSource::effectiveRegion &&
+             choice.index >= 0 &&
+             choice.index < static_cast<int>(effective.size()))
+      target = effective[static_cast<size_t>(choice.index)];
+    else if (choice.source ==
+                 pitchnet::AraSelectionSource::regionSequence &&
+             !sequences.empty()) {
+      // The selected track has no region in this selection: return to the clip
+      // last edited on that track, else its first region.
+      const auto trackKey = araTrackKey(sequences.front());
+      if (!trackKey.isEmpty()) {
+        if (activateAraTrackByKey(trackKey))
+          activatedByTrack = true;
+      }
     }
   }
 
-  if (target == nullptr) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  {
+    juce::String log;
+    log << "onNewSelection instance=" << audioProcessor.getDiagInstanceId()
+        << " editor=" << ARA_DIAG_PTR(this)
+        << " regions=" << static_cast<int>(regions.size())
+        << " effective=" << static_cast<int>(effective.size())
+        << " sequences=" << static_cast<int>(sequences.size())
+        << " renderer=" << static_cast<int>(rendererRegions.size());
+    for (auto *region : regions)
+      if (region != nullptr)
+        log << " R=" << pitchnetRegionSelector(*region);
+    for (auto *region : effective)
+      if (region != nullptr)
+        log << " E=" << pitchnetRegionSelector(*region);
+    for (auto *sequence : sequences)
+      if (sequence != nullptr)
+        log << " S=" << juce::String(sequence->getName());
+    log << " target="
+        << (target != nullptr ? pitchnetRegionSelector(*target)
+                              : juce::String("none"))
+        << " track=" << (activatedByTrack ? "yes" : "no");
+    ARA_DIAG(log);
+  }
+#endif
+
+  if (!activatedByTrack && target == nullptr) {
     if (!regions.empty())
       target = regions.front();
     else if (!effective.empty())
@@ -1422,7 +1499,7 @@ void PitchNetAudioProcessorEditor::onNewSelection(
     }
   }
 
-  if (target != nullptr) {
+  if (!activatedByTrack && target != nullptr) {
     if (auto *araEditorView = getARAEditorView()) {
       if (auto *araDocController = araEditorView->getDocumentController()) {
         if (auto *pitchDocController =

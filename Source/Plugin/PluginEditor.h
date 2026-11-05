@@ -66,7 +66,8 @@ private:
     void activateAraRegion(juce::ARAPlaybackRegion* target, bool focusView);
     // Switch the canvas to a track the user clicked in the left side panel:
     // the region last edited on that track, else its first region in time.
-    void activateAraTrackByKey(const juce::String& trackKey);
+    // Returns false when the track has no usable region.
+    bool activateAraTrackByKey(const juce::String& trackKey);
     // Push a preview of every region on the active region's track to the
     // canvas and thumbnail, rebuilding only regions whose content changed.
     void publishAraRegionPreviews(
