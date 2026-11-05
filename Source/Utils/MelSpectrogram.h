@@ -17,11 +17,17 @@ public:
      * Compute mel spectrogram from audio.
      * @param audio Audio samples
      * @param numSamples Number of samples
+     * @param numThreads 0 = choose automatically (up to 4); 1 = serial.
      * @return Mel spectrogram [T, numMels] in log scale
      */
-    std::vector<std::vector<float>> compute(const float* audio, int numSamples);
+    std::vector<std::vector<float>> compute(const float* audio, int numSamples,
+                                            int numThreads = 0);
     
 private:
+    /** Frames [frameBegin, frameEnd) into distinct mel slots. */
+    void computeFrames(const float* audio, int numSamples, int frameBegin,
+                       int frameEnd,
+                       std::vector<std::vector<float>>& mel) const;
     /** Sparse representation of one mel filter band. */
     struct MelBand {
         int startBin = 0;          // first non-zero FFT bin (inclusive)
