@@ -879,24 +879,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
   };
-  parameterPanel.onPreserveFormantsChanged = [this](bool enabled)
-  {
-    if (auto *project = getProject())
-      if (project->getPreserveFormants() != enabled)
-        project->setPreserveFormants(enabled);
-
-    if (isPluginMode())
-    {
-      // Global switch: request a full-range pass, the same path used by the
-      // host-driven pitch/formant controls.
-      triggerResynthesis();
-    }
-    else
-    {
-      notifyProjectDataChanged();
-      rerenderEditedNotes();
-    }
-  };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
   parameterPanel.onRenderDeviceChanged = [this](int deviceId)
@@ -4078,10 +4060,9 @@ void MainComponent::triggerResynthesis()
   if (!isPluginMode())
     return;
 
-  // Triggered by DAW parameter automation (pitch offset, formant shift,
-  // preserve formants) and by the global switch. These parameters affect the
-  // complete render and do not dirty a particular note, so explicitly request
-  // a full-range incremental pass.
+  // Triggered by DAW parameter automation (pitch offset, formant shift).
+  // These parameters affect the complete render and do not dirty a particular
+  // note, so explicitly request a full-range incremental pass.
   parameterPanel.updateGlobalSliders();
   if (auto *project = getProject())
   {

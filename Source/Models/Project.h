@@ -216,13 +216,6 @@ public:
     float getFormantShift() const { return formantShift; }
     void setFormantShift(float shift) { formantShift = shift; }
 
-    // Global switch for the Pitchcore engine's formant-preserving render.
-    // Off by default; projects written before the field existed load off.
-    // It only reaches pitchcore::ClassicEngine: the fork's PSOLA ignores it
-    // and the vocoder never takes a DspSynthesisRequest.
-    bool getPreserveFormants() const { return preserveFormants; }
-    void setPreserveFormants(bool enabled);
-
     float getVolume() const { return volume; }
     void setVolume(float vol) { volume = vol; }
 
@@ -347,7 +340,6 @@ private:
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
-    bool preserveFormants = false;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
 

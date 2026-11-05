@@ -158,7 +158,6 @@
   "param.note_info": "ノート情報",
   "param.pitch": "ピッチ",
   "param.pitch_offset": "ピッチオフセット (st)",
-  "param.preserve_formants": "フォルマントを保持",
   "param.pitch_reference": "ピッチ基準",
   "param.reference_a4": "基準 (A4)",
   "param.scale": "スケール",

@@ -1429,9 +1429,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     dspRequest.hopSize = hopSize;
     dspRequest.numOutputFrames = endFrame - startFrame;
     dspRequest.sampleRate = audioData.sampleRate;
-    // Global switch (D-166). Only the Pitchcore engine reads it; PSOLA ignores
-    // it and the vocoder does not consume DspSynthesisRequest.
-    dspRequest.preserveFormants = project->getPreserveFormants();
 
     // PSOLA places one grain per pitch period, so it needs the original pitch
     // itself rather than only the ratio, and the voiced mask to know where a
@@ -2252,7 +2249,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       entry.request.sourceVoiced = dspRequest.sourceVoiced;
       entry.request.hopSize = dspRequest.hopSize;
       entry.request.sampleRate = dspRequest.sampleRate;
-      entry.request.preserveFormants = dspRequest.preserveFormants;
 
       // Narrow the source slice to what this block's curve reaches. The
       // positions in sourceFrame are absolute, so the slice only has to cover

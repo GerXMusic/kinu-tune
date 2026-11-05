@@ -35,8 +35,7 @@ constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
-    (kRowGap + 1) + kRadioRowHeight + kRowGap + kRenderStatusRowHeight +
-    kInnerPadY;
+    (kRowGap + 1) + kRenderStatusRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
@@ -266,8 +265,7 @@ ParameterPanel::ParameterPanel()
     languageSelectorButton.addListener(this);
     selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
 
-    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle,
-                          &preserveFormantsToggle })
+    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
@@ -551,8 +549,6 @@ void ParameterPanel::resized()
     }
 
     bounds.removeFromTop(kRowGap + 1);
-    preserveFormantsToggle.setBounds(bounds.removeFromTop(kRadioRowHeight));
-    bounds.removeFromTop(kRowGap);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
     if (renderDeviceRowVisible)
@@ -764,12 +760,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
-    if (button == &preserveFormantsToggle)
-    {
-        setPreserveFormantsInternal(preserveFormantsToggle.getToggleState(), true);
-        return;
-    }
-
     if (button == &vocoderEngineToggle || button == &psolaEngineToggle
         || button == &pitchcoreEngineToggle)
     {
@@ -857,7 +847,6 @@ void ParameterPanel::refreshLocalisedText()
     vocoderEngineToggle.setButtonText(TR("param.engine_vocoder"));
     psolaEngineToggle.setButtonText(TR("param.engine_psola"));
     pitchcoreEngineToggle.setButtonText(TR("param.engine_pitchcore"));
-    preserveFormantsToggle.setButtonText(TR("param.preserve_formants"));
     vocoderEngineToggle.setTooltip(TR(aiResynthesisAvailable ? "tooltip.engine_vocoder"
                                                              : "tooltip.engine_vocoder_unavailable"));
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
@@ -1026,8 +1015,6 @@ void ParameterPanel::updateGlobalSliders()
         timelineTempoBpm = project->getTimelineTempoBpm();
         timelineGridDivision = project->getTimelineGridDivision();
         timelineSnapCycle = project->getTimelineSnapCycle();
-        preserveFormantsToggle.setToggleState(project->getPreserveFormants(),
-                                              juce::dontSendNotification);
     }
     else
     {
@@ -1042,7 +1029,6 @@ void ParameterPanel::updateGlobalSliders()
         timelineTempoBpm = 120.0;
         timelineGridDivision = TimelineGridDivision::Quarter;
         timelineSnapCycle = false;
-        preserveFormantsToggle.setToggleState(false, juce::dontSendNotification);
     }
 
     referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
@@ -1082,17 +1068,6 @@ void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool n
 
     if (notify && onSynthesisEngineChanged)
         onSynthesisEngineChanged(synthesisEngine);
-}
-
-void ParameterPanel::setPreserveFormantsInternal(bool enabled, bool notify)
-{
-    preserveFormantsToggle.setToggleState(enabled, juce::dontSendNotification);
-
-    if (project != nullptr && project->getPreserveFormants() != enabled)
-        project->setPreserveFormants(enabled);
-
-    if (notify && onPreserveFormantsChanged)
-        onPreserveFormantsChanged(enabled);
 }
 
 void ParameterPanel::refreshSynthesisToggles()

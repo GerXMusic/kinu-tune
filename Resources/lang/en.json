@@ -158,7 +158,6 @@
   "param.note_info": "Note Info",
   "param.pitch": "Pitch",
   "param.pitch_offset": "Pitch Offset (st)",
-  "param.preserve_formants": "Preserve Formants",
   "param.pitch_reference": "Pitch Reference",
   "param.reference_a4": "Reference (A4)",
   "param.scale": "Scale",

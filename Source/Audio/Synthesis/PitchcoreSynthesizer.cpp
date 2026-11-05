@@ -70,7 +70,9 @@ juce::String dumpRequest(const DspSynthesisRequest &request)
     w32(request.sampleRate);
     w32(request.sourceStartSample);
     w32(request.numOutputFrames);
-    const uint8_t formants = request.preserveFormants ? 1 : 0;
+    // D-169: the formant switch is retired; the fixture byte stays reserved
+    // and is always zero.
+    const uint8_t formants = 0;
     f.write(reinterpret_cast<const char *>(&formants), 1);
     w32(static_cast<int32_t>(request.source.size()));
     w32(static_cast<int32_t>(request.sourceFrame.size()));

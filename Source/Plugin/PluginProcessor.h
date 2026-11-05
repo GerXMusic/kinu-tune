@@ -294,9 +294,6 @@ public:
   static constexpr const char *PARAM_DRY_WET = "dryWet";
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
-  // Global Pitchcore formant-preservation switch (D-166). Default off; old
-  // states and projects without the field load off.
-  static constexpr const char *PARAM_PRESERVE_FORMANTS = "preserveFormants";
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-139 pre-test: the instance id of THIS processor.
@@ -365,12 +362,10 @@ private:
   std::atomic<float> *dryWetParamValue = nullptr;
   std::atomic<float> *pitchOffsetParamValue = nullptr;
   std::atomic<float> *formantShiftParamValue = nullptr;
-  std::atomic<float> *preserveFormantsParamValue = nullptr;
 
   // Cached parameter values for change detection (audio thread only)
   float cachedPitchOffset = 0.0f;
   float cachedFormantShift = 0.0f;
-  bool cachedPreserveFormants = false;
   std::shared_ptr<MacroParameters> macroParameters =
       std::make_shared<MacroParameters>();
 
@@ -379,7 +374,6 @@ private:
     std::atomic<bool> pending{false};
     std::atomic<float> pitchOffset{0.0f};
     std::atomic<float> formantShift{0.0f};
-    std::atomic<bool> preserveFormants{false};
     std::atomic<bool> needsResynth{false};
   };
   std::shared_ptr<ParamSyncState> paramSyncState =

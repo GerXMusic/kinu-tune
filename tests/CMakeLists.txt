@@ -16,6 +16,7 @@ set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
     EngineBlocksTests.cpp
+    FormantRetirementTests.cpp
     FormantShiftTests.cpp
     HarmonyIntervalTests.cpp
     HostSyncTempoTests.cpp
@@ -26,7 +27,6 @@ set(PITCHNET_TEST_SOURCES
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
-    PreserveFormantsTests.cpp
     ProjectModificationRangeTests.cpp
     SynthesisEngineShareTests.cpp
     TimelineCoordinateTests.cpp

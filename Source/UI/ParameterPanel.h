@@ -84,7 +84,6 @@ public:
     std::function<void(bool)> onTimelineSnapCycleChanged;
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
-    std::function<void(bool)> onPreserveFormantsChanged;
     std::function<void(int)> onRenderDeviceChanged;
 
 private:
@@ -103,7 +102,6 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
-    void setPreserveFormantsInternal(bool enabled, bool notify);
     void refreshRenderDeviceRow();
     void showRenderDeviceMenu();
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
@@ -154,8 +152,6 @@ private:
     // Third option: our own pitchcore core (M2 step 1). Same list, same
     // persistence; no GPU involved, so it is never gated like the vocoder.
     RadioButton pitchcoreEngineToggle;
-    // Global switch for the Pitchcore engine only (D-166); off by default.
-    StyledToggleButton preserveFormantsToggle;
 
     juce::Label renderDeviceLabel;
     ComboSelectionButton renderDeviceButton;

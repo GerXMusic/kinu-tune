@@ -153,7 +153,6 @@
   "param.note_info": "노트 정보",
   "param.pitch": "피치",
   "param.pitch_offset": "피치 오프셋 (st)",
-  "param.preserve_formants": "포먼트 유지",
   "param.pitch_reference": "피치 기준",
   "param.reference_a4": "기준 (A4)",
   "param.scale": "스케일",

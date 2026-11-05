@@ -56,7 +56,9 @@ inline pitchcore::RenderRequest toCoreRequest(const DspSynthesisRequest &request
     core.numSamples = request.numOutputFrames * hop;
     core.curveHop = static_cast<double>(hop);
     core.sampleRate = static_cast<double>(request.sampleRate);
-    core.preserveFormants = request.preserveFormants;
+    // D-167/D-168: the formant switch was retired; the core field stays but is
+    // always false from the plugin.
+    core.preserveFormants = false;
 
     const int base = hop > 0
                          ? static_cast<int>(std::floor(

@@ -560,6 +560,7 @@ bool readFixture(const std::string &path, DspSynthesisRequest &req, std::string 
     const int32_t frames = r32();
     uint8_t formants = 0;
     f.read(reinterpret_cast<char *>(&formants), 1);
+    (void)formants; // D-169: reserved byte, always zero now.
     const int32_t nSource = r32();
     const int32_t nFrame = r32();
     const int32_t nRatio = r32();
@@ -581,7 +582,6 @@ bool readFixture(const std::string &path, DspSynthesisRequest &req, std::string 
     req.sampleRate = sr;
     req.sourceStartSample = src0;
     req.numOutputFrames = frames;
-    req.preserveFormants = formants != 0;
     req.source.resize(static_cast<size_t>(nSource));
     req.sourceFrame.resize(static_cast<size_t>(nFrame));
     req.pitchRatio.resize(static_cast<size_t>(nRatio));
