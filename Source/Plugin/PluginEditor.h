@@ -120,6 +120,10 @@ private:
     int regionListRefreshCountdown = 0;
 #endif
     bool lunaSoftwareRendererApplied = false;
+    // D-178: ignore the host's initial selection for a short grace period, so
+    // the editor-renderer track binding wins over a stale selection left on
+    // another track. User selections after the grace period follow normally.
+    double editorReadyTimeMs = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchNetAudioProcessorEditor)
 };

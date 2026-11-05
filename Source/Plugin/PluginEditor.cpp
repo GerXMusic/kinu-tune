@@ -13,6 +13,11 @@
 #include "ARADocumentController.h"
 #include "AraSelectionPolicy.h"
 #include "PitchNetAudioModification.h"
+#include "SingleWindowPolicy.h"
+#endif
+
+#if JUCE_WINDOWS
+#include <windows.h>
 #endif
 
 namespace
@@ -21,6 +26,49 @@ namespace
 // How often the Regions card re-reads the host's region list.
 constexpr int kRegionListRefreshHz = 8;
 juce::String araTrackKey(juce::ARARegionSequence*);
+
+// D-178: open editors in construction order. A new editor requests the close
+// of the previous host window so only one Kinu Tune window remains.
+std::vector<PitchNetAudioProcessorEditor *> openAraEditors;
+
+void requestClosePreviousEditorWindow(PitchNetAudioProcessorEditor *previous,
+                                      PitchNetAudioProcessorEditor *current) {
+  if (previous == nullptr || current == nullptr)
+    return;
+  if (std::find(openAraEditors.begin(), openAraEditors.end(), previous) ==
+      openAraEditors.end())
+    return;
+
+  auto *previousTop = previous->getTopLevelComponent();
+  auto *currentTop = current->getTopLevelComponent();
+  const bool sameTopLevel =
+      previousTop != nullptr && previousTop == currentTop;
+  if (!pitchnet::shouldClosePreviousEditor(
+          static_cast<int>(openAraEditors.size()), sameTopLevel))
+    return;
+
+#if JUCE_WINDOWS
+  if (previousTop != nullptr) {
+    HWND hwnd = nullptr;
+    if (auto *peer = previousTop->getPeer())
+      hwnd = reinterpret_cast<HWND>(peer->getNativeHandle());
+    if (hwnd == nullptr)
+      hwnd = reinterpret_cast<HWND>(previousTop->getWindowHandle());
+    if (hwnd != nullptr) {
+      HWND root = GetAncestor(hwnd, GA_ROOT);
+      ARA_DIAG("D178 close previous hwnd=" + juce::String::toHexString(
+                   static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(hwnd))) +
+               " root=" + juce::String::toHexString(
+                   static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(root))) +
+               " sameTop=" + (sameTopLevel ? "1" : "0") +
+               " editors=" + juce::String(static_cast<int>(openAraEditors.size())));
+      PostMessage(root != nullptr ? root : hwnd, WM_CLOSE, 0, 0);
+    }
+  }
+#else
+  juce::ignoreUnused(previousTop);
+#endif
+}
 #endif
 
 #if JucePlugin_Enable_ARA
@@ -200,6 +248,8 @@ bool isLunaHostProcess()
   return false;
 #endif
 }
+
+
 } // namespace
 
 PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
@@ -210,6 +260,11 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
       AudioProcessorEditorARAExtension(&p)
 #endif
 {
+#if JucePlugin_Enable_ARA
+  PitchNetAudioProcessorEditor *previousEditor =
+      openAraEditors.empty() ? nullptr : openAraEditors.back();
+  openAraEditors.push_back(this);
+#endif
   // Fonts must exist before MainComponent constructs labels that retain them.
   initializeUiResources();
   mainView = createMainView(false);
@@ -246,6 +301,21 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 
   // Grab keyboard focus once the host has actually shown the editor.
   requestMainViewKeyboardFocusAsync();
+
+#if JucePlugin_Enable_ARA
+  if (previousEditor != nullptr) {
+    juce::Component::SafePointer<PitchNetAudioProcessorEditor> safeThis(this);
+    juce::Timer::callAfterDelay(120, [previousEditor, safeThis]() {
+      if (safeThis != nullptr)
+        requestClosePreviousEditorWindow(previousEditor,
+                                         safeThis.getComponent());
+    });
+  }
+
+  // D-178: ignore the stale host selection for a short grace period while the
+  // editor-renderer binding from setupARAMode() settles.
+  editorReadyTimeMs = juce::Time::getMillisecondCounterHiRes() + 600.0;
+#endif
 }
 
 #if JucePlugin_Enable_ARA
@@ -257,6 +327,11 @@ PitchNetAudioProcessorEditor::getARAClientExtensions() {
 
 PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
   stopTimer();
+#if JucePlugin_Enable_ARA
+  openAraEditors.erase(
+      std::remove(openAraEditors.begin(), openAraEditors.end(), this),
+      openAraEditors.end());
+#endif
 
   // Some ARA hosts briefly overlap editor instances while rebuilding the plug-
   // in view.  Only the editor that still owns the processor binding may tear
@@ -622,8 +697,31 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
   refreshAraRegionList();
 
-  if (syncInitialARASelectionFromHost())
-    return;
+  // D-178: the editor renderer carries this instance's region sequence (track)
+  // even when the playback renderer has no regions yet (REAPER). Use that
+  // sequence before considering the shared document or the host selection.
+  if (auto *editorRenderer =
+          audioProcessor.getEditorRenderer<PitchNetEditorRenderer>()) {
+    for (auto *sequence :
+         editorRenderer->getRegionSequences<juce::ARARegionSequence>()) {
+      if (sequence == nullptr)
+        continue;
+      const auto &seqRegions =
+          sequence->getPlaybackRegions<juce::ARAPlaybackRegion>();
+      if (seqRegions.empty())
+        continue;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      ARA_DIAG("setupARAMode editorRenderer sequence=" +
+               juce::String(sequence->getName()) +
+               " regions=" + juce::String(static_cast<int>(seqRegions.size())));
+#endif
+      if (pitchDocController->processPlaybackRegions(
+              seqRegions, audioProcessor.getSampleRate())) {
+        audioProcessor.setActiveAraRegion(seqRegions.front());
+        return;
+      }
+    }
+  }
 
   // The playback renderer contains the regions assigned to this plugin
   // instance. Use that set to select the correct track/region sequence rather
@@ -648,6 +746,10 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
         pitchDocController->getCurrentPlaybackRegion());
     return;
   }
+
+  // Last resort: the host selection itself.
+  if (syncInitialARASelectionFromHost())
+    return;
 #endif
 }
 
@@ -1363,6 +1465,15 @@ void PitchNetAudioProcessorEditor::activateAraRegion(
 
 void PitchNetAudioProcessorEditor::onNewSelection(
     const juce::ARAViewSelection &viewSelection) {
+  // D-178: the host may still report the previously selected track when this
+  // window opens. setupARAMode() establishes the window's own track from the
+  // editor renderer sequence first; ignore the stale initial selection during
+  // the grace period.
+  if (juce::Time::getMillisecondCounterHiRes() < editorReadyTimeMs) {
+    refreshAraRegionList();
+    return;
+  }
+
   // Switch the canvas to whichever region the user selected in the host. Each
   // region/track carries its own persistent Project, so this swaps what is
   // shown and edited without disturbing the others. Prefer an explicitly
