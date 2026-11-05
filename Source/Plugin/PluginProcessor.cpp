@@ -2855,6 +2855,10 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
   const bool backgroundAnalysis = regionKey != activeRegionKey;
   const auto analysisGeneration =
       regionCanvasAnalysisGeneration.fetch_add(1) + 1;
+  const auto restoreSerialAtLaunch = [this, &regionKey]() {
+    const auto it = araRegions.find(regionKey);
+    return it != araRegions.end() ? it->second.restoreSerial : std::uint64_t{0};
+  }();
   pendingRegionCanvasAnalysisKey = regionKey;
   regionCanvasAnalysisPending.store(true);
 
@@ -2888,11 +2892,26 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
             });
       },
       [this, regionKey, modification, startSampleInModification,
-       analysisGeneration, sampleRate, backgroundAnalysis,
+       analysisGeneration, restoreSerialAtLaunch, sampleRate,
+       backgroundAnalysis,
        timelineOffsetSeconds](const juce::AudioBuffer<float> &) {
         if (!regionCanvasController ||
             regionCanvasAnalysisGeneration.load() != analysisGeneration)
           return;
+
+        const auto restoreIt = araRegions.find(regionKey);
+        if (restoreIt != araRegions.end() &&
+            restoreIt->second.restoreSerial != restoreSerialAtLaunch) {
+          // D-170: a restored project arrived after this analysis started. It
+          // is authoritative; never overwrite it with the analysis result.
+          pendingRegionCanvasAnalysisKey.clear();
+          regionCanvasAnalysisPending.store(false);
+          if (trackAnalysisRunning)
+            ++trackAnalysisFinished;
+          if (mainComponent && !trackAnalysisRunning)
+            mainComponent->hideAnalysisProgress();
+          return;
+        }
         auto *project = regionCanvasController->getProject();
         if (!project || !projectHasRestorableAnalysisData(*project)) {
           pendingRegionCanvasAnalysisKey.clear();
@@ -3339,6 +3358,19 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
   if (regionKey.isEmpty() || data == nullptr || sizeInBytes == 0)
     return;
 
+  // D-170: a restored project supersedes an analysis already running for the
+  // same region. This must happen before the active-region check below: while
+  // the host restores, the region may not be active yet, and an analysis
+  // launched for it would otherwise finish later and overwrite the restored
+  // project (D-166 §5: 163-166 Inherit notes, one instance at 0).
+  if (pendingRegionCanvasAnalysisKey == regionKey) {
+    regionCanvasAnalysisGeneration.fetch_add(1);
+    if (regionCanvasController)
+      regionCanvasController->requestCancelLoading();
+    pendingRegionCanvasAnalysisKey.clear();
+    regionCanvasAnalysisPending.store(false);
+  }
+
   auto installRestoredProject = [this, &regionKey](
                                     std::unique_ptr<Project> project) {
     attachMacroParameters(*project);
@@ -3356,6 +3388,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
     auto &archivedState = araRegions[regionKey];
     archivedState.project = std::move(project);
+    archivedState.restoreSerial = ++araRestoreSerialCounter;
     archivedState.ensureUndoManager()->clear();
     for (auto& entry : trackUndoManagers) entry.second->removeContext(regionKey);
 

@@ -3,7 +3,7 @@
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/Audio/Synthesis/PsolaSynthesizer.h"
 #include "../Source/Utils/TransformParams.h"
-#include <cassert>
+#include "TestAssert.h"
 #include <iostream>
 
 // A periodic source with a broad resonance at 1 kHz. Measure individual
@@ -28,20 +28,20 @@ int main(int argc, char** argv) {
             source[i] += gain * std::sin(2 * 3.141592653589793 * hz * i / rate);
     }
     auto bypass = source;
-    assert(formant::process(bypass, std::vector<float>(f0.size(), 0), f0, hop, rate));
-    assert(bypass == source);
+    CHECK(formant::process(bypass, std::vector<float>(f0.size(), 0), f0, hop, rate));
+    CHECK(bypass == source);
     for (float shift : {-5.0f, 5.0f}) {
         auto output = source;
-        assert(formant::process(output, std::vector<float>(f0.size(), shift), f0, hop, rate));
-        assert(output.size() == source.size());
-        for (float v : output) assert(std::isfinite(v));
+        CHECK(formant::process(output, std::vector<float>(f0.size(), shift), f0, hop, rate));
+        CHECK(output.size() == source.size());
+        for (float v : output) CHECK(std::isfinite(v));
         float peak = 0; int peakHz = 0;
         for (int hz = 400; hz <= 2000; hz += 100) {
             const float a = amplitude(output, hz, rate);
             if (a > peak) { peak = a; peakHz = hz; }
         }
         std::cout << shift << " st: envelope peak " << peakHz << " Hz\n";
-        assert(shift > 0 ? peakHz >= 1200 : peakHz <= 900);
+        CHECK(shift > 0 ? peakHz >= 1200 : peakHz <= 900);
         // Periodicity remains 100 Hz even when the resonance moves.
         double err = 0, energy = 0;
         for (int i = rate / 4; i < rate * 3 / 4; ++i) {
@@ -49,36 +49,36 @@ int main(int argc, char** argv) {
             energy += output[i] * output[i];
         }
         std::cout << "periodicity error " << err / energy << '\n';
-        assert(err / energy < 0.01);
+        CHECK(err / energy < 0.01);
     }
     auto silence = std::vector<float>(4096, 0);
-    assert(formant::process(silence, {12}, {}, hop, rate));
-    for (float v : silence) assert(v == 0);
+    CHECK(formant::process(silence, {12}, {}, hop, rate));
+    for (float v : silence) CHECK(v == 0);
     std::atomic<bool> cancelled{true};
     auto output = source;
-    assert(!formant::process(output, {5}, f0, hop, rate, &cancelled));
-    assert(output == source);
+    CHECK(!formant::process(output, {5}, f0, hop, rate, &cancelled));
+    CHECK(output == source);
     Note note(0, 10, 60);
     const auto old = TransformParams::fromNote(note);
     note.setFormantShift(3.4f);
-    assert(!note.isNeutralForOriginalWaveform());
-    assert(note.getMidiNote() == 60);
+    CHECK(!note.isNeutralForOriginalWaveform());
+    CHECK(note.getMidiNote() == 60);
     const auto changed = TransformParams::fromNote(note);
     old.applyToNote(note);
-    assert(note.getFormantShift() == 0 && note.isNeutralForOriginalWaveform());
+    CHECK(note.getFormantShift() == 0 && note.isNeutralForOriginalWaveform());
     changed.applyToNote(note);
-    assert(note.getFormantShift() == 3.4f && note.getMidiNote() == 60);
+    CHECK(note.getFormantShift() == 3.4f && note.getMidiNote() == 60);
     Project project;
     project.setFormantShift(-1.2f);
     project.addNote(note);
     Project restored;
-    assert(ProjectSerializer::fromJson(restored, ProjectSerializer::toJson(project)));
-    assert(restored.getNotes().front().getFormantShift() == 3.4f);
-    assert(restored.getFormantShift() == -1.2f);
+    CHECK(ProjectSerializer::fromJson(restored, ProjectSerializer::toJson(project)));
+    CHECK(restored.getNotes().front().getFormantShift() == 3.4f);
+    CHECK(restored.getFormantShift() == -1.2f);
     auto legacy = ProjectSerializer::toJson(project);
     legacy.getDynamicObject()->getProperty("notes").getArray()->getReference(0).getDynamicObject()->removeProperty("formantShift");
-    assert(ProjectSerializer::fromJson(restored, legacy));
-    assert(restored.getNotes().front().getFormantShift() == 0);
+    CHECK(ProjectSerializer::fromJson(restored, legacy));
+    CHECK(restored.getNotes().front().getFormantShift() == 0);
 
     PsolaSynthesizer::Request request;
     request.source = source;
@@ -88,9 +88,9 @@ int main(int argc, char** argv) {
     request.pitchRatio.assign(request.numOutputFrames, 1.0f);
     for (int i = 0; i < request.numOutputFrames; ++i) request.sourceFrame.push_back(i);
     auto psola = PsolaSynthesizer::render(request);
-    assert(!psola.empty());
-    assert(formant::process(psola, {5}, f0, hop, rate));
-    assert(amplitude(psola, 1300, rate) > amplitude(psola, 1000, rate));
+    CHECK(!psola.empty());
+    CHECK(formant::process(psola, {5}, f0, hop, rate));
+    CHECK(amplitude(psola, 1300, rate) > amplitude(psola, 1000, rate));
 
     if (argc > 1) {
         project.clearNotes();
@@ -110,7 +110,8 @@ int main(int argc, char** argv) {
         audio.deltaPitch.assign(f0.size(), 0);
         audio.voicedMask.assign(f0.size(), true);
         audio.melSpectrogram.assign(f0.size(), std::vector<float>(128, -5));
-        assert(ProjectSerializer::saveToFile(project, juce::File(argv[1])));
+        CHECK(ProjectSerializer::saveToFile(project, juce::File(argv[1])));
     }
     std::cout << "Formant tests passed\n";
 }
+
