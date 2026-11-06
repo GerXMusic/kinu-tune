@@ -2,7 +2,6 @@
 
 #include "../../Models/Note.h"
 #include "../SynthesisEngineType.h"
-#include "LargeShiftEnginePolicy.h"
 
 #include <optional>
 #include <vector>
@@ -53,11 +52,10 @@ struct SilenceRun {
 };
 
 /// The concrete engine a note asks for; Inherit (and anything unmapped) falls
-/// back to the instance-wide engine. D-180: a Pitchcore request with a shift
-/// above kPitchcoreMaxShiftCents is rendered by the vocoder when available.
+/// back to the instance-wide engine. D-181: the request is honoured as stored;
+/// there is no hidden engine swap based on the size of the pitch shift.
 SynthesisEngineType effectiveEngine(const Note &note,
-                                    SynthesisEngineType globalEngine,
-                                    bool vocoderAvailable = true);
+                                    SynthesisEngineType globalEngine);
 
 /**
  * Longest run of silence in [fromSample, toSample) of @p source, measured on
@@ -125,7 +123,6 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
 std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
                              int endFrame, SynthesisEngineType globalEngine,
                              const juce::AudioBuffer<float> &source,
-                             int sampleRate, int hopSize,
-                             bool vocoderAvailable = true);
+                             int sampleRate, int hopSize);
 
 }  // namespace engineBlocks

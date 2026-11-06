@@ -6,15 +6,13 @@
 namespace engineBlocks {
 
 SynthesisEngineType effectiveEngine(const Note &note,
-                                    SynthesisEngineType globalEngine,
-                                    bool vocoderAvailable) {
+                                    SynthesisEngineType globalEngine) {
+    // D-181: the engine is exactly what the note stores. A large pitch move
+    // no longer changes it behind the user's back.
     SynthesisEngineType requested = globalEngine;
     if (const auto mapped = noteEngineToSynthesisEngine(note.getEngine()))
         requested = *mapped;
-    const float shiftCents =
-        (note.getAdjustedMidiNote() - note.getOriginalMidiNote()) * 100.0f;
-    return pitchnet::engineForPitchShift(requested, shiftCents,
-                                         vocoderAvailable);
+    return requested;
 }
 
 std::optional<SilenceRun>
@@ -106,8 +104,7 @@ bool canChangeEngineAfter(const Note &previous, const Note &note,
 std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
                              int endFrame, SynthesisEngineType globalEngine,
                              const juce::AudioBuffer<float> &source,
-                             int sampleRate, int hopSize,
-                             bool vocoderAvailable) {
+                             int sampleRate, int hopSize) {
     std::vector<Block> blocks;
     if (endFrame <= startFrame)
         return blocks;
@@ -132,15 +129,13 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
 
     Block current;
     current.startFrame = startFrame;
-    current.engine = effectiveEngine(*range.front(), globalEngine,
-                                     vocoderAvailable);
+    current.engine = effectiveEngine(*range.front(), globalEngine);
 
     const Note *previous = range.front();
     SynthesisEngineType blockEngine = current.engine;
     for (size_t i = 1; i < range.size(); ++i) {
         const Note &note = *range[i];
-        const auto requested = effectiveEngine(note, globalEngine,
-                                               vocoderAvailable);
+        const auto requested = effectiveEngine(note, globalEngine);
         if (requested == blockEngine) {
             previous = &note;
             continue;

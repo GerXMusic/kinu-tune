@@ -408,6 +408,33 @@ void testTwoTouchingNotesWithDifferentEnginesKeepOneEngine() {
     CHECK(plan.front().engine == SynthesisEngineType::Vocoder);
 }
 
+void testPitchcoreRequestSurvivesALargeShift() {
+    // D-181: the engine only changes when it is chosen. A Pitchcore note
+    // moved +500 cents keeps Pitchcore even when the vocoder is loaded; the
+    // old D-180c heuristic silently rewrote it to Vocoder.
+    auto source = makeSource({});
+    Note shifted(20, 40, 65.0f);  // original 60, target 65: +500 cents.
+    shifted.setOriginalMidiNote(60.0f);
+    shifted.setEngine(NoteEngine::Pitchcore);
+
+    const auto plan = engineBlocks::buildPlan(
+        {shifted}, 0, kFrames, SynthesisEngineType::Pitchcore, source,
+        kSampleRate, kHop);
+    CHECK(plan.size() == 1);
+    CHECK(plan.front().engine == SynthesisEngineType::Pitchcore);
+
+    // The same large shift with an explicit Vocoder request stays Vocoder:
+    // the request is honoured in both directions.
+    Note explicitVocoder(20, 40, 65.0f);
+    explicitVocoder.setOriginalMidiNote(60.0f);
+    explicitVocoder.setEngine(NoteEngine::Vocoder);
+    const auto vocoderPlan = engineBlocks::buildPlan(
+        {explicitVocoder}, 0, kFrames, SynthesisEngineType::Pitchcore, source,
+        kSampleRate, kHop);
+    CHECK(vocoderPlan.size() == 1);
+    CHECK(vocoderPlan.front().engine == SynthesisEngineType::Vocoder);
+}
+
 }  // namespace
 
 int main() {
@@ -430,6 +457,7 @@ int main() {
     testUnselectedContiguousRequestDoesNotSplitTheBlock();
     testRestsDoNotBecomeThePreviousNoteForEngineEdits();
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
+    testPitchcoreRequestSurvivesALargeShift();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;
