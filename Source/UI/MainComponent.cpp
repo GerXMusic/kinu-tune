@@ -1978,6 +1978,7 @@ void MainComponent::pollMcpControl()
         object->setProperty("visible_width", sample.visibleWidth);
         object->setProperty("pixels_per_second", sample.pixelsPerSecond);
         object->setProperty("cursor_visible", sample.cursorVisible);
+        object->setProperty("playback_active", sample.playbackActive);
         object->setProperty("paint_count",
                             static_cast<juce::int64>(sample.paintCount));
         object->setProperty("project_notes", sample.projectNotes);
@@ -2361,6 +2362,7 @@ void MainComponent::timerCallback()
           static_cast<double>(pianoRoll.getPixelsPerSecond());
       sample.cursorVisible =
           cursorIsVisible(sample.cursorTime);
+      sample.playbackActive = isPlaying;
       sample.paintCount = paintCount;
       sample.projectNotes = getProject() != nullptr
                                 ? static_cast<int>(getProject()->getNotes().size())
@@ -4525,20 +4527,23 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
   const double focusCursorTime = pianoRoll.getCursorTime();
   const bool focusCursorWasVisible = cursorIsVisible(focusCursorTime);
 
-  pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
   bool focusCursorRestored = false;
-  if ((fromOpen && !isPlaying && focusCursorTime > 0.01) ||
-      pitchnet::shouldRestoreCursorAfterFocus(
-          isPlaying, focusCursorWasVisible,
-          cursorIsVisible(focusCursorTime)))
+  if (pitchnet::shouldApplyFocusScroll(isPlaying))
   {
-    pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
-        focusCursorTime, pianoRoll.getScrollX(),
-        static_cast<double>(pianoRoll.getPixelsPerSecond()),
-        pianoRoll.getVisibleContentWidth(), pianoRoll.getTimelineStart(),
-        pianoRoll.getTimelineDuration()));
-    focusCursorRestored = true;
-    ++latencyTrace.focusRestoreCount;
+    pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
+    if ((fromOpen && !isPlaying && focusCursorTime > 0.01) ||
+        pitchnet::shouldRestoreCursorAfterFocus(
+            isPlaying, focusCursorWasVisible,
+            cursorIsVisible(focusCursorTime)))
+    {
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          focusCursorTime, pianoRoll.getScrollX(),
+          static_cast<double>(pianoRoll.getPixelsPerSecond()),
+          pianoRoll.getVisibleContentWidth(), pianoRoll.getTimelineStart(),
+          pianoRoll.getTimelineDuration()));
+      focusCursorRestored = true;
+      ++latencyTrace.focusRestoreCount;
+    }
   }
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   ARA_DIAG("focusTimelineRange applied timelineEnd=" +
@@ -4557,10 +4562,14 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
   latencyTrace.lastFocusCursorVisibleAfter = cursorIsVisible(focusCursorTime);
   latencyTrace.lastFocusCursorRestored = focusCursorRestored;
 
-  // Let a host selection visually win over the playback follow cursor for a
-  // short moment, even if the transport is running elsewhere.
-  suppressPlaybackFollowUntilMs =
-      juce::Time::getMillisecondCounterHiRes() + 1200.0;
+  // D-180-R5: while playing, a track switch must not suppress follow; the
+  // current view stays until the next position update keeps the playhead
+  // visible. Stopped selections still get the 1.2 s selection priority.
+  if (pitchnet::shouldApplyFocusScroll(isPlaying))
+    suppressPlaybackFollowUntilMs =
+        juce::Time::getMillisecondCounterHiRes() + 1200.0;
+  else
+    suppressPlaybackFollowUntilMs = 0.0;
 }
 
 void MainComponent::updatePlaybackPosition(double timeSeconds)

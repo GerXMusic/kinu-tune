@@ -52,6 +52,10 @@ int main()
     CHECK(shouldApplyRegionFocus(true));
     CHECK(!shouldApplyRegionFocus(false));
 
+    // D-180-R5: no region-start scroll while the transport is playing.
+    CHECK(!shouldApplyFocusScroll(true));
+    CHECK(shouldApplyFocusScroll(false));
+
     // Cursor outside the visible window: scroll to reveal it.
     {
         const double scroll =

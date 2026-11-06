@@ -102,4 +102,18 @@ inline bool shouldApplyRegionFocus(bool projectReady)
 {
     return projectReady;
 }
+
+// D-180-R5: while the transport is playing, a track switch must not scroll to
+// the new region's start; keep the current (followed) view until the playhead
+// is available.
+inline bool shouldApplyFocusScroll(bool transportPlaying)
+{
+#if defined(PITCHNET_D180_R5_LEGACY)
+    // D-180-R5 measurement only: pre-fix behaviour, focus scroll even in play.
+    (void)transportPlaying;
+    return true;
+#else
+    return !transportPlaying;
+#endif
+}
 } // namespace pitchnet

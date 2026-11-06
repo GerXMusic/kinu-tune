@@ -590,6 +590,7 @@ private:
       int visibleWidth = 0;
       double pixelsPerSecond = 0.0;
       bool cursorVisible = false;
+      bool playbackActive = false;
       juce::int64 paintCount = 0;
       int projectNotes = 0;
     };
