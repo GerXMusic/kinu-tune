@@ -31,6 +31,7 @@ set(PITCHNET_TEST_SOURCES
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
+    PitchCurveTransitionTests.cpp
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp

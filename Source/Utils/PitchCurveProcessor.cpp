@@ -94,6 +94,9 @@ namespace
             // Base pitch already includes per-note offset
             seg.midiNote = note.getMidiNote() + note.getPitchOffset()
                          - (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
+            // D-182: how far this note was moved from where it was sung.
+            seg.shiftSemitones =
+                note.getAdjustedMidiNote() - note.getOriginalMidiNote();
             segments.push_back(seg);
         }
 
@@ -101,6 +104,174 @@ namespace
         std::sort(segments.begin(), segments.end(),
                   [](const auto& a, const auto& b) { return a.startFrame < b.startFrame; });
         return segments;
+    }
+
+    // D-182: the jump the user hears when a melody is inverted is born in the
+    // target curve, not in the engine. The base pitch is a smoothed step and
+    // the stored delta is relative to the *original* base; moving one side of
+    // a boundary leaves the other side's delta carrying the old 80 ms step,
+    // so widening the base alone only removes part of it. The fix smooths the
+    // shift itself (target - source), which is the quantity an edit changes,
+    // and then writes it back into the global delta. The source contour is not
+    // touched: target = source + smooth(shift), which is the same model as the
+    // core's buildPitchCurve() and preserves D-053.
+    // Chosen by measurement (D-182): 0.24 s removed 49 % of the boundary
+    // step but left one extra detector hit at the 6477 frontier; 0.36 s is
+    // the next measured value and is compared in the same run.
+    constexpr double kEditedBoundaryGlideSec = 0.36;
+    // 60 cents: below that the difference is intonation, not the edit the
+    // user made. It keeps boundaries like +12/+46 and +6/-48 cents out of the
+    // glide; the measured 54-cent boundary was the only one that got worse.
+    constexpr float kEditedBoundaryMinShiftDeltaSemitones = 0.60f;
+    // A gap is an onset, not a legato note frontier. The source contour there
+    // is the singer's attack and must not be smoothed away (D-053); only
+    // contiguous notes get the glide.
+    constexpr int kEditedBoundaryMaxGapFrames = 1;
+
+    std::vector<int> collectEditedBoundaryFrames(const std::vector<Note>& notes)
+    {
+        std::vector<const Note*> ordered;
+        ordered.reserve(notes.size());
+        for (const auto& note : notes)
+            if (!note.isRest())
+                ordered.push_back(&note);
+        std::sort(ordered.begin(), ordered.end(),
+                  [](const Note* a, const Note* b) {
+                      if (a->getStartFrame() != b->getStartFrame())
+                          return a->getStartFrame() < b->getStartFrame();
+                      return a->getEndFrame() < b->getEndFrame();
+                  });
+
+        std::vector<int> boundaries;
+        for (size_t i = 1; i < ordered.size(); ++i)
+        {
+            const int gap = ordered[i]->getStartFrame() -
+                            ordered[i - 1]->getEndFrame();
+            if (gap > kEditedBoundaryMaxGapFrames)
+                continue;
+            const float left = ordered[i - 1]->getAdjustedMidiNote() -
+                               ordered[i - 1]->getOriginalMidiNote();
+            const float right = ordered[i]->getAdjustedMidiNote() -
+                                ordered[i]->getOriginalMidiNote();
+            const bool anyEdited =
+                std::abs(left) > 0.001f || std::abs(right) > 0.001f;
+            if (anyEdited &&
+                std::abs(right - left) >=
+                    kEditedBoundaryMinShiftDeltaSemitones)
+                boundaries.push_back(
+                    (ordered[i - 1]->getEndFrame() +
+                     ordered[i]->getStartFrame()) / 2);
+        }
+        return boundaries;
+    }
+
+    void applyEditedBoundaryGlide(Project& project, int totalFrames)
+    {
+        auto& audioData = project.getAudioData();
+        if (totalFrames <= 0 ||
+            static_cast<int>(audioData.basePitch.size()) < totalFrames ||
+            static_cast<int>(audioData.deltaPitch.size()) < totalFrames ||
+            static_cast<int>(audioData.denseF0.size()) < totalFrames)
+            return;
+
+        const auto boundaries = collectEditedBoundaryFrames(project.getNotes());
+        if (boundaries.empty())
+            return;
+
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const int halfFrames = std::max(
+            1, static_cast<int>(std::lround(0.5 * kEditedBoundaryGlideSec /
+                                            hopSec)));
+
+        std::vector<float> shift(static_cast<size_t>(totalFrames), 0.0f);
+        std::vector<uint8_t> valid(static_cast<size_t>(totalFrames), 0);
+        for (int frame = 0; frame < totalFrames; ++frame)
+        {
+            const float sourceHz = audioData.denseF0[static_cast<size_t>(frame)];
+            const float base = audioData.basePitch[static_cast<size_t>(frame)];
+            if (sourceHz <= 0.0f || base <= 0.0f)
+                continue;
+            const float target =
+                base + audioData.deltaPitch[static_cast<size_t>(frame)];
+            shift[static_cast<size_t>(frame)] = target - freqToMidi(sourceHz);
+            valid[static_cast<size_t>(frame)] = 1;
+        }
+
+        // Cosine kernel over the glide width.
+        std::vector<double> kernel(static_cast<size_t>(2 * halfFrames + 1), 0.0);
+        double kernelSum = 0.0;
+        for (int j = -halfFrames; j <= halfFrames; ++j)
+        {
+            const double x =
+                M_PI * static_cast<double>(j) /
+                static_cast<double>(halfFrames + 1);
+            const double w = 0.5 * (1.0 + std::cos(x));
+            kernel[static_cast<size_t>(j + halfFrames)] = w;
+            kernelSum += w;
+        }
+        if (kernelSum <= 0.0)
+            return;
+        for (auto& w : kernel)
+            w /= kernelSum;
+
+        // Wide shift at every frame, then blend it in only around boundaries
+        // where an edit changed the shift.
+        std::vector<float> wide(static_cast<size_t>(totalFrames), 0.0f);
+        for (int frame = 0; frame < totalFrames; ++frame)
+        {
+            if (!valid[static_cast<size_t>(frame)])
+                continue;
+            double acc = 0.0;
+            double weight = 0.0;
+            for (int j = -halfFrames; j <= halfFrames; ++j)
+            {
+                const int idx = std::clamp(frame + j, 0, totalFrames - 1);
+                if (!valid[static_cast<size_t>(idx)])
+                    continue;
+                const double w = kernel[static_cast<size_t>(j + halfFrames)];
+                acc += shift[static_cast<size_t>(idx)] * w;
+                weight += w;
+            }
+            if (weight > 0.0)
+                wide[static_cast<size_t>(frame)] =
+                    static_cast<float>(acc / weight);
+        }
+
+        std::vector<float> blend(static_cast<size_t>(totalFrames), 0.0f);
+        for (const int boundary : boundaries)
+        {
+            const int first = std::max(0, boundary - halfFrames);
+            const int last = std::min(totalFrames - 1, boundary + halfFrames);
+            for (int frame = first; frame <= last; ++frame)
+            {
+                const double distance =
+                    std::fabs(static_cast<double>(frame - boundary)) /
+                    static_cast<double>(halfFrames);
+                const float w = static_cast<float>(
+                    0.5 * (1.0 + std::cos(
+                                     M_PI * std::min(1.0, distance))));
+                blend[static_cast<size_t>(frame)] =
+                    std::max(blend[static_cast<size_t>(frame)], w);
+            }
+        }
+
+        for (int frame = 0; frame < totalFrames; ++frame)
+        {
+            const float w = blend[static_cast<size_t>(frame)];
+            if (w <= 0.0f || !valid[static_cast<size_t>(frame)])
+                continue;
+            const float sourceMidi =
+                freqToMidi(audioData.denseF0[static_cast<size_t>(frame)]);
+            const float smoothed =
+                shift[static_cast<size_t>(frame)] +
+                w * (wide[static_cast<size_t>(frame)] -
+                     shift[static_cast<size_t>(frame)]);
+            const float target = sourceMidi + smoothed;
+            audioData.deltaPitch[static_cast<size_t>(frame)] =
+                target - audioData.basePitch[static_cast<size_t>(frame)];
+        }
     }
 } // namespace
 
@@ -357,6 +528,9 @@ namespace PitchCurveProcessor
             }
         }
 
+        // D-182: smooth the edited note boundaries before caching F0.
+        applyEditedBoundaryGlide(project, totalFrames);
+
         // Update cached baseF0
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = 0; i < totalFrames; ++i)
@@ -453,6 +627,9 @@ namespace PitchCurveProcessor
             }
         }
 
+        // D-182: smooth the edited note boundaries before caching F0.
+        applyEditedBoundaryGlide(project, totalFrames);
+
         // 3. Update baseF0 only for the affected range
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = minFrame; i < maxFrame; ++i)
@@ -539,11 +716,15 @@ namespace PitchCurveProcessor
             }
         }
 
+        // D-182: an edited boundary can smooth the delta a little past the
+        // affected notes, so recompose with padding.
+        applyEditedBoundaryGlide(project, totalFrames);
+
         // Recompose f0 only for affected range
         if (minAffectedFrame < maxAffectedFrame)
         {
-            const int rangeStart = std::max(0, minAffectedFrame);
-            const int rangeEnd = std::min(totalFrames, maxAffectedFrame);
+            const int rangeStart = std::max(0, minAffectedFrame - 32);
+            const int rangeEnd = std::min(totalFrames, maxAffectedFrame + 32);
             for (int i = rangeStart; i < rangeEnd; ++i)
             {
                 const float base = audioData.basePitch[static_cast<size_t>(i)];

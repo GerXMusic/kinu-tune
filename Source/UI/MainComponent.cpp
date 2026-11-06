@@ -11,6 +11,8 @@
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/NotePitch.h"
+#include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
@@ -1815,13 +1817,14 @@ void MainComponent::pollMcpControl()
     {
       juce::Array<juce::var> noteArray;
       const auto &notes = project->getNotes();
+      const auto currentEngine =
+          editorController ? editorController->getSynthesisEngineType()
+                           : defaultSynthesisEngineType();
       response->setProperty("sample_rate", project->getAudioData().sampleRate);
       response->setProperty("hop_size", HOP_SIZE);
       response->setProperty(
           "synthesis_engine",
-          synthesisEngineTypeToString(editorController
-                                          ? editorController->getSynthesisEngineType()
-                                          : defaultSynthesisEngineType()));
+          synthesisEngineTypeToString(currentEngine));
       response->setProperty(
           "document_synthesis_engine",
           project->getSynthesisEngine()
@@ -1837,11 +1840,201 @@ void MainComponent::pollMcpControl()
         noteObject->setProperty("midi", note.getMidiNote());
         noteObject->setProperty("rest", note.isRest());
         noteObject->setProperty("engine", noteEngineToString(note.getEngine()));
+        // D-181: what the renderer will actually use. With no hidden fallback
+        // it must equal the stored request (or the instance engine for
+        // Inherit); the MCP check compares both fields for every note.
+        noteObject->setProperty(
+            "effective_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(note, currentEngine)));
         noteObject->setProperty("selected", note.isSelected());
         noteArray.add(juce::var(noteObject));
       }
       response->setProperty("notes", juce::var(noteArray));
       response->setProperty("ok", true);
+    }
+    else if (command == "dump_curve")
+    {
+      // D-182 measurement only: the exact target curve the renderer will use,
+      // plus the source curve and the per-frame ratio. No audio change.
+      const int totalFrames =
+          static_cast<int>(project->getAudioData().melSpectrogram.size());
+      int startFrame = static_cast<int>(request.getProperty(
+          "start_frame", 0));
+      int endFrame = static_cast<int>(request.getProperty(
+          "end_frame", totalFrames));
+      startFrame = juce::jlimit(0, totalFrames, startFrame);
+      endFrame = juce::jlimit(startFrame, totalFrames, endFrame);
+
+      const auto target = project->getAdjustedF0ForRange(startFrame, endFrame);
+      const auto &audioData = project->getAudioData();
+      const auto &sourceF0 =
+          audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+      const auto currentEngine =
+          editorController ? editorController->getSynthesisEngineType()
+                           : defaultSynthesisEngineType();
+
+      juce::Array<juce::var> targetArray;
+      juce::Array<juce::var> sourceArray;
+      juce::Array<juce::var> ratioArray;
+      juce::Array<juce::var> baseArray;
+      juce::Array<juce::var> deltaArray;
+      for (int frame = startFrame; frame < endFrame; ++frame)
+      {
+        const int local = frame - startFrame;
+        const float targetHz =
+            local < static_cast<int>(target.size())
+                ? target[static_cast<size_t>(local)]
+                : 0.0f;
+        const float sourceHz =
+            frame < static_cast<int>(sourceF0.size())
+                ? sourceF0[static_cast<size_t>(frame)]
+                : 0.0f;
+        targetArray.add(targetHz);
+        sourceArray.add(sourceHz);
+        ratioArray.add(targetHz > 0.0f && sourceHz > 0.0f
+                           ? targetHz / sourceHz
+                           : 1.0f);
+        baseArray.add(frame < static_cast<int>(audioData.basePitch.size())
+                          ? audioData.basePitch[static_cast<size_t>(frame)]
+                          : 0.0f);
+        deltaArray.add(frame < static_cast<int>(audioData.deltaPitch.size())
+                           ? audioData.deltaPitch[static_cast<size_t>(frame)]
+                           : 0.0f);
+      }
+
+      // Note frontiers exactly as BasePitchCurve places them: midpoint
+      // between the end of one note and the start of the next.
+      juce::Array<juce::var> boundaryArray;
+      std::vector<const Note *> ordered;
+      for (const auto &note : project->getNotes())
+        if (!note.isRest() && note.getEndFrame() > startFrame &&
+            note.getStartFrame() < endFrame)
+          ordered.push_back(&note);
+      std::sort(ordered.begin(), ordered.end(),
+                [](const Note *a, const Note *b) {
+                  return a->getStartFrame() < b->getStartFrame();
+                });
+      for (size_t i = 1; i < ordered.size(); ++i)
+      {
+        const auto *left = ordered[i - 1];
+        const auto *right = ordered[i];
+        auto boundary = new juce::DynamicObject();
+        boundary->setProperty("left_index",
+                              static_cast<int>(left - project->getNotes().data()));
+        boundary->setProperty("right_index",
+                              static_cast<int>(right - project->getNotes().data()));
+        boundary->setProperty("left_end_frame", left->getEndFrame());
+        boundary->setProperty("right_start_frame", right->getStartFrame());
+        boundary->setProperty(
+            "boundary_frame",
+            (left->getEndFrame() + right->getStartFrame()) / 2);
+        boundary->setProperty("left_midi", left->getMidiNote());
+        boundary->setProperty("right_midi", right->getMidiNote());
+        boundary->setProperty(
+            "left_shift_cents",
+            (left->getAdjustedMidiNote() - left->getOriginalMidiNote()) *
+                100.0f);
+        boundary->setProperty(
+            "right_shift_cents",
+            (right->getAdjustedMidiNote() - right->getOriginalMidiNote()) *
+                100.0f);
+        boundary->setProperty(
+            "left_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(*left, currentEngine)));
+        boundary->setProperty(
+            "right_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(*right, currentEngine)));
+        boundaryArray.add(juce::var(boundary));
+      }
+
+      response->setProperty("start_frame", startFrame);
+      response->setProperty("end_frame", endFrame);
+      response->setProperty("sample_rate", audioData.sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      response->setProperty("target_hz", juce::var(targetArray));
+      response->setProperty("source_hz", juce::var(sourceArray));
+      response->setProperty("pitch_ratio", juce::var(ratioArray));
+      response->setProperty("base_pitch", juce::var(baseArray));
+      response->setProperty("delta_pitch", juce::var(deltaArray));
+      response->setProperty("boundaries", juce::var(boundaryArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "set_note_midi")
+    {
+      // D-182 measurement only: apply the same operation as a note drag
+      // (NotePitch::applyEdit + rebuild + dirty range), so an inverted
+      // contour is a real user edit, not a hand-written curve.
+      const auto indicesVar = request.getProperty("indices", juce::var());
+      const auto midiVar = request.getProperty("midi", juce::var());
+      std::vector<int> indices;
+      std::vector<float> midiValues;
+      if (indicesVar.isArray())
+        for (const auto &value : *indicesVar.getArray())
+          indices.push_back(static_cast<int>(value));
+      if (midiVar.isArray())
+        for (const auto &value : *midiVar.getArray())
+          midiValues.push_back(static_cast<float>(value));
+
+      if (indices.empty() || indices.size() != midiValues.size())
+        response->setProperty(
+            "error", "set_note_midi necesita indices y midi del mismo tamano.");
+      else
+      {
+        auto &notes = project->getNotes();
+        int minFrame = std::numeric_limits<int>::max();
+        int maxFrame = std::numeric_limits<int>::min();
+        bool valid = true;
+        juce::Array<juce::var> applied;
+        for (size_t i = 0; i < indices.size(); ++i)
+        {
+          const int index = indices[i];
+          const float newMidi = midiValues[i];
+          if (index < 0 || index >= static_cast<int>(notes.size()) ||
+              notes[static_cast<size_t>(index)].isRest() ||
+              !std::isfinite(newMidi))
+          {
+            valid = false;
+            break;
+          }
+          auto &note = notes[static_cast<size_t>(index)];
+          const float fromMidi = note.getMidiNote();
+          const float sourceBefore = note.getLastNonMacroMidiNote();
+          NotePitch::applyEdit(note, *project, sourceBefore, fromMidi, newMidi);
+          note.setPitchOffset(0.0f);
+          note.markDirty();
+          note.markSynthDirty();
+          minFrame = std::min(minFrame, note.getStartFrame());
+          maxFrame = std::max(maxFrame, note.getEndFrame());
+          auto entry = new juce::DynamicObject();
+          entry->setProperty("index", index);
+          entry->setProperty("from_midi", fromMidi);
+          entry->setProperty("to_midi", newMidi);
+          applied.add(juce::var(entry));
+        }
+
+        if (!valid)
+          response->setProperty(
+              "error", "set_note_midi: indice fuera de rango, nota rest o MIDI no finito; no se aplico nada.");
+        else
+        {
+          PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          project->markNoteEditDirtyRange(minFrame, maxFrame);
+          project->setModified(true);
+          pianoRoll.repaint();
+          onPitchEdited();
+          resynthesizeIncremental();
+          notifyProjectDataChanged();
+          if (isPluginMode() && onPitchEditFinished)
+            onPitchEditFinished();
+          response->setProperty("applied", juce::var(applied));
+          response->setProperty("dirty_start", minFrame);
+          response->setProperty("dirty_end", maxFrame);
+          response->setProperty("ok", true);
+        }
+      }
     }
     else if (command == "set_note_engine")
     {
