@@ -1446,6 +1446,21 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
              " trackView=" + (pianoRoll.isTrackViewMode() ? "1" : "0"));
 #endif
   }
+
+  // D-180-R3: if the cursor was seeded before this bind, reveal it with the
+  // pps/width available now. Do not clear the flag: focus and the first paint
+  // may still run before the final zoom settles.
+  if (incomingProject && pendingOpenCursorReveal)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (!isPlaying && openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
+  }
   repaint();
 
   // D-180: measurement only. The project is bound now; the timer reports the
@@ -1674,6 +1689,21 @@ void MainComponent::resized()
       fitAnalyzedPitchRangeToView(*project);
     }
 
+  // D-180-R3: re-apply with the layout's final pps/width. The flag stays set
+  // until a paint actually shows the cursor.
+  if (pendingOpenCursorReveal && getProject() != nullptr && !isPlaying)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
+  }
+
+
   if (traceResize)
   {
     const bool firstResize = latencyTrace.resizeCount == 0;
@@ -1776,7 +1806,10 @@ void MainComponent::pollMcpControl()
     response->setProperty("ok", false);
 
     const auto command = request.getProperty("command", "").toString();
-    if (project == nullptr)
+    const bool allowedWithoutProject =
+        command == "ui_state" || command == "paint_history" ||
+        command == "reset_ui_trace";
+    if (project == nullptr && !allowedWithoutProject)
       response->setProperty("error", "El editor no tiene un proyecto analizado.");
     else if (command == "list_notes")
     {
@@ -1921,6 +1954,38 @@ void MainComponent::pollMcpControl()
       latencyTrace.layoutScrollGuardCursorVisible = false;
       latencyTrace.layoutScrollGuardRestoreCount = 0;
       latencyTrace.focusRestoreCount = 0;
+      latencyTrace.paintHistoryCount = 0;
+      latencyTrace.paintHistoryNext = 0;
+      latencyTrace.lastSampledPaintCount = pianoRoll.getPaintCount();
+      response->setProperty("ok", true);
+    }
+    else if (command == "paint_history")
+    {
+      juce::Array<juce::var> samples;
+      const int count = latencyTrace.paintHistoryCount;
+      const int start = count < UiLatencyTrace::kPaintHistorySize
+                            ? 0
+                            : latencyTrace.paintHistoryNext;
+      for (int i = 0; i < count; ++i)
+      {
+        const int index = (start + i) % UiLatencyTrace::kPaintHistorySize;
+        const auto &sample =
+            latencyTrace.paintHistory[static_cast<size_t>(index)];
+        auto object = new juce::DynamicObject();
+        object->setProperty("at_ms", sample.atMs);
+        object->setProperty("scroll_x", sample.scrollX);
+        object->setProperty("cursor_time", sample.cursorTime);
+        object->setProperty("visible_width", sample.visibleWidth);
+        object->setProperty("pixels_per_second", sample.pixelsPerSecond);
+        object->setProperty("cursor_visible", sample.cursorVisible);
+        object->setProperty("paint_count",
+                            static_cast<juce::int64>(sample.paintCount));
+        object->setProperty("project_notes", sample.projectNotes);
+        samples.add(juce::var(object));
+      }
+      response->setProperty("paint_count",
+                            static_cast<juce::int64>(pianoRoll.getPaintCount()));
+      response->setProperty("samples", juce::var(samples));
       response->setProperty("ok", true);
     }
     else if (command == "ui_state")
@@ -2114,7 +2179,9 @@ void MainComponent::pollMcpControl()
       response->setProperty("timeline_duration",
                             pianoRoll.getTimelineDuration());
       response->setProperty("project_notes",
-                            static_cast<int>(project->getNotes().size()));
+                            project != nullptr
+                                ? static_cast<int>(project->getNotes().size())
+                                : 0);
       response->setProperty("ok", true);
     }
     else
@@ -2276,6 +2343,57 @@ void MainComponent::timerCallback()
   }
 
   updateUiLatencyPaintTrace();
+
+  // D-180-R3/R4: one sample per observed paint. The 60 Hz timer is enough for
+  // the ~500 ms intermediate frame this round is about.
+  {
+    const auto paintCount = pianoRoll.getPaintCount();
+    if (paintCount != latencyTrace.lastSampledPaintCount)
+    {
+      auto &sample =
+          latencyTrace.paintHistory[static_cast<size_t>(
+              latencyTrace.paintHistoryNext)];
+      sample.atMs = nowMs();
+      sample.scrollX = pianoRoll.getScrollX();
+      sample.cursorTime = pianoRoll.getCursorTime();
+      sample.visibleWidth = pianoRoll.getVisibleContentWidth();
+      sample.pixelsPerSecond =
+          static_cast<double>(pianoRoll.getPixelsPerSecond());
+      sample.cursorVisible =
+          cursorIsVisible(sample.cursorTime);
+      sample.paintCount = paintCount;
+      sample.projectNotes = getProject() != nullptr
+                                ? static_cast<int>(getProject()->getNotes().size())
+                                : 0;
+      latencyTrace.paintHistoryNext =
+          (latencyTrace.paintHistoryNext + 1) %
+          UiLatencyTrace::kPaintHistorySize;
+      latencyTrace.paintHistoryCount = std::min(
+          latencyTrace.paintHistoryCount + 1,
+          UiLatencyTrace::kPaintHistorySize);
+      latencyTrace.lastSampledPaintCount = paintCount;
+      if (pendingOpenCursorReveal && sample.cursorVisible)
+        pendingOpenCursorReveal = false;
+    }
+  }
+
+  // D-180-R3 fallback: if setup did not call focusTimelineRange, reveal the
+  // seeded cursor once the canvas has a real width.
+  if (pendingOpenCursorReveal && getProject() != nullptr && !isPlaying)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+    {
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
+      if (cursorIsVisible(openCursor))
+        pendingOpenCursorReveal = false;
+    }
+  }
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress &key,
@@ -4388,6 +4506,7 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
 
   hasPendingTimelineFocus = false;
   pendingViewRetries = 0;
+  const bool fromOpen = pendingOpenCursorReveal;
 
   const double timelineStart = pianoRoll.getTimelineStart();
   const double timelineDuration = pianoRoll.getTimelineDuration();
@@ -4408,7 +4527,8 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
 
   pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
   bool focusCursorRestored = false;
-  if (pitchnet::shouldRestoreCursorAfterFocus(
+  if ((fromOpen && !isPlaying && focusCursorTime > 0.01) ||
+      pitchnet::shouldRestoreCursorAfterFocus(
           isPlaying, focusCursorWasVisible,
           cursorIsVisible(focusCursorTime)))
   {
@@ -4769,6 +4889,26 @@ void MainComponent::noteAraLayoutFinished()
     pianoRoll.setScrollX(latencyTrace.layoutScrollGuardScroll);
     ++latencyTrace.layoutScrollGuardRestoreCount;
   }
+}
+
+void MainComponent::noteAraEditorOpened(double hostCursorSeconds)
+{
+#if defined(PITCHNET_D180_R34_LEGACY)
+  // D-180-R3/R4 measurement only: pre-fix behaviour (no open reveal).
+  (void)hostCursorSeconds;
+#else
+  pendingOpenCursorReveal = true;
+  if (pitchnet::shouldSeedCursorOnOpen(isPlaying, hostCursorSeconds > 0.01))
+  {
+    // The editor can open before the transport callback delivers a stopped
+    // seek; seed the cursor now so the first bound paint is not at zero.
+    updatePlaybackPosition(hostCursorSeconds);
+    const double displayTime = pendingCursorTime.load();
+    pianoRoll.setCursorTime(displayTime);
+    toolbar.setCurrentTime(displayTime);
+    hasPendingCursorUpdate.store(false);
+  }
+#endif
 }
 
 void MainComponent::updateUiLatencyPaintTrace()

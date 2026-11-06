@@ -174,6 +174,9 @@ public:
   // D-180-R: guard the scrollbar echo produced by a host-driven layout.
   virtual void noteAraLayoutStarted() {}
   virtual void noteAraLayoutFinished() {}
+  // D-180-R3: the editor is opening; the first bound project should reveal the
+  // host edit cursor instead of parking the canvas at the region start.
+  virtual void noteAraEditorOpened(double) {}
   // Where the drawn project content sits on the host timeline, in seconds.
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;

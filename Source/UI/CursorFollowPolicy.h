@@ -88,4 +88,18 @@ inline bool isTransientScrollbarReset(bool layoutGuardActive,
     return layoutGuardActive && cursorWasVisible && previousScroll > 100.0 &&
            newScroll < 1.0;
 }
+
+// D-180-R3: on editor open the host cursor must be seeded when the transport is
+// stopped and the host supplied a position.
+inline bool shouldSeedCursorOnOpen(bool transportPlaying, bool hasHostCursor)
+{
+    return !transportPlaying && hasHostCursor;
+}
+
+// D-180-R4: a region focus is only applied once its project is bound and no
+// longer needs source hydration; otherwise the previous view stays on screen.
+inline bool shouldApplyRegionFocus(bool projectReady)
+{
+    return projectReady;
+}
 } // namespace pitchnet

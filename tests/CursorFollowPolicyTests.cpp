@@ -43,6 +43,15 @@ int main()
     CHECK(!isTransientScrollbarReset(true, 14223.4, 100.0, true));
     CHECK(!isTransientScrollbarReset(true, 14223.4, 0.0, false));
 
+    // D-180-R3: seed the host cursor on open when stopped and provided.
+    CHECK(shouldSeedCursorOnOpen(false, true));
+    CHECK(!shouldSeedCursorOnOpen(true, true));
+    CHECK(!shouldSeedCursorOnOpen(false, false));
+
+    // D-180-R4: focus only a ready project.
+    CHECK(shouldApplyRegionFocus(true));
+    CHECK(!shouldApplyRegionFocus(false));
+
     // Cursor outside the visible window: scroll to reveal it.
     {
         const double scroll =

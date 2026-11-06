@@ -14,6 +14,7 @@
 #include "AraSelectionPolicy.h"
 #include "PitchNetAudioModification.h"
 #include "SingleWindowPolicy.h"
+#include "../UI/CursorFollowPolicy.h"
 #endif
 
 #if JUCE_WINDOWS
@@ -400,6 +401,29 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
 
   mainView->setRecordControlVisible(false);
   mainView->setOnRecordArmChanged(nullptr);
+  // D-180-R3: before this editor binds/activates a project, ask the view to
+  // reveal the host edit cursor on the first bound paint.
+  {
+    double openCursorSeconds = 0.0;
+    bool hasOpenCursor = false;
+    if (auto *playHead = audioProcessor.getPlayHead()) {
+      if (auto pos = playHead->getPosition()) {
+        if (auto time = pos->getTimeInSeconds()) {
+          openCursorSeconds = *time;
+          hasOpenCursor = true;
+        }
+      }
+    }
+    if (!hasOpenCursor) {
+      const auto transport =
+          audioProcessor.getTransportController().getCurrentState();
+      if (transport.position.hasTimeInSeconds) {
+        openCursorSeconds = transport.position.timeInSeconds;
+        hasOpenCursor = true;
+      }
+    }
+    mainView->noteAraEditorOpened(hasOpenCursor ? openCursorSeconds : 0.0);
+  }
   // ARA gives us a host link: transport controls and cycle editing are live.
   mainView->setHostTransportControlAvailable(true);
 
@@ -1477,9 +1501,21 @@ void PitchNetAudioProcessorEditor::activateAraRegion(
         timing.focusMs, timing.bindMs, timing.totalMs);
   }
   if (focusView) {
-    // The canvas is in modification time; the region's host position is not.
-    const auto span = audioProcessor.activeRegionSpanInModificationTime();
-    mainView->focusTimelineRange(span.first, span.second);
+    // D-180-R4: do not focus a region whose project is not ready; wait for the
+    // bind so the previous view stays on screen instead of scroll 0.
+#if defined(PITCHNET_D180_R34_LEGACY)
+    const bool projectReady = true;
+#else
+    const auto activeKey = audioProcessor.getActiveAraRegionKey();
+    const bool projectReady =
+        audioProcessor.hasAraRegionProject(activeKey) &&
+        !audioProcessor.araRegionProjectNeedsSourceHydration(activeKey);
+#endif
+    if (pitchnet::shouldApplyRegionFocus(projectReady)) {
+      // The canvas is in modification time; the region's host position is not.
+      const auto span = audioProcessor.activeRegionSpanInModificationTime();
+      mainView->focusTimelineRange(span.first, span.second);
+    }
   }
 
   // The active key just changed. Publish now rather than on the next poll so
@@ -1666,8 +1702,19 @@ void PitchNetAudioProcessorEditor::onNewSelection(
           timing.focusMs, timing.bindMs, timing.totalMs);
     }
     // The canvas is in modification time; the region's host position is not.
+    // D-180-R4: while the new project is still hydrating, keep the previous
+    // view instead of focusing the new region's start (which paints scroll 0).
+#if defined(PITCHNET_D180_R34_LEGACY)
+    const bool projectReady = true;
+#else
+    const auto activeKey = audioProcessor.getActiveAraRegionKey();
+    const bool projectReady =
+        audioProcessor.hasAraRegionProject(activeKey) &&
+        !audioProcessor.araRegionProjectNeedsSourceHydration(activeKey);
+#endif
     const auto span = audioProcessor.activeRegionSpanInModificationTime();
-    if (mainView != nullptr)
+    if (mainView != nullptr &&
+        pitchnet::shouldApplyRegionFocus(projectReady))
       mainView->focusTimelineRange(span.first, span.second);
   }
 

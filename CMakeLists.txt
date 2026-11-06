@@ -63,8 +63,12 @@ option(PITCHNET_BUILD_TESTS "Build the unit tests in tests/ and register them wi
 # follows playback, mel serial, Pitchcore used at any shift) so the same build
 # and probe can measure before/after. Never shipped ON.
 option(PITCHNET_D180_LEGACY "D-180 measurement only: pre-fix behaviour" OFF)
+option(PITCHNET_D180_R34_LEGACY "D-180-R3/R4 measurement only: pre-fix focus behaviour" OFF)
 if(PITCHNET_D180_LEGACY)
     add_compile_definitions(PITCHNET_D180_LEGACY=1)
+endif()
+if(PITCHNET_D180_R34_LEGACY)
+    add_compile_definitions(PITCHNET_D180_R34_LEGACY=1)
 endif()
 # CI builds the tests without the macOS Core ML vocoder, which is not in the
 # repository; the unit tests do not load any model. (The GAME models are

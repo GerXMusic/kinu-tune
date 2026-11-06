@@ -24,6 +24,7 @@
 #include "Workspace/WorkspaceComponent.h"
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <cmath>
 #include <thread>
@@ -295,6 +296,7 @@ public:
                                   double totalMs) override;
   void noteAraLayoutStarted() override;
   void noteAraLayoutFinished() override;
+  void noteAraEditorOpened(double hostCursorSeconds) override;
 
 private:
   // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
@@ -579,6 +581,24 @@ private:
     double callbackResetTo = 0.0;
     double callbackResetAtMs = 0.0;
 
+    // D-180-R3/R4: one sample per paint observed by the 60 Hz timer. The
+    // intermediate frame of a track switch lasts ~500 ms, so this records it.
+    struct PaintSample {
+      double atMs = 0.0;
+      double scrollX = 0.0;
+      double cursorTime = 0.0;
+      int visibleWidth = 0;
+      double pixelsPerSecond = 0.0;
+      bool cursorVisible = false;
+      juce::int64 paintCount = 0;
+      int projectNotes = 0;
+    };
+    static constexpr int kPaintHistorySize = 96;
+    std::array<PaintSample, kPaintHistorySize> paintHistory{};
+    int paintHistoryCount = 0;
+    int paintHistoryNext = 0;
+    juce::int64 lastSampledPaintCount = 0;
+
     double lastFocusAtMs = 0.0;
     double lastFocusSpanStart = 0.0;
     double lastFocusScrollX = 0.0;
@@ -596,6 +616,9 @@ private:
   // A host seek arrived while the transport is stopped: the view must follow
   // it without waiting for playback (D-180 A).
   bool pendingStoppedHostSeek = false;
+  // D-180-R3: the next incoming project (editor open) should reveal the cursor
+  // before its first paint.
+  bool pendingOpenCursorReveal = false;
 
   double nowMs() const;
   bool cursorIsVisible(double timeSeconds) const;
