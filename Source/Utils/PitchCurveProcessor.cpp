@@ -123,6 +123,9 @@ namespace
     // user made. It keeps boundaries like +12/+46 and +6/-48 cents out of the
     // glide; the measured 54-cent boundary was the only one that got worse.
     constexpr float kEditedBoundaryMinShiftDeltaSemitones = 0.60f;
+
+    // D-183 R6: test-only switch, so the same test can attribute the glide.
+    bool gEditedBoundaryGlideEnabled = true;
     // A gap is an onset, not a legato note frontier. The source contour there
     // is the singer's attack and must not be smoothed away (D-053); only
     // contiguous notes get the glide.
@@ -167,6 +170,8 @@ namespace
 
     void applyEditedBoundaryGlide(Project& project, int totalFrames)
     {
+        if (!gEditedBoundaryGlideEnabled)
+            return;
         auto& audioData = project.getAudioData();
         if (totalFrames <= 0 ||
             static_cast<int>(audioData.basePitch.size()) < totalFrames ||
@@ -568,13 +573,33 @@ namespace PitchCurveProcessor
             minFrame = std::min(minFrame, note->getStartFrame());
             maxFrame = std::max(maxFrame, note->getEndFrame());
         }
-        minFrame = std::max(0, minFrame);
-        maxFrame = std::min(totalFrames, maxFrame);
+        if (minFrame >= maxFrame)
+            return;
+
+        // D-183 R6: the D-182 glide writes into the transition window, which
+        // reaches into the neighbouring notes. Rebuild every note that
+        // overlaps that window, not only the dragged ones, or the next drag
+        // leaves glided delta outside the zeroed range and the restore is not
+        // exact.
+        constexpr int kGlidePadFrames = 32;
+        minFrame = std::max(0, minFrame - kGlidePadFrames);
+        maxFrame = std::min(totalFrames, maxFrame + kGlidePadFrames);
         for (int i = minFrame; i < maxFrame; ++i)
             audioData.deltaPitch[static_cast<size_t>(i)] = 0.0f;
 
-        const auto& allNotes = project.getNotes();
-        for (auto* note : affectedNotes)
+        auto& allNotes = project.getNotes();
+        std::vector<Note*> notesToWrite;
+        notesToWrite.reserve(allNotes.size());
+        for (auto& candidate : allNotes)
+        {
+            if (candidate.isRest())
+                continue;
+            if (candidate.getEndFrame() <= minFrame ||
+                candidate.getStartFrame() >= maxFrame)
+                continue;
+            notesToWrite.push_back(&candidate);
+        }
+        for (auto* note : notesToWrite)
         {
             if (!note || note->isRest())
                 continue;
@@ -732,6 +757,11 @@ namespace PitchCurveProcessor
                 audioData.f0[static_cast<size_t>(i)] = midiToFreq(base + delta);
             }
         }
+    }
+
+    void setEditedBoundaryGlideEnabled(bool enabled)
+    {
+        gEditedBoundaryGlideEnabled = enabled;
     }
 
     std::vector<float> composeF0(const Project& project,

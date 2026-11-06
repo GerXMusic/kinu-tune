@@ -1,4 +1,4 @@
-# Unit tests.
+﻿# Unit tests.
 #
 # Each test is a standalone executable with its own main(), matching the style
 # the files were already written in. They link pitchnet_core, which exposes the
@@ -31,6 +31,7 @@ set(PITCHNET_TEST_SOURCES
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
+    PitchCurveRoundTripTests.cpp
     PitchCurveTransitionTests.cpp
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
@@ -160,3 +161,4 @@ if(ARA_AVAILABLE AND PITCHNET_ARA_DIAGNOSTICS)
                  COMMAND D152CharacterizationTests ${D152_GROUP})
     endforeach()
 endif()
+

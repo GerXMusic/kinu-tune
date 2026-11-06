@@ -5,6 +5,9 @@
 
 namespace PitchCurveProcessor
 {
+    // D-183 R6 test hook: the D-182 glide must be attributable on/off.
+    void setEditedBoundaryGlideEnabled(bool enabled);
+
     /**
      * Linearly interpolate pitch through unvoiced regions using the uv mask.
      * Returns a dense pitch (Hz) array with the same length as the input.
