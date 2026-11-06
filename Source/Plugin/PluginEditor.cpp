@@ -1833,7 +1833,11 @@ void PitchNetAudioProcessorEditor::paint(juce::Graphics &) {
 
 void PitchNetAudioProcessorEditor::resized() {
   audioProcessor.setLastEditorSize(getWidth(), getHeight());
+  if (mainView != nullptr)
+    mainView->noteAraLayoutStarted();
   mainView->getComponent()->setBounds(getLocalBounds());
+  if (mainView != nullptr)
+    mainView->noteAraLayoutFinished();
   requestMainViewKeyboardFocusAsync();
 }
 

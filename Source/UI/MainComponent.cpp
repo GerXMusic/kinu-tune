@@ -1062,6 +1062,32 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   pianoRoll.onScrollChanged = [this](double x)
   {
+    // D-180-R: measurement and guard. PianoRollComponent::updateScrollBars()
+    // updates the scrollbar range during a host layout; the bar can echo a
+    // transient range back as scroll 0. That is not a user scroll.
+    const double cursor = pianoRoll.getCursorTime();
+    const double previous = std::max(latencyTrace.lastCallbackScrollX,
+                                     latencyTrace.layoutScrollGuardScroll);
+    if (pitchnet::isTransientScrollbarReset(
+            latencyTrace.layoutScrollGuardActive, previous, x,
+            latencyTrace.layoutScrollGuardCursorVisible))
+    {
+      pianoRoll.setScrollX(latencyTrace.layoutScrollGuardScroll);
+      ++latencyTrace.layoutScrollGuardRestoreCount;
+      latencyTrace.lastCallbackScrollX =
+          latencyTrace.layoutScrollGuardScroll;
+      pianoRollView.repaintOverviewViewport();
+      return;
+    }
+    if (latencyTrace.lastCallbackScrollX > 100.0 && x < 1.0 &&
+        std::abs(cursor) > 10.0)
+    {
+      ++latencyTrace.callbackResetCount;
+      latencyTrace.callbackResetFrom = latencyTrace.lastCallbackScrollX;
+      latencyTrace.callbackResetTo = x;
+      latencyTrace.callbackResetAtMs = nowMs();
+    }
+    latencyTrace.lastCallbackScrollX = x;
     juce::ignoreUnused(x);
     pianoRollView.repaintOverviewViewport();
   };
@@ -1428,6 +1454,7 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   {
     latencyTrace.selectionBoundMs = nowMs();
     latencyTrace.selectionPaintBase = pianoRoll.getPaintCount();
+    latencyTrace.selectionScrollAtBound = pianoRoll.getScrollX();
   }
   latencyTrace.lastExchangeMs = nowMs() - exchangeStartMs;
   latencyTrace.maxExchangeMs =
@@ -1577,6 +1604,22 @@ void MainComponent::applyUiBrightness(double brightnessPercent)
 
 void MainComponent::resized()
 {
+  // D-180-R: measurement only. Capture the scroll and cursor before the layout
+  // runs; the setters below can clamp it.
+  const bool traceResize =
+      getProject() != nullptr && getWidth() > 0 && getHeight() > 0;
+  const double resizeScrollBefore =
+      traceResize ? pianoRoll.getScrollX() : 0.0;
+  const double resizeCursor = traceResize ? pianoRoll.getCursorTime() : 0.0;
+  const bool resizeCursorVisibleBefore =
+      traceResize && cursorIsVisible(resizeCursor);
+  const double resizePpsBefore =
+      traceResize ? pianoRoll.getPixelsPerSecond() : 0.0;
+  const double resizeDurationBefore =
+      traceResize ? pianoRoll.getTimelineDuration() : 0.0;
+  const int resizeVisibleWidthBefore =
+      traceResize ? pianoRoll.getVisibleContentWidth() : 0;
+
   if (auto *project = getProject(); project && getWidth() > 0 && getHeight() > 0)
   {
     project->uiWidth = getWidth();
@@ -1594,7 +1637,18 @@ void MainComponent::resized()
   toolbar.setBounds(bounds.removeFromTop(60));
 
   // Workspace takes remaining space (includes piano roll, panels, and sidebar)
+  const double layoutScrollBefore = pianoRoll.getScrollX();
+  const double layoutPpsBefore =
+      static_cast<double>(pianoRoll.getPixelsPerSecond());
+  const double layoutDurationBefore = pianoRoll.getTimelineDuration();
+  const int layoutVisibleWidthBefore = pianoRoll.getVisibleContentWidth();
   workspace.setBounds(bounds);
+  latencyTrace.lastLayoutScrollBefore = layoutScrollBefore;
+  latencyTrace.lastLayoutScrollAfter = pianoRoll.getScrollX();
+  latencyTrace.lastLayoutPpsBefore = layoutPpsBefore;
+  latencyTrace.lastLayoutDurationBefore = layoutDurationBefore;
+  latencyTrace.lastLayoutVisibleWidthBefore = layoutVisibleWidthBefore;
+  ++latencyTrace.layoutCount;
 
   if (settingsOverlay)
     settingsOverlay->setBounds(getLocalBounds());
@@ -1619,6 +1673,34 @@ void MainComponent::resized()
       hasPendingPitchFit = false;
       fitAnalyzedPitchRangeToView(*project);
     }
+
+  if (traceResize)
+  {
+    const bool firstResize = latencyTrace.resizeCount == 0;
+    ++latencyTrace.resizeCount;
+    latencyTrace.lastResizeAtMs = nowMs();
+    latencyTrace.lastResizeScrollBefore = resizeScrollBefore;
+    latencyTrace.lastResizeScrollAfter = pianoRoll.getScrollX();
+    latencyTrace.lastResizeCursor = resizeCursor;
+    latencyTrace.lastResizeCursorVisibleBefore = resizeCursorVisibleBefore;
+    latencyTrace.lastResizeCursorVisibleAfter =
+        cursorIsVisible(resizeCursor);
+    latencyTrace.lastResizeWidth = getWidth();
+    latencyTrace.lastResizeHeight = getHeight();
+    if (firstResize)
+    {
+      latencyTrace.firstResizeScrollBefore = resizeScrollBefore;
+      latencyTrace.firstResizeScrollAfter = pianoRoll.getScrollX();
+      latencyTrace.firstResizeCursorVisibleBefore =
+          resizeCursorVisibleBefore;
+      latencyTrace.firstResizeCursorVisibleAfter =
+          latencyTrace.lastResizeCursorVisibleAfter;
+      latencyTrace.firstResizeWidth = getWidth();
+      latencyTrace.firstResizePps = resizePpsBefore;
+      latencyTrace.firstResizeDuration = resizeDurationBefore;
+      latencyTrace.firstResizeVisibleWidth = resizeVisibleWidthBefore;
+    }
+  }
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent &e)
@@ -1809,6 +1891,38 @@ void MainComponent::pollMcpControl()
         response->setProperty("ok", true);
       }
     }
+    else if (command == "reset_ui_trace")
+    {
+      latencyTrace.resizeCount = 0;
+      latencyTrace.firstResizeScrollBefore = 0.0;
+      latencyTrace.firstResizeScrollAfter = 0.0;
+      latencyTrace.firstResizeCursorVisibleBefore = false;
+      latencyTrace.firstResizeCursorVisibleAfter = false;
+      latencyTrace.firstResizeWidth = 0;
+      latencyTrace.firstResizePps = 0.0;
+      latencyTrace.firstResizeDuration = 0.0;
+      latencyTrace.firstResizeVisibleWidth = 0;
+      latencyTrace.layoutCount = 0;
+      latencyTrace.lastLayoutScrollBefore = 0.0;
+      latencyTrace.lastLayoutScrollAfter = 0.0;
+      latencyTrace.scrollResetCount = 0;
+      latencyTrace.scrollResetFrom = 0.0;
+      latencyTrace.scrollResetTo = 0.0;
+      latencyTrace.scrollResetAtMs = 0.0;
+      latencyTrace.lastObservedScrollX = pianoRoll.getScrollX();
+      latencyTrace.callbackResetCount = 0;
+      latencyTrace.callbackResetFrom = 0.0;
+      latencyTrace.callbackResetTo = 0.0;
+      latencyTrace.callbackResetAtMs = 0.0;
+      latencyTrace.lastCallbackScrollX = pianoRoll.getScrollX();
+      latencyTrace.layoutScrollGuardActive = false;
+      latencyTrace.layoutScrollGuardScroll = 0.0;
+      latencyTrace.layoutScrollGuardUntilMs = 0.0;
+      latencyTrace.layoutScrollGuardCursorVisible = false;
+      latencyTrace.layoutScrollGuardRestoreCount = 0;
+      latencyTrace.focusRestoreCount = 0;
+      response->setProperty("ok", true);
+    }
     else if (command == "ui_state")
     {
       // D-180: measurement only. Internal timestamps let the probe compute the
@@ -1908,6 +2022,94 @@ void MainComponent::pollMcpControl()
                             static_cast<double>(pianoRoll.getPixelsPerSecond()));
       response->setProperty("visible_width",
                             pianoRoll.getVisibleContentWidth());
+      response->setProperty("cursor_visible",
+                            cursorIsVisible(pianoRoll.getCursorTime()));
+      response->setProperty("window_width", getWidth());
+      response->setProperty("window_height", getHeight());
+      response->setProperty("piano_roll_width", pianoRoll.getWidth());
+      response->setProperty("piano_roll_height", pianoRoll.getHeight());
+      response->setProperty("resize_count", latencyTrace.resizeCount);
+      response->setProperty("resize_at_ms", latencyTrace.lastResizeAtMs);
+      response->setProperty("resize_scroll_before",
+                            latencyTrace.lastResizeScrollBefore);
+      response->setProperty("resize_scroll_after",
+                            latencyTrace.lastResizeScrollAfter);
+      response->setProperty("resize_cursor", latencyTrace.lastResizeCursor);
+      response->setProperty("resize_cursor_visible_before",
+                            latencyTrace.lastResizeCursorVisibleBefore);
+      response->setProperty("resize_cursor_visible_after",
+                            latencyTrace.lastResizeCursorVisibleAfter);
+      response->setProperty("resize_width", latencyTrace.lastResizeWidth);
+      response->setProperty("resize_height", latencyTrace.lastResizeHeight);
+      response->setProperty("first_resize_scroll_before",
+                            latencyTrace.firstResizeScrollBefore);
+      response->setProperty("first_resize_scroll_after",
+                            latencyTrace.firstResizeScrollAfter);
+      response->setProperty("first_resize_cursor_visible_before",
+                            latencyTrace.firstResizeCursorVisibleBefore);
+      response->setProperty("first_resize_cursor_visible_after",
+                            latencyTrace.firstResizeCursorVisibleAfter);
+      response->setProperty("first_resize_width",
+                            latencyTrace.firstResizeWidth);
+      response->setProperty("first_resize_pps",
+                            latencyTrace.firstResizePps);
+      response->setProperty("first_resize_duration",
+                            latencyTrace.firstResizeDuration);
+      response->setProperty("first_resize_visible_width",
+                            latencyTrace.firstResizeVisibleWidth);
+      response->setProperty("layout_count", latencyTrace.layoutCount);
+      response->setProperty("layout_scroll_before",
+                            latencyTrace.lastLayoutScrollBefore);
+      response->setProperty("layout_scroll_after",
+                            latencyTrace.lastLayoutScrollAfter);
+      response->setProperty("layout_pps_before",
+                            latencyTrace.lastLayoutPpsBefore);
+      response->setProperty("layout_duration_before",
+                            latencyTrace.lastLayoutDurationBefore);
+      response->setProperty("layout_visible_width_before",
+                            latencyTrace.lastLayoutVisibleWidthBefore);
+      response->setProperty("scroll_reset_count",
+                            latencyTrace.scrollResetCount);
+      response->setProperty("scroll_reset_from",
+                            latencyTrace.scrollResetFrom);
+      response->setProperty("scroll_reset_to",
+                            latencyTrace.scrollResetTo);
+      response->setProperty("scroll_reset_at_ms",
+                            latencyTrace.scrollResetAtMs);
+      response->setProperty("callback_reset_count",
+                            latencyTrace.callbackResetCount);
+      response->setProperty("callback_reset_from",
+                            latencyTrace.callbackResetFrom);
+      response->setProperty("callback_reset_to",
+                            latencyTrace.callbackResetTo);
+      response->setProperty("callback_reset_at_ms",
+                            latencyTrace.callbackResetAtMs);
+      response->setProperty("focus_at_ms", latencyTrace.lastFocusAtMs);
+      response->setProperty("focus_span_start",
+                            latencyTrace.lastFocusSpanStart);
+      response->setProperty("focus_scroll_x", latencyTrace.lastFocusScrollX);
+      response->setProperty("focus_cursor_time",
+                            latencyTrace.lastFocusCursorTime);
+      response->setProperty("focus_cursor_was_visible",
+                            latencyTrace.lastFocusCursorWasVisible);
+      response->setProperty("focus_cursor_visible_after",
+                            latencyTrace.lastFocusCursorVisibleAfter);
+      response->setProperty("focus_cursor_restored",
+                            latencyTrace.lastFocusCursorRestored);
+      response->setProperty("focus_restore_count",
+                            latencyTrace.focusRestoreCount);
+      response->setProperty("layout_guard_active",
+                            latencyTrace.layoutScrollGuardActive);
+      response->setProperty("layout_guard_scroll",
+                            latencyTrace.layoutScrollGuardScroll);
+      response->setProperty("layout_guard_restore_count",
+                            latencyTrace.layoutScrollGuardRestoreCount);
+      response->setProperty("selection_scroll_at_bound",
+                            latencyTrace.selectionScrollAtBound);
+      response->setProperty("selection_scroll_at_paint",
+                            latencyTrace.selectionScrollAtPaint);
+      response->setProperty("selection_cursor_visible_at_paint",
+                            latencyTrace.selectionCursorVisibleAtPaint);
       response->setProperty("timeline_start", pianoRoll.getTimelineStart());
       response->setProperty("timeline_duration",
                             pianoRoll.getTimelineDuration());
@@ -1936,6 +2138,26 @@ void MainComponent::timerCallback()
                    timerNowMs - latencyTrace.lastTimerMs);
     latencyTrace.lastTimerMs = timerNowMs;
   }
+
+  // D-180-R: measurement only. Detect a scroll that collapses to the start
+  // between ticks, independently of who caused it.
+  {
+    const double observedScroll = pianoRoll.getScrollX();
+    if (latencyTrace.lastObservedScrollX > 100.0 &&
+        observedScroll < 1.0 &&
+        std::abs(pianoRoll.getCursorTime()) > 10.0)
+    {
+      ++latencyTrace.scrollResetCount;
+      latencyTrace.scrollResetFrom = latencyTrace.lastObservedScrollX;
+      latencyTrace.scrollResetTo = observedScroll;
+      latencyTrace.scrollResetAtMs = nowMs();
+    }
+    latencyTrace.lastObservedScrollX = observedScroll;
+  }
+
+  if (latencyTrace.layoutScrollGuardActive &&
+      nowMs() > latencyTrace.layoutScrollGuardUntilMs)
+    latencyTrace.layoutScrollGuardActive = false;
 
   pollMcpControl();
   dispatchPendingDragAudition();
@@ -4179,13 +4401,41 @@ void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
   if (focus.timelineEnd > timelineStart + timelineDuration)
     pianoRoll.extendTimelineTo(focus.timelineEnd);
 
+  // D-180-R: a selection focus must not hide an edit cursor that was already
+  // on screen while the transport is stopped (R2).
+  const double focusCursorTime = pianoRoll.getCursorTime();
+  const bool focusCursorWasVisible = cursorIsVisible(focusCursorTime);
+
   pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
+  bool focusCursorRestored = false;
+  if (pitchnet::shouldRestoreCursorAfterFocus(
+          isPlaying, focusCursorWasVisible,
+          cursorIsVisible(focusCursorTime)))
+  {
+    pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+        focusCursorTime, pianoRoll.getScrollX(),
+        static_cast<double>(pianoRoll.getPixelsPerSecond()),
+        pianoRoll.getVisibleContentWidth(), pianoRoll.getTimelineStart(),
+        pianoRoll.getTimelineDuration()));
+    focusCursorRestored = true;
+    ++latencyTrace.focusRestoreCount;
+  }
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   ARA_DIAG("focusTimelineRange applied timelineEnd=" +
            juce::String(focus.timelineEnd, 3) +
-           " scrollAfter=" + juce::String(pianoRoll.getScrollX(), 1));
+           " scrollAfter=" + juce::String(pianoRoll.getScrollX(), 1) +
+           " cursorRestored=" + (focusCursorRestored ? "1" : "0"));
 #endif
   pianoRollView.repaintOverviewViewport();
+
+  // D-180-R: measurement only. What the selection focus actually left on screen.
+  latencyTrace.lastFocusAtMs = nowMs();
+  latencyTrace.lastFocusSpanStart = startSeconds;
+  latencyTrace.lastFocusScrollX = pianoRoll.getScrollX();
+  latencyTrace.lastFocusCursorTime = focusCursorTime;
+  latencyTrace.lastFocusCursorWasVisible = focusCursorWasVisible;
+  latencyTrace.lastFocusCursorVisibleAfter = cursorIsVisible(focusCursorTime);
+  latencyTrace.lastFocusCursorRestored = focusCursorRestored;
 
   // Let a host selection visually win over the playback follow cursor for a
   // short moment, even if the transport is running elsewhere.
@@ -4494,6 +4744,33 @@ void MainComponent::noteAraActivationBreakdown(
   latencyTrace.lastActivationTotalMs = totalMs;
 }
 
+void MainComponent::noteAraLayoutStarted()
+{
+  if (getProject() == nullptr)
+    return;
+  const double cursor = pianoRoll.getCursorTime();
+  const double scroll = pianoRoll.getScrollX();
+  if (scroll > 100.0 && cursorIsVisible(cursor))
+  {
+    latencyTrace.layoutScrollGuardActive = true;
+    latencyTrace.layoutScrollGuardScroll = scroll;
+    latencyTrace.layoutScrollGuardCursorVisible = true;
+    latencyTrace.layoutScrollGuardUntilMs = nowMs() + 500.0;
+  }
+}
+
+void MainComponent::noteAraLayoutFinished()
+{
+  if (!latencyTrace.layoutScrollGuardActive)
+    return;
+  if (pianoRoll.getScrollX() < 1.0 &&
+      latencyTrace.layoutScrollGuardScroll > 100.0)
+  {
+    pianoRoll.setScrollX(latencyTrace.layoutScrollGuardScroll);
+    ++latencyTrace.layoutScrollGuardRestoreCount;
+  }
+}
+
 void MainComponent::updateUiLatencyPaintTrace()
 {
   const auto paintCount = pianoRoll.getPaintCount();
@@ -4502,7 +4779,12 @@ void MainComponent::updateUiLatencyPaintTrace()
   if (latencyTrace.selectionBoundMs > 0.0 &&
       latencyTrace.selectionFirstPaintMs == 0.0 &&
       paintCount > latencyTrace.selectionPaintBase)
+  {
     latencyTrace.selectionFirstPaintMs = stamp;
+    latencyTrace.selectionScrollAtPaint = pianoRoll.getScrollX();
+    latencyTrace.selectionCursorVisibleAtPaint =
+        cursorIsVisible(pianoRoll.getCursorTime());
+  }
 
   if (latencyTrace.playStateMs > 0.0 &&
       latencyTrace.playFirstPaintMs == 0.0 &&

@@ -171,6 +171,9 @@ public:
   virtual void noteAraActivationDuration(double) {}
   virtual void noteAraActivationBreakdown(double, double, double, double,
                                           double, double, double) {}
+  // D-180-R: guard the scrollbar echo produced by a host-driven layout.
+  virtual void noteAraLayoutStarted() {}
+  virtual void noteAraLayoutFinished() {}
   // Where the drawn project content sits on the host timeline, in seconds.
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;

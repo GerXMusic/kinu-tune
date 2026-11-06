@@ -293,6 +293,8 @@ public:
                                   double parseMs, double installMs,
                                   double focusMs, double bindMs,
                                   double totalMs) override;
+  void noteAraLayoutStarted() override;
+  void noteAraLayoutFinished() override;
 
 private:
   // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
@@ -537,6 +539,58 @@ private:
     double lastActivationFocusMs = 0.0;
     double lastActivationBindMs = 0.0;
     double lastActivationTotalMs = 0.0;
+
+    int resizeCount = 0;
+    double lastResizeAtMs = 0.0;
+    double lastResizeScrollBefore = 0.0;
+    double lastResizeScrollAfter = 0.0;
+    double lastResizeCursor = 0.0;
+    bool lastResizeCursorVisibleBefore = false;
+    bool lastResizeCursorVisibleAfter = false;
+    int lastResizeWidth = 0;
+    int lastResizeHeight = 0;
+    double firstResizeScrollBefore = 0.0;
+    double firstResizeScrollAfter = 0.0;
+    bool firstResizeCursorVisibleBefore = false;
+    bool firstResizeCursorVisibleAfter = false;
+    int firstResizeWidth = 0;
+    double firstResizePps = 0.0;
+    double firstResizeDuration = 0.0;
+    int firstResizeVisibleWidth = 0;
+    double lastLayoutScrollBefore = 0.0;
+    double lastLayoutScrollAfter = 0.0;
+    double lastLayoutPpsBefore = 0.0;
+    double lastLayoutDurationBefore = 0.0;
+    int lastLayoutVisibleWidthBefore = 0;
+    int layoutCount = 0;
+    bool layoutScrollGuardActive = false;
+    double layoutScrollGuardScroll = 0.0;
+    double layoutScrollGuardUntilMs = 0.0;
+    bool layoutScrollGuardCursorVisible = false;
+    int layoutScrollGuardRestoreCount = 0;
+    double lastObservedScrollX = 0.0;
+    int scrollResetCount = 0;
+    double scrollResetFrom = 0.0;
+    double scrollResetTo = 0.0;
+    double scrollResetAtMs = 0.0;
+    double lastCallbackScrollX = 0.0;
+    int callbackResetCount = 0;
+    double callbackResetFrom = 0.0;
+    double callbackResetTo = 0.0;
+    double callbackResetAtMs = 0.0;
+
+    double lastFocusAtMs = 0.0;
+    double lastFocusSpanStart = 0.0;
+    double lastFocusScrollX = 0.0;
+    double lastFocusCursorTime = 0.0;
+    bool lastFocusCursorWasVisible = false;
+    bool lastFocusCursorVisibleAfter = false;
+    bool lastFocusCursorRestored = false;
+    int focusRestoreCount = 0;
+
+    double selectionScrollAtBound = 0.0;
+    double selectionScrollAtPaint = 0.0;
+    bool selectionCursorVisibleAtPaint = false;
   };
   UiLatencyTrace latencyTrace;
   // A host seek arrived while the transport is stopped: the view must follow

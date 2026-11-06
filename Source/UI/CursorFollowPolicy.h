@@ -66,4 +66,26 @@ inline double scrollXToRevealCursor(double cursorSeconds,
     const double target = cursorX - width * 0.3;
     return std::clamp(target, minScroll, maxScroll);
 }
+
+// D-180-R: a selection focus must not hide an edit cursor that was already on
+// screen while the transport is stopped. Focus still wins during playback.
+inline bool shouldRestoreCursorAfterFocus(bool transportPlaying,
+                                          bool cursorWasVisible,
+                                          bool cursorVisibleAfter)
+{
+    return !transportPlaying && cursorWasVisible && !cursorVisibleAfter;
+}
+
+// D-180-R: PianoRollComponent::updateScrollBars() updates the scrollbar range
+// during layout. The scrollbar can echo a transient range back through
+// scrollBarMoved(), collapsing the scroll to the start. The caller guards that
+// window and restores the pre-layout scroll.
+inline bool isTransientScrollbarReset(bool layoutGuardActive,
+                                      double previousScroll,
+                                      double newScroll,
+                                      bool cursorWasVisible)
+{
+    return layoutGuardActive && cursorWasVisible && previousScroll > 100.0 &&
+           newScroll < 1.0;
+}
 } // namespace pitchnet

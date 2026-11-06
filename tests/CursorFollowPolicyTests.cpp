@@ -29,6 +29,20 @@ int main()
     CHECK(!shouldClearFollowSuppression(true, true));
     CHECK(!shouldClearFollowSuppression(false, false));
 
+    // D-180-R: a selection focus keeps an already-visible cursor in view while
+    // stopped; during playback the focus still wins.
+    CHECK(shouldRestoreCursorAfterFocus(false, true, false));
+    CHECK(!shouldRestoreCursorAfterFocus(true, true, false));
+    CHECK(!shouldRestoreCursorAfterFocus(false, false, false));
+    CHECK(!shouldRestoreCursorAfterFocus(false, true, true));
+
+    // D-180-R: a scrollbar range update during layout must not collapse a
+    // visible cursor to the start.
+    CHECK(isTransientScrollbarReset(true, 14223.4, 0.0, true));
+    CHECK(!isTransientScrollbarReset(false, 14223.4, 0.0, true));
+    CHECK(!isTransientScrollbarReset(true, 14223.4, 100.0, true));
+    CHECK(!isTransientScrollbarReset(true, 14223.4, 0.0, false));
+
     // Cursor outside the visible window: scroll to reveal it.
     {
         const double scroll =
