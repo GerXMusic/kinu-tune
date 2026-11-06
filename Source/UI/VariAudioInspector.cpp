@@ -20,13 +20,14 @@ constexpr int kHeaderHeight = 20;
 constexpr int kMenuRowHeight = 26;
 constexpr int kToggleHeight = 24;
 constexpr int kTargetLabelHeight = 18;
+constexpr int kEngineStatusHeight = 32;
 constexpr int kValueRowHeight = 34;
 constexpr int kNumRows = 5;
 
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 3 + kRowGap +
-    kTargetLabelHeight + kRowsBoxHeight;
+    kEngineStatusHeight + kRowGap + kTargetLabelHeight + kRowsBoxHeight;
 constexpr int kRootMenuWidth = 50;
 constexpr int kMenuGap = 4;
 constexpr int kScrollBarThickness = 8;
@@ -269,6 +270,14 @@ VariAudioInspector::VariAudioInspector()
     };
     content.addAndMakeVisible(engineBox);
 
+    // D-185: never leave a refused pick unexplained. Shows the block's actual
+    // engine and, only when there was a refusal, the requested one and why.
+    engineStatusLabel.setFont(AppFont::getFont(11.0f));
+    engineStatusLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
+    engineStatusLabel.setJustificationType(juce::Justification::topLeft);
+    engineStatusLabel.setMinimumHorizontalScale(0.85f);
+    content.addAndMakeVisible(engineStatusLabel);
+
     targetLabel.setFont(AppFont::getFont(12.0f));
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     content.addAndMakeVisible(targetLabel);
@@ -445,6 +454,41 @@ void VariAudioInspector::refreshFromProject()
     if (engineValue)
         showMenuValue(engineBox, engineMenuId(*engineValue), shownEngineId);
 
+    // D-185: effective engine of the block, plus the refused request if the
+    // last gesture could not change it (D-129).
+    const auto engineStatus = getEngineStatus ? getEngineStatus() : std::nullopt;
+    if (engineStatus)
+    {
+        const auto nameOf = [](SynthesisEngineType engine)
+        {
+            switch (engine)
+            {
+            case SynthesisEngineType::Vocoder:   return TR("inspector.engine_vocoder");
+            case SynthesisEngineType::Pitchcore: return TR("inspector.engine_pitchcore");
+            case SynthesisEngineType::Psola:
+            default:                             return TR("inspector.engine_psola");
+            }
+        };
+        juce::String text = TR("inspector.engine_effective")
+                                .replace("{engine}", nameOf(engineStatus->effective));
+        if (engineStatus->refusedRequest)
+        {
+            const auto requestedName =
+                *engineStatus->refusedRequest == NoteEngine::Vocoder
+                    ? TR("inspector.engine_vocoder")
+                    : *engineStatus->refusedRequest == NoteEngine::Pitchcore
+                          ? TR("inspector.engine_pitchcore")
+                          : *engineStatus->refusedRequest == NoteEngine::Psola
+                                ? TR("inspector.engine_psola")
+                                : TR("inspector.engine_inherit");
+            text += "\n" + TR("inspector.engine_refused")
+                              .replace("{requested}", requestedName);
+        }
+        engineStatusLabel.setText(text, juce::dontSendNotification);
+    }
+    else
+        engineStatusLabel.setText({}, juce::dontSendNotification);
+
     if (hasProject)
     {
         // Off is the project's snap switch; Absolute vs Relative is ours.
@@ -614,6 +658,8 @@ void VariAudioInspector::layoutContent(int width)
     auto engineRow = card.removeFromTop(kMenuRowHeight);
     engineBox.setBounds(engineRow.removeFromRight(menuWidth).reduced(0, 1));
     engineLabel.setBounds(engineRow);
+    card.removeFromTop(kRowGap);
+    engineStatusLabel.setBounds(card.removeFromTop(kEngineStatusHeight));
     card.removeFromTop(kRowGap);
     targetLabel.setBounds(card.removeFromTop(kTargetLabelHeight));
 

@@ -308,6 +308,8 @@
   "inspector.snap_off": "オフ",
   "inspector.engine": "エンジン",
   "inspector.engine_inherit": "グローバルに従う",
+  "inspector.engine_effective": "有効: {engine}",
+  "inspector.engine_refused": "要求 {requested}: 却下、ノート前に >=20 ms / -55 dBFS の無音なし",
   "inspector.engine_vocoder": "ボコーダー",
   "inspector.engine_psola": "クラシック (PSOLA)",
   "inspector.engine_pitchcore": "Pitchcore",

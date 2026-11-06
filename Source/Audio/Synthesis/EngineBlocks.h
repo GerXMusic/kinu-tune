@@ -82,11 +82,29 @@ struct EngineEdit {
     NoteEngine next = NoteEngine::Inherit;
 };
 
+/// Why a requested engine change could not start a new block (D-185).
+enum class EngineRefusalReason {
+    None,
+    /// D-129: no run of at least 20 ms below -55 dBFS before the note.
+    NoSilence,
+};
+
+/// A selected note whose requested engine was refused, kept so the UI and the
+/// MCP can explain it (D-185). The rule itself is D-125/D-129 and does not
+/// change: the note still renders with its block's engine.
+struct RefusedEdit {
+    int noteIndex = 0;
+    NoteEngine requested = NoteEngine::Inherit;
+    EngineRefusalReason reason = EngineRefusalReason::NoSilence;
+};
+
 struct EngineEditPlan {
     std::vector<EngineEdit> edits;
     /// Selected notes that asked for a change and could not take it (no
     /// usable silence before them). They keep the block's engine instead.
     int refused = 0;
+    /// One entry per refused note, with what it asked for and why it lost.
+    std::vector<RefusedEdit> refusals;
 };
 
 /**

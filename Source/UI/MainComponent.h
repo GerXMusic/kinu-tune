@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include "../Audio/EditorController.h"
 #include "../Audio/ResampledLoopAudition.h"
 #include "IMainView.h"
@@ -347,6 +349,9 @@ private:
   int applyNoteEngineToIndices(const std::vector<int> &indices,
                                NoteEngine engine);
   std::optional<NoteEngine> getSelectionNoteEngine() const;
+  // D-185: note index -> engine that the last gesture asked for and D-129
+  // refused. Session state only; the stored engine is already the block's.
+  std::unordered_map<int, NoteEngine> lastRefusedEngineRequests;
   void onZoomChanged(float pixelsPerSecond);
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE

@@ -778,6 +778,36 @@ MainComponent::MainComponent(bool enableAudioDevice)
   variAudioInspector.onParamEditEnd = [this] { pianoRoll.endInspectorEdit(); };
   variAudioInspector.getNoteEngine = [this]
   { return getSelectionNoteEngine(); };
+  variAudioInspector.getEngineStatus =
+      [this]() -> std::optional<VariAudioInspector::EngineStatus>
+  {
+    auto *project = getProject();
+    if (project == nullptr)
+      return std::nullopt;
+    const auto targets = pianoRoll.getInspectorTargets();
+    if (targets.empty() || targets.front() == nullptr)
+      return std::nullopt;
+    const auto &notes = project->getNotes();
+    int index = -1;
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      if (&notes[static_cast<size_t>(i)] == targets.front())
+      {
+        index = i;
+        break;
+      }
+    if (index < 0)
+      return std::nullopt;
+    const auto globalEngine = editorController
+                                  ? editorController->getSynthesisEngineType()
+                                  : defaultSynthesisEngineType();
+    VariAudioInspector::EngineStatus status;
+    status.effective = engineBlocks::effectiveEngine(
+        notes[static_cast<size_t>(index)], globalEngine);
+    if (const auto it = lastRefusedEngineRequests.find(index);
+        it != lastRefusedEngineRequests.end())
+      status.refusedRequest = it->second;
+    return status;
+  };
   variAudioInspector.onNoteEngineChanged = [this](NoteEngine engine)
   { applyNoteEngineToSelection(engine); };
   variAudioInspector.onSnapModeChanged =
@@ -1847,6 +1877,19 @@ void MainComponent::pollMcpControl()
             "effective_engine",
             synthesisEngineTypeToString(
                 engineBlocks::effectiveEngine(note, currentEngine)));
+        // D-185: why a request could not take effect (transparency only).
+        const auto refusedIt = lastRefusedEngineRequests.find(i);
+        const bool refused = refusedIt != lastRefusedEngineRequests.end();
+        noteObject->setProperty("refused", refused);
+        if (refused)
+        {
+          noteObject->setProperty("refused_engine",
+                                  noteEngineToString(refusedIt->second));
+          noteObject->setProperty("refusal_reason", "no_silence_before_note");
+          noteObject->setProperty(
+              "refusal_detail",
+              "sin silencio >=20 ms / -55 dBFS antes de la nota");
+        }
         noteObject->setProperty("selected", note.isSelected());
         noteArray.add(juce::var(noteObject));
       }
@@ -3952,6 +3995,9 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   if (selection.empty())
     return 0;
 
+  // D-185: a new gesture replaces the previous explanation.
+  lastRefusedEngineRequests.clear();
+
   const auto &audio = project->getAudioData();
   const auto &source = audio.originalWaveform.getNumSamples() > 0
                            ? audio.originalWaveform
@@ -3971,6 +4017,8 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
     LOG("engine: refused " + juce::String(plan.refused) + " of " +
         juce::String(static_cast<int>(selection.size())) +
         " note(s): no silence between blocks");
+  for (const auto &refusal : plan.refusals)
+    lastRefusedEngineRequests[refusal.noteIndex] = refusal.requested;
 
   if (!plan.edits.empty())
   {

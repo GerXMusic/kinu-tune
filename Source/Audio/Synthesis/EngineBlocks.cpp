@@ -248,6 +248,8 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
             // an unselected note simply inherits the current block.
             if (selected) {
                 ++plan.refused;
+                plan.refusals.push_back({index, requested,
+                                         EngineRefusalReason::NoSilence});
                 next = blockEngine == globalEngine
                            ? NoteEngine::Inherit
                            : noteEngineFromSynthesisEngine(blockEngine);

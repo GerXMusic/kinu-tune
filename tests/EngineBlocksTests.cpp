@@ -435,6 +435,40 @@ void testPitchcoreRequestSurvivesALargeShift() {
     CHECK(vocoderPlan.front().engine == SynthesisEngineType::Vocoder);
 }
 
+void testRefusalNamesTheNoteTheRequestAndTheCause() {
+    // D-185: a refused request must be explainable. The UI shows the note, what
+    // it asked for, and that D-129 found no usable silence before it.
+    auto source = makeSource({});
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+        makeNote(12, 20, NoteEngine::Psola),
+    };
+    const auto refused = engineBlocks::planEngineEdits(
+        notes, {1}, NoteEngine::Vocoder, SynthesisEngineType::Psola, source,
+        kSampleRate, kHop);
+    CHECK(refused.refused == 1);
+    CHECK(refused.refusals.size() == 1);
+    if (!refused.refusals.empty()) {
+        CHECK(refused.refusals.front().noteIndex == 1);
+        CHECK(refused.refusals.front().requested == NoteEngine::Vocoder);
+        CHECK(refused.refusals.front().reason ==
+              engineBlocks::EngineRefusalReason::NoSilence);
+    }
+
+    // An accepted request carries no refusal: note 123 in the D-184 project.
+    auto withSilence = makeSource(
+        {{12 * kHop + 800, 12 * kHop + 800 + kSampleRate * 40 / 1000}});
+    std::vector<Note> gapped{
+        makeNote(4, 12, NoteEngine::Psola),
+        makeNote(22, 30, NoteEngine::Psola),
+    };
+    const auto accepted = engineBlocks::planEngineEdits(
+        gapped, {1}, NoteEngine::Vocoder, SynthesisEngineType::Psola,
+        withSilence, kSampleRate, kHop);
+    CHECK(accepted.refused == 0);
+    CHECK(accepted.refusals.empty());
+}
+
 }  // namespace
 
 int main() {
@@ -458,6 +492,7 @@ int main() {
     testRestsDoNotBecomeThePreviousNoteForEngineEdits();
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
     testPitchcoreRequestSurvivesALargeShift();
+    testRefusalNamesTheNoteTheRequestAndTheCause();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;

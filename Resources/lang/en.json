@@ -310,6 +310,8 @@
   "inspector.snap_off": "Off",
   "inspector.engine": "Engine",
   "inspector.engine_inherit": "Follow Global",
+  "inspector.engine_effective": "Effective: {engine}",
+  "inspector.engine_refused": "Requested {requested}: refused, no silence >=20 ms / -55 dBFS before the note",
   "inspector.engine_vocoder": "Vocoder",
   "inspector.engine_psola": "Classic (PSOLA)",
   "inspector.engine_pitchcore": "Pitchcore",
