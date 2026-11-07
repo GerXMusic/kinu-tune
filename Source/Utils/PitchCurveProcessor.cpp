@@ -124,8 +124,10 @@ namespace
     // glide; the measured 54-cent boundary was the only one that got worse.
     constexpr float kEditedBoundaryMinShiftDeltaSemitones = 0.60f;
 
-    // D-183 R6: test-only switch, so the same test can attribute the glide.
-    bool gEditedBoundaryGlideEnabled = true;
+    // D-189: the D-182 glide is NOT adopted (negative listening, 2026-11-06),
+    // so it must be off by default. It stays in the code behind this switch;
+    // the tests enable it explicitly to attribute behaviour.
+    bool gEditedBoundaryGlideEnabled = false;
     // A gap is an onset, not a legato note frontier. The source contour there
     // is the singer's attack and must not be smoothed away (D-053); only
     // contiguous notes get the glide.
@@ -168,7 +170,11 @@ namespace
         return boundaries;
     }
 
-    void applyEditedBoundaryGlide(Project& project, int totalFrames)
+    // D-189: rangeStart/rangeEnd limit which boundaries are re-smoothed. The
+    // partial rebuild paths pass their padded window so a preview never
+    // re-smooths the whole project, which made the drag path-dependent.
+    void applyEditedBoundaryGlide(Project& project, int totalFrames,
+                                  int rangeStart = 0, int rangeEnd = -1)
     {
         if (!gEditedBoundaryGlideEnabled)
             return;
@@ -179,7 +185,15 @@ namespace
             static_cast<int>(audioData.denseF0.size()) < totalFrames)
             return;
 
-        const auto boundaries = collectEditedBoundaryFrames(project.getNotes());
+        auto boundaries = collectEditedBoundaryFrames(project.getNotes());
+        if (rangeEnd >= 0)
+            boundaries.erase(
+                std::remove_if(boundaries.begin(), boundaries.end(),
+                               [rangeStart, rangeEnd](int boundary) {
+                                   return boundary < rangeStart ||
+                                          boundary >= rangeEnd;
+                               }),
+                boundaries.end());
         if (boundaries.empty())
             return;
 
@@ -652,8 +666,9 @@ namespace PitchCurveProcessor
             }
         }
 
-        // D-182: smooth the edited note boundaries before caching F0.
-        applyEditedBoundaryGlide(project, totalFrames);
+        // D-182: smooth the edited note boundaries before caching F0. D-189:
+        // limited to this padded window so the next drag step is exact.
+        applyEditedBoundaryGlide(project, totalFrames, minFrame, maxFrame);
 
         // 3. Update baseF0 only for the affected range
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
@@ -678,11 +693,44 @@ namespace PitchCurveProcessor
         if (totalFrames <= 0 || affectedNotes.empty())
             return;
 
-        const auto& allNotes = project.getNotes();
+        auto& allNotes = project.getNotes();
         int minAffectedFrame = totalFrames;
         int maxAffectedFrame = 0;
 
         for (auto* note : affectedNotes)
+        {
+            if (!note || note->isRest())
+                continue;
+            minAffectedFrame = std::min(minAffectedFrame, note->getStartFrame());
+            maxAffectedFrame = std::max(maxAffectedFrame, note->getEndFrame());
+        }
+        if (minAffectedFrame >= maxAffectedFrame)
+            return;
+
+        // D-189: the D-182 glide reads the per-frame shift from deltaPitch and
+        // writes into the neighbouring notes. This preview path used to refresh
+        // only the edited notes, so a second preview smoothed already-smoothed
+        // values: the drag drifted and the commit recalculated a different
+        // curve. Rebuild every note that overlaps the glide window (D-183).
+        constexpr int kGlidePadFrames = 32;
+        minAffectedFrame = std::max(0, minAffectedFrame - kGlidePadFrames);
+        maxAffectedFrame = std::min(totalFrames, maxAffectedFrame + kGlidePadFrames);
+        for (int i = minAffectedFrame; i < maxAffectedFrame; ++i)
+            audioData.deltaPitch[static_cast<size_t>(i)] = 0.0f;
+
+        std::vector<Note*> notesToWrite;
+        notesToWrite.reserve(allNotes.size());
+        for (auto& candidate : allNotes)
+        {
+            if (candidate.isRest())
+                continue;
+            if (candidate.getEndFrame() <= minAffectedFrame ||
+                candidate.getStartFrame() >= maxAffectedFrame)
+                continue;
+            notesToWrite.push_back(&candidate);
+        }
+
+        for (auto* note : notesToWrite)
         {
             if (!note || note->isRest())
                 continue;
@@ -730,9 +778,6 @@ namespace PitchCurveProcessor
                     v = v * dScale + dOffset;
             }
 
-            minAffectedFrame = std::min(minAffectedFrame, startFrame);
-            maxAffectedFrame = std::max(maxAffectedFrame, endFrame);
-
             for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
             {
                 const int globalIdx = startFrame + i;
@@ -742,8 +787,10 @@ namespace PitchCurveProcessor
         }
 
         // D-182: an edited boundary can smooth the delta a little past the
-        // affected notes, so recompose with padding.
-        applyEditedBoundaryGlide(project, totalFrames);
+        // affected notes, so recompose with padding. D-189 limits the glide to
+        // this rebuilt window so the preview is idempotent.
+        applyEditedBoundaryGlide(project, totalFrames, minAffectedFrame,
+                                 maxAffectedFrame);
 
         // Recompose f0 only for affected range
         if (minAffectedFrame < maxAffectedFrame)

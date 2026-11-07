@@ -67,6 +67,9 @@ std::vector<float> targetCurve(Project &project) {
 }  // namespace
 
 int main() {
+  // D-189: the glide is off by default (D-182 not adopted). This test measures
+  // the glide itself, so it enables it explicitly.
+  PitchCurveProcessor::setEditedBoundaryGlideEnabled(true);
   // Unedited: source and target agree; the target is the plain base curve.
   auto uneditedProject = makeProject(60.0f, 66.0f, 60.0f, 66.0f);
   const auto unedited = targetCurve(uneditedProject);
