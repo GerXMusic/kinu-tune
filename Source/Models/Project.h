@@ -1,4 +1,3 @@
-#define PITCHNET_D197_READY 1
 #pragma once
 
 #include "../JuceHeader.h"
@@ -274,11 +273,14 @@ public:
     // Returns the number of notes marked; nothing is marked when it is 0.
     int markEditedNotesDirty();
 
+    // D-197: independent walk over the last markEditedNotesDirty() selection,
+    // grouped into blocks separated by D-129 silence. Dirty flags are untouched.
+    bool hasEditedBlockPlan() const;
+    bool nextEditedBlockRange(int &startFrame, int &endFrame);
+
     // D-197: edited notes are grouped into blocks separated by D-129 silence.
     // Only one block is marked dirty per render, so two distant edits no
     // longer force a single render spanning the whole gap between them.
-    bool hasPendingEditedDirtyBlocks() const;
-    int markNextEditedBlockDirty();
 
     // F0 curve dirty tracking (for pitch tools and undo/redo)
     void setF0DirtyRange(int startFrame, int endFrame);
@@ -376,11 +378,9 @@ private:
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
 
-    // D-197 edited-note blocks (indices into notes, raw spans).
-    std::vector<std::vector<int>> editedDirtyBlockNotes;
-    std::vector<std::pair<int, int>> editedDirtyBlockRanges;
-    size_t editedDirtyBlockCursor = 0;
-    int markEditedDirtyBlock(size_t index);
+    // D-197 edited-note block walk (padded frame spans, not note flags).
+    std::vector<std::pair<int, int>> editedBlockRanges;
+    int editedBlockCursor = -1;
 
     bool modified = false;
 

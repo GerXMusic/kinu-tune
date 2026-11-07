@@ -33,19 +33,31 @@ void testDirtyStopsAtBlockBoundary() {
     p.getNotes().push_back(makeEditedNote(10, 20));
     p.getNotes().push_back(makeEditedNote(300, 320));
     CHECK(p.markEditedNotesDirty() == 2);
-    const auto range = p.getDirtyFrameRange();
-    std::cout << "first dirty range [" << range.first << "," << range.second << ")\n";
-    CHECK(range.first == 0);
-    CHECK(range.second <= 80);
-#ifdef PITCHNET_D197_READY
-    CHECK(p.hasPendingEditedDirtyBlocks());
-    CHECK(p.markNextEditedBlockDirty() == 1);
-    const auto second = p.getDirtyFrameRange();
-    std::cout << "second dirty range [" << second.first << "," << second.second << ")\n";
-    CHECK(second.first >= 240);
-    CHECK(second.second <= 380);
-    CHECK(!p.hasPendingEditedDirtyBlocks());
-    CHECK(p.markNextEditedBlockDirty() == 0);
+    // Contract kept: every edited note is dirty and the F0 range spans all.
+    CHECK(p.getNotes()[0].isDirty());
+    CHECK(p.getNotes()[1].isDirty());
+    const auto span = p.getF0DirtyRange();
+    CHECK(span.first == 0);
+    CHECK(span.second == 380);
+
+    CHECK(p.hasEditedBlockPlan());
+    int firstStart = -1, firstEnd = -1;
+    CHECK(p.nextEditedBlockRange(firstStart, firstEnd));
+    std::cout << "first block [" << firstStart << "," << firstEnd << ")\n";
+    CHECK(firstStart == 0);
+    CHECK(firstEnd == 80);
+    int secondStart = -1, secondEnd = -1;
+    CHECK(p.nextEditedBlockRange(secondStart, secondEnd));
+    std::cout << "second block [" << secondStart << "," << secondEnd << ")\n";
+    CHECK(secondStart == 240);
+    CHECK(secondEnd == 380);
+    const int rendered = (firstEnd - firstStart) + (secondEnd - secondStart);
+    const int budget = (20 - 10) + (320 - 300) + 2 * 60 * 2;
+    std::cout << "rendered=" << rendered << " budget=" << budget << "\n";
+    CHECK(rendered <= budget);
+    int noneStart = -1, noneEnd = -1;
+    CHECK(!p.nextEditedBlockRange(noneStart, noneEnd));
+    CHECK(!p.hasEditedBlockPlan());
     Vocoder v;
     CHECK(v.getLoadState() == Vocoder::LoadState::NotLoaded);
     CHECK(!v.isReady());
@@ -59,10 +71,10 @@ void testDirtyStopsAtBlockBoundary() {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     CHECK(v.getLoadState() == Vocoder::LoadState::Failed);
     CHECK(!v.isReady());
-#endif
 }
 } // namespace
 int main() {
+    std::cout << std::unitbuf;
     testDirtyStopsAtBlockBoundary();
     std::cout << "D197 tests passed\n";
     return 0;

@@ -624,8 +624,14 @@ void EditorController::resynthesizeIncrementalAsync(
     }
   }
 
-  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())
+  if (project.hasEditedBlockPlan() && !synth->hasRenderRangeOverrideValue())
   {
+    int blockStart = -1, blockEnd = -1;
+    if (project.nextEditedBlockRange(blockStart, blockEnd))
+      synth->setRenderRangeOverride(blockStart, blockEnd);
+  }
+
+  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())  {
     if (onComplete)
       onComplete(false);
     return;
@@ -660,13 +666,21 @@ void EditorController::resynthesizeIncrementalAsync(
       [this, projectPtr = &project, pending = &pendingRerun, onComplete,
        audioEnginePtr, isPluginMode](bool success)
       {
-        // D-197: one render per silence-bounded edited block. When this block
-        // finished, schedule the next one so untouched blocks stay untouched.
-        if (success && projectPtr->markNextEditedBlockDirty() > 0)
+        // D-197: one render per silence-bounded edited block. The project keeps
+        // every edited note dirty; the block walk only chooses the window.
+        if (success && projectPtr->hasEditedBlockPlan())
         {
-          resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete, *pending,
-                                       isPluginMode);
-          return;
+          int blockStart = -1, blockEnd = -1;
+          auto *s = incrementalSynth.get();
+          if (s && projectPtr->nextEditedBlockRange(blockStart, blockEnd))
+          {
+            s->setRenderRangeOverride(blockStart, blockEnd);
+            resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
+                                         *pending, isPluginMode);
+            return;
+          }
+          if (s)
+            s->clearRenderRangeOverride();
         }
         if (!success)
         {

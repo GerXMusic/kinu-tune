@@ -177,6 +177,10 @@ Vocoder::~Vocoder()
   if (asyncWorker.joinable())
     asyncWorker.join();
 
+  // D-197: finish any background load before tearing down the session.
+  if (loadThread.joinable())
+    loadThread.join();
+
 #ifdef HAVE_ONNXRUNTIME
   onnxSession.reset();
   onnxEnv.reset();

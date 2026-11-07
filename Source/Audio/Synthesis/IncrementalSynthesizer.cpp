@@ -890,13 +890,33 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange()) {
+  if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
+      !project->hasF0DirtyRange()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
+  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
+  const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
+  auto editedClusters = selectConnectedEditedNotes(
+      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  std::vector<CommitFrameRange> commitFrameRanges;
+  if (hasRenderRangeOverride) {
+    // D-197: this pass covers one edited block. All notes stay dirty; only
+    // this window is committed, so the gap between distant edits is untouched.
+    dirtyStart = renderRangeOverrideStart;
+    dirtyEnd = renderRangeOverrideEnd;
+    commitFrameRanges.push_back({dirtyStart, dirtyEnd});
+  } else {
+    if (editedClusters.startFrame >= 0)
+      dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
+    if (editedClusters.endFrame >= 0)
+      dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
+    commitFrameRanges = collectCommitFrameRanges(
+        *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  }
   const int rawDirtyStart = dirtyStart;
   const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
@@ -904,21 +924,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       onComplete(false);
     return;
   }
-  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
-  const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
-  auto commitFrameRanges = collectCommitFrameRanges(
-      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   if (commitFrameRanges.empty()) {
     if (onComplete)
       onComplete(false);
     return;
   }
-  auto editedClusters = selectConnectedEditedNotes(
-      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
-  if (editedClusters.startFrame >= 0)
-    dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
-  if (editedClusters.endFrame >= 0)
-    dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
 
   // Compute synthesis range after expanding to complete connected edited-note
   // clusters, then add voiced-segment context and padding.
