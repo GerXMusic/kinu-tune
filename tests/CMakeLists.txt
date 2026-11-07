@@ -23,6 +23,7 @@ set(PITCHNET_TEST_SOURCES
     SingleWindowPolicyTests.cpp
     DocumentEngineTests.cpp
     EngineBlocksTests.cpp
+    D197BlockDirtyTests.cpp
     FormantRetirementTests.cpp
     FormantShiftTests.cpp
     HarmonyIntervalTests.cpp

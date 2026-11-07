@@ -589,16 +589,37 @@ void EditorController::resynthesizeIncrementalAsync(
       onComplete(false);
     return;
   }
-  if (!vocoder->isLoaded())
+  if (!vocoder->isReady())
   {
-    if (onProgress)
-      onProgress(TR("progress.loading_vocoder"));
-
     auto modelPath = PlatformPaths::getVocoderModelFile();
-    if (!modelPath.exists() || !vocoder->loadModel(modelPath))
+    if (!modelPath.exists())
     {
       if (onComplete)
         onComplete(false);
+      return;
+    }
+    // D-197: never load the model (or pay the first Ort::Run) on the calling
+    // thread. Poll the worker from the message thread and continue once ready.
+    if (vocoder->getLoadState() == Vocoder::LoadState::NotLoaded)
+    {
+      if (onProgress)
+        onProgress(TR("progress.loading_vocoder"));
+      vocoder->beginAsyncLoad(modelPath);
+    }
+    if (vocoder->getLoadState() == Vocoder::LoadState::Failed)
+    {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+    if (vocoder->getLoadState() == Vocoder::LoadState::Loading)
+    {
+      juce::Timer::callAfterDelay(
+          50, [this, projectPtr = &project, onProgress, onComplete,
+               pending = &pendingRerun, isPluginMode]() {
+            resynthesizeIncrementalAsync(*projectPtr, onProgress, onComplete,
+                                         *pending, isPluginMode);
+          });
       return;
     }
   }
@@ -639,6 +660,14 @@ void EditorController::resynthesizeIncrementalAsync(
       [this, projectPtr = &project, pending = &pendingRerun, onComplete,
        audioEnginePtr, isPluginMode](bool success)
       {
+        // D-197: one render per silence-bounded edited block. When this block
+        // finished, schedule the next one so untouched blocks stay untouched.
+        if (success && projectPtr->markNextEditedBlockDirty() > 0)
+        {
+          resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete, *pending,
+                                       isPluginMode);
+          return;
+        }
         if (!success)
         {
           if (pending->exchange(false))
