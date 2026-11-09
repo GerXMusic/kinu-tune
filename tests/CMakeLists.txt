@@ -36,6 +36,7 @@ set(PITCHNET_TEST_SOURCES
     PitchCurveRoundTripTests.cpp
     PitchCurveHandleTests.cpp
     PitchCurveTransitionTests.cpp
+    D212BoundaryTransitionTests.cpp
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
