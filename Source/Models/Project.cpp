@@ -1,6 +1,5 @@
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Utils/Constants.h"
-#include "../Utils/BasePitchCurve.h"
 #include "Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -411,7 +410,8 @@ std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) 
         return {};
 
     const int rangeSize = endFrame - startFrame;
-    std::vector<float> midiValues(static_cast<size_t>(rangeSize), 0.0f);
+    std::vector<float> adjustedF0(static_cast<size_t>(rangeSize), 0.0f);
+
     for (int i = 0; i < rangeSize; ++i)
     {
         const int globalIdx = startFrame + i;
@@ -419,24 +419,9 @@ std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) 
         const float delta = (globalIdx < static_cast<int>(audioData.deltaPitch.size()))
                                 ? audioData.deltaPitch[static_cast<size_t>(globalIdx)]
                                 : 0.0f;
-        midiValues[static_cast<size_t>(i)] = base + delta + globalPitchOffset;
+        float midi = base + delta + globalPitchOffset;
+        adjustedF0[static_cast<size_t>(i)] = midiToFreq(midi);
     }
-
-    // D-213: la transicion de cada frontera de nota debe ocupar el intervalo
-    // real sin escalon. Rampa lineal <= 0,78 c/ms alrededor de cada frontera;
-    // el criterio pide <= 1 c/ms en +-20 ms. No se fuerza recorrido.
-    {
-        std::vector<int> boundaries;
-        const auto &notes = getNotes();
-        for (size_t n = 1; n < notes.size(); ++n)
-            boundaries.push_back(notes[n].getStartFrame() - startFrame);
-        BasePitchCurve::limitBoundarySlope(midiValues, boundaries);
-    }
-
-    std::vector<float> adjustedF0(static_cast<size_t>(rangeSize), 0.0f);
-    for (int i = 0; i < rangeSize; ++i)
-        adjustedF0[static_cast<size_t>(i)] =
-            midiToFreq(midiValues[static_cast<size_t>(i)]);
 
     return adjustedF0;
 }

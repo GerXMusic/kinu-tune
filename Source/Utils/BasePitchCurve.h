@@ -55,12 +55,6 @@ public:
                                                     float newBaseMidi,
                                                     int numFrames);
 
-    // D-213: impone una rampa lineal de pendiente <= 9 c por frame (0,78 c/ms)
-    // alrededor de cada frontera de nota, conservando los valores extremos.
-    // No fuerza recorrido. `boundaries` son indices dentro de `midiValues`.
-    static void limitBoundarySlope(std::vector<float>& midiValues,
-                                   const std::vector<int>& boundaries);
-
 private:
     static constexpr int KERNEL_SIZE = 81;  // ~80ms total window at 1000Hz sampling
     static constexpr double SMOOTH_WINDOW = 0.08;  // 80ms total window for faster transitions

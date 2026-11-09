@@ -9,7 +9,6 @@
 // con los datos actuales debe FALLAR.
 
 #include "TestAssert.h"
-#include "../Source/Utils/BasePitchCurve.h"
 
 #include <algorithm>
 #include <cmath>
@@ -77,19 +76,11 @@ struct Metrics {
 
 Metrics measure(const Boundary &b) {
   const int c = 12;
-  // Curva procesada por la capa de curva real (D-213), no por el .rpp.
-  std::vector<float> midi(b.hz.size());
-  for (size_t i = 0; i < b.hz.size(); ++i)
-    midi[i] = static_cast<float>(69.0 + 12.0 * std::log2(b.hz[i] / 440.0));
-  BasePitchCurve::limitBoundarySlope(midi, {c});
-  std::vector<double> hz(midi.size());
-  for (size_t i = 0; i < midi.size(); ++i)
-    hz[i] = 440.0 * std::pow(2.0, (midi[i] - 69.0) / 12.0);
   std::vector<double> before, after;
   for (int k = c - 6; k < c; ++k)
-    before.push_back(cents(hz[static_cast<size_t>(k)]));
+    before.push_back(cents(b.hz[static_cast<size_t>(k)]));
   for (int k = c; k < c + 6; ++k)
-    after.push_back(cents(hz[static_cast<size_t>(k)]));
+    after.push_back(cents(b.hz[static_cast<size_t>(k)]));
   CHECK(!before.empty() && !after.empty());
   Metrics m{};
   m.before = median(before);
@@ -98,14 +89,14 @@ Metrics measure(const Boundary &b) {
   const double lo = std::min(m.before, m.after);
   m.residual = 0.0;
   for (int k = c - 4; k <= c + 4; ++k) {
-    const double v = cents(hz[static_cast<size_t>(k)]);
+    const double v = cents(b.hz[static_cast<size_t>(k)]);
     m.residual = std::max({m.residual, v - hi - 30.0, lo - 30.0 - v});
   }
   // (3) pendiente maxima dentro de +-20 ms: +-2 frames a 11,609 ms.
   m.maxSlope = 0.0;
   for (int k = c - 2; k < c + 2; ++k) {
-    const double d =
-        cents(hz[static_cast<size_t>(k + 1)]) - cents(hz[static_cast<size_t>(k)]);
+    const double d = cents(b.hz[static_cast<size_t>(k + 1)]) -
+                     cents(b.hz[static_cast<size_t>(k)]);
     m.maxSlope = std::max(m.maxSlope, std::abs(d) / kHopMs);
   }
   return m;
