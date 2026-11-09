@@ -18,6 +18,7 @@ set(PITCHNET_TEST_SOURCES
     AraSelectionPolicyTests.cpp
     AraViewFocusTests.cpp
     AraEnginePolicyTests.cpp
+    AraRestoreAnalysisRaceTests.cpp
     CursorFollowPolicyTests.cpp
     MelSpectrogramTests.cpp
     SingleWindowPolicyTests.cpp
