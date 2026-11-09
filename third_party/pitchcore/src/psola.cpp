@@ -302,6 +302,52 @@ inline bool vozEn (const RenderRequest& req, long posOriginal)
 
 } // namespace
 
+// D-202: media movil por sumas prefijas. La ventana es [i-k, i+k] inclusive,
+// la misma que la version O(n*k). Con la entrada que usa el motor (peso 0/1,
+// que es lo unico que se suaviza en psola.cpp) las sumas son enteras en
+// double y el resultado es BIT A BIT identico al bucle anterior.
+std::vector<float> movingAverageTwoPass (const std::vector<float>& in, int halfWindow)
+{
+    const int n = (int) in.size();
+    const int k = std::max (0, halfWindow);
+    std::vector<float> cur (in);
+    std::vector<float> dst ((size_t) n, 0.f);
+    std::vector<double> pre ((size_t) n + 1, 0.0);
+    for (int pas = 0; pas < 2; ++pas)
+    {
+        // Las sumas prefijas se recalculan en cada pasada: la segunda ya no
+        // recibe 0/1 sino las medias de la primera.
+        for (int i = 0; i < n; ++i)
+            pre[(size_t) i + 1] = pre[(size_t) i] + (double) cur[(size_t) i];
+        for (int i = 0; i < n; ++i)
+        {
+            const int lo = std::max (0, i - k);
+            const int hi = std::min (n - 1, i + k);
+            const double acc = pre[(size_t) hi + 1] - pre[(size_t) lo];
+            dst[(size_t) i] = (float) (acc / (double) (hi - lo + 1));
+        }
+        cur.swap (dst);
+    }
+    return cur;
+}
+
+bool hybridRegionUsesForkGrain (const RenderRequest& req, long firstMarkAbs, long lastMarkAbs)
+{
+    if (req.curveHop <= 0.0 || lastMarkAbs < firstMarkAbs) return false;
+    const double umbral = std::pow (2.0, kFormantHybridShiftCents / 1200.0) - 1.0;
+    // Las marcas ya son ABSOLUTAS (detectPitchMarks); sumarles sourceStartSample
+    // otra vez desplazaba la ventana en el plugin (sourceStartSample != 0).
+    const long f0 = (long) ((double) firstMarkAbs / req.curveHop);
+    const long f1 = (long) ((double) lastMarkAbs / req.curveHop);
+    double maxShift = 0.0;
+    for (long f = f0; f <= f1; ++f)
+    {
+        const double r = sampleCurve (req.pitchRatio, (double) f, req.totalFrames);
+        maxShift = std::max (maxShift, std::fabs (r - 1.0));
+    }
+    return maxShift >= umbral;
+}
+
 std::vector<int> ClassicEngine::detectPitchMarks (const RenderRequest& req)
 {
     std::vector<int> marks;
@@ -610,6 +656,14 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
         const long TaUlt = (m1 > m0) ? (marcas[m1] - marcas[m1 - 1]) : 1;
         const double fin = (double) (marcas[m1] - src0) + (double) TaUlt;
 
+        // D-202: UNA tecnica por tramo con voz. Se decide aqui, una vez, con
+        // el shift maximo de todo el tramo; nunca se mezclan granos de las dos
+        // dentro de la misma region. Con preserveFormants activo (solo nucleo,
+        // el plugin manda false desde D-169) se mantiene la ruta LPC de D-165.
+        const bool usoTramoFork = ! preservar
+                                  && hybridRegionUsesForkGrain (req, (long) marcas[m0],
+                                                                (long) marcas[m1]);
+
         size_t ia = m0;
         double ts = (double) (marcas[m0] - src0);       // posicion de salida
         int guard = 0;
@@ -664,7 +718,27 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
             // fraccional (sin jitter de periodo).
             const double esc = Ts / (double) Ta;
             const long alcance = (long) std::ceil (Ts);
-            if (alcance >= 2 && esc > 1e-6)
+            if (usoTramoFork)
+            {
+                // D-202: grano del Clasico del fork. Dos periodos de ANALISIS,
+                // contenido copiado sin remuestrear (un pulso por grano); la
+                // envolvente se queda donde estaba por construccion.
+                const long gh = std::max (2L, (long) std::llround (Ta));
+                const long baseG = (long) req.originalStartSample;
+                const long lastG = (long) fuenteGranos->size() - 1;
+                for (long o = -gh; o < gh; ++o)
+                {
+                    const long j = centre + o;
+                    if (j < 0 || j >= nOut) continue;
+                    const long srci = (ma + o) - baseG;
+                    if (srci < 0 || srci > lastG) continue;
+                    const double phase = ((double) (o + gh) + 0.5) / (double) (2 * gh);
+                    const double w = 0.5 - 0.5 * std::cos (2.0 * kPi * phase);
+                    syn[(size_t) j] += w * (double) (*fuenteGranos)[(size_t) srci];
+                    wsum[(size_t) j] += w;
+                }
+            }
+            else if (alcance >= 2 && esc > 1e-6)
             {
                 for (long j = centre - alcance; j <= centre + alcance; ++j)
                 {
@@ -773,20 +847,9 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
         // (t=22,973 s) y un salto de -0,038 a +0,085 en la salida, que es el
         // clic que el porton contaba (el 84 % de los clics grandes estaban en
         // los bordes de cada tramo con voz).
-        std::vector<float> cur (in);
-        for (int pas = 0; pas < 2; ++pas)
-        {
-            std::vector<float> dst (cur.size(), 0.f);
-            for (int i = 0; i < nOut; ++i)
-            {
-                double acc = 0; int cnt = 0;
-                for (int j = std::max (0, i - kSuav); j <= std::min (nOut - 1, i + kSuav); ++j)
-                { acc += cur[(size_t) j]; ++cnt; }
-                dst[(size_t) i] = (float) (acc / cnt);
-            }
-            cur.swap (dst);
-        }
-        return cur;
+        // D-202: sumas prefijas O(n) en vez de O(n*k) (k ~120). Bit a bit
+        // identico al bucle anterior para el peso 0/1 que se suaviza aqui.
+        return movingAverageTwoPass (in, kSuav);
     };
     std::vector<float> peso ((size_t) nOut, 0.f);
     for (int i = 0; i < nOut; ++i) peso[(size_t) i] = periodico[(size_t) i] ? 1.f : 0.f;

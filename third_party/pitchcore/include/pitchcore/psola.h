@@ -25,6 +25,23 @@ namespace pitchcore {
 //     arranca con la fase equivocada y se oye un escalon.
 // ---------------------------------------------------------------------------
 
+// D-202: umbral del hibrido de formantes. El grano actual (remuestreado)
+// mueve la envolvente ~0,96x el shift (D-164/D-194), asi que cruza el limite
+// C7 (100 c) en ~105 c. Por debajo se queda el grano de siempre; por encima,
+// el grano del Clasico del fork (copia sin remuestrear, conserva la
+// envolvente de forma intrinseca). La decision es por TRAMO con voz: una
+// region usa una sola tecnica y el cambio solo cae en su frontera.
+constexpr double kFormantHybridShiftCents = 105.0;
+
+// Media movil de dos pasadas por sumas prefijas (O(n) en vez de O(n*k)).
+// Se expone para el test de equivalencia bit a bit con la version O(n*k).
+std::vector<float> movingAverageTwoPass (const std::vector<float>& in, int halfWindow);
+
+// Decide si el tramo con voz [firstMarkAbs, lastMarkAbs] (muestras ABSOLUTAS
+// del original, como las que devuelve detectPitchMarks) usa el grano del fork.
+// true si el |shift| maximo del tramo llega al umbral.
+bool hybridRegionUsesForkGrain (const RenderRequest& req, long firstMarkAbs, long lastMarkAbs);
+
 class ClassicEngine : public IEngine
 {
 public:
