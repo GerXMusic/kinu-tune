@@ -14,6 +14,7 @@
 #include "../Utils/NotePitch.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/Constants.h"
+#include "../Utils/ScaleUtils.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
 #include "../Utils/OnnxRuntime.h"
@@ -1891,6 +1892,35 @@ void MainComponent::pollMcpControl()
               "sin silencio >=20 ms / -55 dBFS antes de la nota");
         }
         noteObject->setProperty("selected", note.isSelected());
+        noteArray.add(juce::var(noteObject));
+      }
+      response->setProperty("notes", juce::var(noteArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "list_note_modulators")
+    {
+      // D-208: read-only raw modulator state per note, same order and index
+      // as list_notes. No jlimit / no percentage conversion: the UI formula
+      // (1 - v) * 100 is deliberately not applied here.
+      juce::Array<juce::var> noteArray;
+      const auto &notes = project->getNotes();
+      response->setProperty("sample_rate", project->getAudioData().sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      {
+        const auto &note = notes[static_cast<size_t>(i)];
+        auto noteObject = new juce::DynamicObject();
+        noteObject->setProperty("index", i);
+        const auto share = ScaleUtils::correctionShare(
+            *project, note.getLastNonMacroMidiNote(), note.getMidiNote(),
+            static_cast<int>(FREQ_A4));
+        if (share)
+          noteObject->setProperty("correctionShare",
+                                  static_cast<double>(*share));
+        else
+          noteObject->setProperty("correctionShare", juce::var());
+        noteObject->setProperty("vibrato", note.getVibrato());
+        noteObject->setProperty("pitchDrift", note.getPitchDrift());
         noteArray.add(juce::var(noteObject));
       }
       response->setProperty("notes", juce::var(noteArray));
