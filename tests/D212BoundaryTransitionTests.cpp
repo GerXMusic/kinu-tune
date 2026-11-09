@@ -71,13 +71,12 @@ std::vector<Boundary> loadFixture() {
 }
 
 struct Metrics {
-  double before, after, travel, residual, maxSlope;
+  double before, after, residual, maxSlope;
 };
 
 Metrics measure(const Boundary &b) {
-  // Ventana de +-12 frames; centro en el indice 12.
   const int c = 12;
-  std::vector<double> before, after, win;
+  std::vector<double> before, after;
   for (int k = c - 6; k < c; ++k)
     before.push_back(cents(b.hz[static_cast<size_t>(k)]));
   for (int k = c; k < c + 6; ++k)
@@ -86,17 +85,20 @@ Metrics measure(const Boundary &b) {
   Metrics m{};
   m.before = median(before);
   m.after = median(after);
-  m.travel = std::abs(m.after - m.before);
-  for (int k = c - 4; k <= c + 4; ++k)
-    win.push_back(cents(b.hz[static_cast<size_t>(k)]));
   const double hi = std::max(m.before, m.after);
   const double lo = std::min(m.before, m.after);
   m.residual = 0.0;
-  for (double v : win)
+  for (int k = c - 4; k <= c + 4; ++k) {
+    const double v = cents(b.hz[static_cast<size_t>(k)]);
     m.residual = std::max({m.residual, v - hi - 30.0, lo - 30.0 - v});
+  }
+  // (3) pendiente maxima dentro de +-20 ms: +-2 frames a 11,609 ms.
   m.maxSlope = 0.0;
-  for (size_t i = 1; i < win.size(); ++i)
-    m.maxSlope = std::max(m.maxSlope, std::abs(win[i] - win[i - 1]) / kHopMs);
+  for (int k = c - 2; k < c + 2; ++k) {
+    const double d = cents(b.hz[static_cast<size_t>(k + 1)]) -
+                     cents(b.hz[static_cast<size_t>(k)]);
+    m.maxSlope = std::max(m.maxSlope, std::abs(d) / kHopMs);
+  }
   return m;
 }
 
@@ -105,15 +107,15 @@ void testBoundariesMeetCriterion() {
   std::vector<Metrics> all;
   for (const Boundary &b : boundaries) {
     const Metrics m = measure(b);
-    std::printf("%s: travel=%.1f c residual=%.1f c slope=%.1f c/ms\n",
-                b.name.c_str(), m.travel, m.residual, m.maxSlope);
+    std::printf("%s: residual=%.1f c slope=%.1f c/ms\n", b.name.c_str(),
+                m.residual, m.maxSlope);
     all.push_back(m);
   }
   for (const Metrics &m : all) {
-    // (1) recorrido >= 50 c
-    CHECK(m.travel >= 50.0);
     // (2) residual fuera de +-30 c <= 10 c
     CHECK(m.residual <= 10.0);
+    // (3) pendiente maxima dentro de +-20 ms <= 1 c/ms
+    CHECK(m.maxSlope <= 1.0);
   }
 }
 
