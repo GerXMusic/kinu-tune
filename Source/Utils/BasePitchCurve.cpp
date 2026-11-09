@@ -150,11 +150,49 @@ BasePitchCurve::generateSmoothed(const std::vector<NoteSegment> &notes,
   return result;
 }
 
+void BasePitchCurve::limitBoundarySlope(std::vector<float> &midiValues,
+                                        const std::vector<int> &boundaries) {
+  constexpr float kMaxCentsPerFrame = 9.0f; // 0,78 c/ms < 1 c/ms
+  const int size = static_cast<int>(midiValues.size());
+  for (int boundary : boundaries) {
+    if (boundary < 1 || boundary >= size - 1)
+      continue;
+    int span = 1;
+    while (span < 60 && boundary - span - 1 >= 0 &&
+           boundary + span + 1 < size) {
+      const float left = midiValues[static_cast<size_t>(boundary - span)];
+      const float right = midiValues[static_cast<size_t>(boundary + span)];
+      const float ramp = std::abs(right - left) * 100.0f /
+                         static_cast<float>(2 * span);
+      const float outerLeft =
+          std::abs(left - midiValues[static_cast<size_t>(boundary - span - 1)]) *
+          100.0f;
+      const float outerRight =
+          std::abs(midiValues[static_cast<size_t>(boundary + span + 1)] - right) *
+          100.0f;
+      if (ramp <= kMaxCentsPerFrame && outerLeft <= kMaxCentsPerFrame &&
+          outerRight <= kMaxCentsPerFrame)
+        break;
+      ++span;
+    }
+    const int leftIdx = boundary - span;
+    const int rightIdx = boundary + span;
+    if (leftIdx < 0 || rightIdx >= size)
+      continue;
+    const float left = midiValues[static_cast<size_t>(leftIdx)];
+    const float right = midiValues[static_cast<size_t>(rightIdx)];
+    for (int k = 1; k < 2 * span; ++k) {
+      const float t = static_cast<float>(k) / static_cast<float>(2 * span);
+      midiValues[static_cast<size_t>(leftIdx + k)] =
+          left + (right - left) * t;
+    }
+  }
+}
+
 std::vector<float>
 BasePitchCurve::calculateDeltaPitch(const std::vector<float> &f0Values,
                                     const std::vector<float> &basePitch,
-                                    int startFrame) {
-  std::vector<float> deltaPitch(f0Values.size(), 0.0f);
+                                    int startFrame) {  std::vector<float> deltaPitch(f0Values.size(), 0.0f);
 
   for (size_t i = 0; i < f0Values.size(); ++i) {
     int globalFrame = startFrame + static_cast<int>(i);
