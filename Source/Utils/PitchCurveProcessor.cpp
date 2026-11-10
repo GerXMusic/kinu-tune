@@ -170,6 +170,85 @@ namespace
         return boundaries;
     }
 
+    // D-205: the base is smoothed (80 ms cosine) but the delta is composed note
+    // by note, so two adjacent notes whose stored deltas do not meet leave a
+    // step in the composed f0. Replace that step with the same cosine ramp
+    // centred on the join. Only joins with an audible delta step are touched
+    // (D-182 uses the same 60-cent criterion), so a continuous analysis delta
+    // stays bit-identical and the D-182 glide is not modified.
+    constexpr double kDeltaJoinWindowSec = 0.080;
+    constexpr float kDeltaJoinMinStepCents = 60.0f;
+
+    void applyDeltaJoinContinuity(Project& project, int totalFrames,
+                                  int rangeStart = 0, int rangeEnd = -1)
+    {
+        auto& audioData = project.getAudioData();
+        if (totalFrames <= 0 ||
+            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
+            return;
+
+        std::vector<const Note*> ordered;
+        ordered.reserve(project.getNotes().size());
+        for (const auto& note : project.getNotes())
+            if (!note.isRest())
+                ordered.push_back(&note);
+        std::sort(ordered.begin(), ordered.end(),
+                  [](const Note* a, const Note* b) {
+                      if (a->getStartFrame() != b->getStartFrame())
+                          return a->getStartFrame() < b->getStartFrame();
+                      return a->getEndFrame() < b->getEndFrame();
+                  });
+
+        struct Join {
+            int boundary;
+            float step;
+        };
+        std::vector<Join> joins;
+        for (size_t i = 1; i < ordered.size(); ++i)
+        {
+            if (ordered[i]->getStartFrame() != ordered[i - 1]->getEndFrame())
+                continue; // a gap is an onset, not a legato join (D-053)
+            const int boundary = ordered[i]->getStartFrame();
+            if (boundary <= 0 || boundary >= totalFrames)
+                continue;
+            if (rangeEnd >= 0 && (boundary < rangeStart || boundary >= rangeEnd))
+                continue;
+            const float step =
+                audioData.deltaPitch[static_cast<size_t>(boundary)] -
+                audioData.deltaPitch[static_cast<size_t>(boundary - 1)];
+            if (std::abs(step) * 100.0f < kDeltaJoinMinStepCents)
+                continue;
+            joins.push_back({boundary, step});
+        }
+        if (joins.empty())
+            return;
+
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const int halfFrames = std::max(
+            1, static_cast<int>(std::lround(0.5 * kDeltaJoinWindowSec / hopSec)));
+
+        for (const auto& join : joins)
+        {
+            const int first = std::max(0, join.boundary - halfFrames);
+            const int last = std::min(totalFrames - 1, join.boundary + halfFrames);
+            const double span = static_cast<double>(2 * halfFrames);
+            for (int frame = first; frame <= last; ++frame)
+            {
+                const double t = std::clamp(
+                    static_cast<double>(frame - (join.boundary - halfFrames)) / span,
+                    0.0, 1.0);
+                const double w = 0.5 * (1.0 - std::cos(M_PI * t));
+                auto& value = audioData.deltaPitch[static_cast<size_t>(frame)];
+                if (frame < join.boundary)
+                    value += static_cast<float>(join.step * w);
+                else
+                    value -= static_cast<float>(join.step * (1.0 - w));
+            }
+        }
+    }
+
     // D-189: rangeStart/rangeEnd limit which boundaries are re-smoothed. The
     // partial rebuild paths pass their padded window so a preview never
     // re-smooths the whole project, which made the drag path-dependent.
@@ -440,6 +519,11 @@ namespace PitchCurveProcessor
             note.setOriginalDeltaPitch(std::move(origDelta));
         }
 
+        // D-205 is not applied here: this is the detection/initial-load path
+        // and the unedited analysis curve stays bit-identical. The join
+        // smoother runs when an edit rebuilds the target (rebuildBaseFromNotes
+        // and the preview paths).
+
         // Cache base F0 (Hz) for backwards compatibility
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = 0; i < totalFrames; ++i)
@@ -546,6 +630,9 @@ namespace PitchCurveProcessor
                     audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
             }
         }
+
+        // D-205: make the composed delta continuous at contiguous joins.
+        applyDeltaJoinContinuity(project, totalFrames);
 
         // D-182: smooth the edited note boundaries before caching F0.
         applyEditedBoundaryGlide(project, totalFrames);
@@ -666,6 +753,9 @@ namespace PitchCurveProcessor
             }
         }
 
+        // D-205: same join continuity inside the rebuilt window.
+        applyDeltaJoinContinuity(project, totalFrames, minFrame, maxFrame);
+
         // D-182: smooth the edited note boundaries before caching F0. D-189:
         // limited to this padded window so the next drag step is exact.
         applyEditedBoundaryGlide(project, totalFrames, minFrame, maxFrame);
@@ -785,6 +875,10 @@ namespace PitchCurveProcessor
                     audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
             }
         }
+
+        // D-205: same join continuity inside the rebuilt window.
+        applyDeltaJoinContinuity(project, totalFrames, minAffectedFrame,
+                                 maxAffectedFrame);
 
         // D-182: an edited boundary can smooth the delta a little past the
         // affected notes, so recompose with padding. D-189 limits the glide to
