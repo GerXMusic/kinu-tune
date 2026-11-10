@@ -3225,50 +3225,6 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
   return std::nullopt;
 }
 
-std::optional<float>
-PianoRollComponent::getSelectedIntervalCents() const
-{
-  const auto targets = getInspectorTargets();
-  if (targets.empty())
-    return std::nullopt;
-  return targets.front()->getIntervalCents();
-}
-
-void PianoRollComponent::setSelectedIntervalCents(
-    const std::optional<float> &cents)
-{
-  if (project == nullptr)
-    return;
-  const auto targets = getInspectorTargets();
-  if (targets.empty())
-    return;
-
-  int minFrame = std::numeric_limits<int>::max();
-  int maxFrame = std::numeric_limits<int>::min();
-  for (auto *note : targets)
-  {
-    if (cents.has_value())
-      note->setIntervalCents(*cents);
-    else
-      note->clearIntervalCents();
-    note->markDirty();
-    note->markSynthDirty();
-    minFrame = std::min(minFrame, note->getStartFrame());
-    maxFrame = std::max(maxFrame, note->getEndFrame());
-  }
-
-  // D-206: the whole curve is rebuilt because a note's plateau depends on its
-  // left neighbour's corrected base, not only on its own parameters.
-  PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  project->markNoteEditDirtyRange(minFrame, maxFrame);
-  invalidateBasePitchCache();
-  if (onPitchEdited)
-    onPitchEdited();
-  if (onPitchEditFinished)
-    onPitchEditFinished();
-  repaint();
-}
-
 void PianoRollComponent::beginInspectorEdit(InspectorParam param)
 {
   if (inspectorEditActive)

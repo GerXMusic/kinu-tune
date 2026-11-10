@@ -323,8 +323,6 @@
   "inspector.pitch_drift": "Pitch Drift",
   "inspector.shift_formant": "Shift Formant",
   "inspector.volume": "Volume",
-  "inspector.interval": "Interval (st)",
-  "inspector.clear": "Clear",
   "inspector.target_none": "No segments",
   "inspector.target_selected": "Target: {n} selected segment(s)",
   "inspector.target_all": "Target: all segments ({n})"

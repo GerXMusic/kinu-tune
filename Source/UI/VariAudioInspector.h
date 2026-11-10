@@ -64,11 +64,6 @@ public:
     std::function<void(float)> onParamEditValue;
     std::function<void()> onParamEditEnd;
 
-    // D-206: optional interval of the selected note, in cents. Empty means the
-    // note follows the previous behaviour (no interval constraint).
-    std::function<std::optional<float>()> getIntervalCents;
-    std::function<void(std::optional<float>)> onIntervalCentsChanged;
-
     // Per-note engine (M2 paso 2, D-125). The value shown is the one the
     // selection will render with; a change that the silence rule refuses is
     // reported back by the owner, and this poll puts the menu where the audio
@@ -116,7 +111,6 @@ private:
     void refreshEditorScale(Project* project);
     void applyScaleRoot(int root);
     void applyScaleMode(ScaleMode mode);
-    void commitIntervalEditor();
     void paintContent(juce::Graphics& g);
     void layoutContent(int width);
     int getContentHeight() const;
@@ -139,10 +133,6 @@ private:
     juce::ComboBox engineBox;
     juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
-    // D-206: per-note interval entry, in semitones with two decimals.
-    juce::Label intervalLabel;
-    juce::TextEditor intervalEditor;
-    juce::TextButton intervalClearButton;
     std::array<std::unique_ptr<ValueRow>, 5> rows;
     bool editingRow = false;
     bool absoluteSelected = true; // Absolute unless the user picks Relative

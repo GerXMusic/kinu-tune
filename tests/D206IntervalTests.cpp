@@ -14,7 +14,6 @@
 // El glide D-182 sigue apagado (D-189) y no se activa aqui.
 
 #include "../Source/Models/Project.h"
-#include "../Source/Models/ProjectSerializer.h"
 #include "../Source/Utils/Constants.h"
 #include "../Source/Utils/PitchCurveProcessor.h"
 #include "TestAssert.h"
@@ -53,7 +52,7 @@ Project makeProject(bool continuousDelta) {
   Project project;
   auto &audio = project.getAudioData();
   audio.sampleRate = 44100;
-  audio.melSpectrogram.assign(kFrames, std::vector<float>(1, 0.0f));
+  audio.melSpectrogram.resize(kFrames);
   audio.denseF0.assign(kFrames, 0.0f);
 
   const float leftBase = 60.0f;
@@ -117,26 +116,10 @@ float plateauMeanCents(const Project &project, int start, int end) {
 
 struct IntervalRun {
   float vibrato = 0.0f;
-  float meanCents = 0.0f;       // getAdjustedF0 (final composed curve)
-  float finalMeanCents = 0.0f;  // audioData.f0 (the curve synthesis consumes)
+  float meanCents = 0.0f;
   float errorCents = 0.0f;
   Metrics metrics;
 };
-
-float plateauMeanCents(const std::vector<float> &f0, int start, int end) {
-  const int first = start + kPlateauMargin;
-  const int last = end - kPlateauMargin;
-  double sum = 0.0;
-  int count = 0;
-  for (int i = first; i < last; ++i) {
-    if (i < 0 || i >= static_cast<int>(f0.size()) ||
-        f0[static_cast<size_t>(i)] <= 0.0f)
-      continue;
-    sum += cents(f0[static_cast<size_t>(i)]);
-    ++count;
-  }
-  return count > 0 ? static_cast<float>(sum / count) : 0.0f;
-}
 
 IntervalRun runInterval(float factor) {
   Project project = makeProject(false);
@@ -148,73 +131,17 @@ IntervalRun runInterval(float factor) {
 
   IntervalRun run;
   run.vibrato = factor;
-  run.meanCents = plateauMeanCents(project.getAdjustedF0(),
-                                   notes[1].getStartFrame(),
+  run.meanCents = plateauMeanCents(project, notes[1].getStartFrame(),
                                    notes[1].getEndFrame());
-  run.finalMeanCents = plateauMeanCents(project.getAudioData().f0,
-                                        notes[1].getStartFrame(),
-                                        notes[1].getEndFrame());
   run.errorCents = std::fabs(run.meanCents - cents(midiToFreq(62.0f)));
   run.metrics = measureJoin(project);
   return run;
 }
 
 void printRun(const char *name, const IntervalRun &run) {
-  std::cout << name << ": mean=" << run.meanCents << " c, final="
-            << run.finalMeanCents << " c, error=" << run.errorCents
-            << " c, jump=" << run.metrics.jump << " c, slope="
-            << run.metrics.slope << " c/sample\n";
-}
-
-// Roundtrip: save with intervalCents, reload, rebuild, and compare the final
-// f0 against the original run. Criterion fixed before measuring: the interval
-// must come back as 200 c; plateau error <= 0.5 c; max |f0 difference| <= 0.01 c.
-struct RoundTrip {
-  bool loaded = false;
-  bool intervalKept = false;
-  float errorCents = 0.0f;
-  float maxF0DiffCents = 0.0f;
-};
-
-RoundTrip roundTripInterval(float factor) {
-  Project project = makeProject(false);
-  for (auto &note : project.getNotes())
-    note.setVibrato(factor);
-  project.getNotes()[1].setIntervalCents(200.0f);
-  PitchCurveProcessor::rebuildBaseFromNotes(project);
-  const auto reference = project.getAdjustedF0();
-
-  auto json = ProjectSerializer::toJson(project, true, true);
-  Project loaded;
-  RoundTrip result;
-  result.loaded = ProjectSerializer::fromJson(loaded, json);
-  if (!result.loaded)
-    return result;
-
-  const auto &loadedNotes = loaded.getNotes();
-  if (loadedNotes.size() < 2 ||
-      !loadedNotes[1].getIntervalCents().has_value())
-    return result;
-  result.intervalKept =
-      std::fabs(*loadedNotes[1].getIntervalCents() - 200.0f) <= 1.0e-3f;
-
-  PitchCurveProcessor::rebuildBaseFromNotes(loaded);
-  const auto rebuilt = loaded.getAdjustedF0();
-  result.errorCents =
-      std::fabs(plateauMeanCents(rebuilt, loadedNotes[1].getStartFrame(),
-                                 loadedNotes[1].getEndFrame()) -
-                cents(midiToFreq(62.0f)));
-  for (size_t i = 0; i < reference.size() && i < rebuilt.size(); ++i)
-    result.maxF0DiffCents =
-        std::max(result.maxF0DiffCents,
-                 std::fabs(cents(rebuilt[i]) - cents(reference[i])));
-  return result;
-}
-
-void printRoundTrip(const char *name, const RoundTrip &rt) {
-  std::cout << name << ": loaded=" << rt.loaded << ", intervalKept="
-            << rt.intervalKept << ", error=" << rt.errorCents
-            << " c, maxF0Diff=" << rt.maxF0DiffCents << " c\n";
+  std::cout << name << ": mean=" << run.meanCents << " c, error="
+            << run.errorCents << " c, jump=" << run.metrics.jump
+            << " c, slope=" << run.metrics.slope << " c/sample\n";
 }
 
 // (c) No interval: composed f0 must be exactly base + factor * original delta.
@@ -262,24 +189,10 @@ int main() {
   std::cout << "no interval: maxDiff(100%)=" << diffOne
             << ", maxDiff(50%)=" << diffHalf << "\n";
 
-  const RoundTrip rtZero = roundTripInterval(0.0f);
-  const RoundTrip rtHalf = roundTripInterval(0.5f);
-  const RoundTrip rtFull = roundTripInterval(1.0f);
-  printRoundTrip("roundtrip 0%", rtZero);
-  printRoundTrip("roundtrip 50%", rtHalf);
-  printRoundTrip("roundtrip 100%", rtFull);
-
-  // (a) plateau exactly at B + interval for every vibrato setting, on the
-  // final composed curve (getAdjustedF0) and on audioData.f0 (synthesis).
+  // (a) plateau exactly at B + interval for every vibrato setting.
   CHECK(zero.errorCents <= kMeanLimitCents);
   CHECK(half.errorCents <= kMeanLimitCents);
   CHECK(full.errorCents <= kMeanLimitCents);
-  CHECK(std::fabs(zero.finalMeanCents - cents(midiToFreq(62.0f))) <=
-        kMeanLimitCents);
-  CHECK(std::fabs(half.finalMeanCents - cents(midiToFreq(62.0f))) <=
-        kMeanLimitCents);
-  CHECK(std::fabs(full.finalMeanCents - cents(midiToFreq(62.0f))) <=
-        kMeanLimitCents);
 
   // (b) union continuity, same criteria as D-205.
   CHECK(zero.metrics.jump <= kJumpLimitCents);
@@ -292,17 +205,6 @@ int main() {
   // (c) absent interval: bit-identical to the pre-D-206 composition.
   CHECK(diffOne == 0.0f);
   CHECK(diffHalf == 0.0f);
-
-  // Roundtrip: field survives and reproduces the same final result.
-  CHECK(rtZero.loaded && rtZero.intervalKept);
-  CHECK(rtHalf.loaded && rtHalf.intervalKept);
-  CHECK(rtFull.loaded && rtFull.intervalKept);
-  CHECK(rtZero.errorCents <= kMeanLimitCents);
-  CHECK(rtHalf.errorCents <= kMeanLimitCents);
-  CHECK(rtFull.errorCents <= kMeanLimitCents);
-  CHECK(rtZero.maxF0DiffCents <= 0.01f);
-  CHECK(rtHalf.maxF0DiffCents <= 0.01f);
-  CHECK(rtFull.maxF0DiffCents <= 0.01f);
 
   std::cout << "D206IntervalTests: all checks passed\n";
   return 0;

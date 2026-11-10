@@ -8,7 +8,6 @@
 #include "../Utils/UI/Theme.h"
 #include "Components/AppFont.h"
 #include <array>
-#include <cmath>
 
 namespace
 {
@@ -21,7 +20,6 @@ constexpr int kHeaderHeight = 20;
 constexpr int kMenuRowHeight = 26;
 constexpr int kToggleHeight = 24;
 constexpr int kTargetLabelHeight = 18;
-constexpr int kIntervalRowHeight = 24;
 constexpr int kEngineStatusHeight = 32;
 constexpr int kValueRowHeight = 34;
 constexpr int kNumRows = 5;
@@ -29,8 +27,7 @@ constexpr int kNumRows = 5;
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 3 + kRowGap +
-    kEngineStatusHeight + kRowGap + kTargetLabelHeight + kRowGap +
-    kIntervalRowHeight + kRowGap + kRowsBoxHeight;
+    kEngineStatusHeight + kRowGap + kTargetLabelHeight + kRowsBoxHeight;
 constexpr int kRootMenuWidth = 50;
 constexpr int kMenuGap = 4;
 constexpr int kScrollBarThickness = 8;
@@ -285,38 +282,6 @@ VariAudioInspector::VariAudioInspector()
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     content.addAndMakeVisible(targetLabel);
 
-    // D-206: interval entry. Cents are stored; the field shows semitones with
-    // two decimals, and "Quitar" clears the optional constraint.
-    intervalLabel.setFont(AppFont::getFont(13.0f));
-    intervalLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-    content.addAndMakeVisible(intervalLabel);
-
-    intervalEditor.setFont(AppFont::getFont(13.0f));
-    intervalEditor.setJustification(juce::Justification::centredRight);
-    intervalEditor.setInputRestrictions(12, "0123456789+-.");
-    intervalEditor.setSelectAllWhenFocused(true);
-    intervalEditor.setColour(juce::TextEditor::backgroundColourId,
-                             juce::Colour(0xFF101112u));
-    intervalEditor.setColour(juce::TextEditor::textColourId,
-                             APP_COLOR_TEXT_PRIMARY);
-    intervalEditor.setColour(juce::TextEditor::outlineColourId, kRowsBoxBorder);
-    intervalEditor.setColour(juce::TextEditor::focusedOutlineColourId,
-                             APP_COLOR_TEXT_PRIMARY);
-    intervalEditor.onReturnKey = [this] { commitIntervalEditor(); };
-    intervalEditor.onFocusLost = [this] { commitIntervalEditor(); };
-    content.addAndMakeVisible(intervalEditor);
-
-    intervalClearButton.onClick = [this]
-    {
-        // Clear the field first so a focus-lost commit cannot restore the
-        // value the button is about to remove.
-        intervalEditor.setText({}, juce::dontSendNotification);
-        if (onIntervalCentsChanged)
-            onIntervalCentsChanged(std::nullopt);
-        refreshFromProject();
-    };
-    content.addAndMakeVisible(intervalClearButton);
-
     rows[0] = std::make_unique<ValueRow>(Param::CorrectPitch, 0.0, 100.0, 0.0, 1.0);
     rows[1] = std::make_unique<ValueRow>(Param::FlattenCurve, 0.0, 100.0, 0.0, 1.0);
     rows[2] = std::make_unique<ValueRow>(Param::PitchDrift, 0.0, 100.0, 0.0, 1.0);
@@ -461,8 +426,6 @@ void VariAudioInspector::refreshLocalisedText()
     shownModeId = scaleModeBox.getSelectedId();
 
     snapScaleToggle.setButtonText(TR("inspector.snap_scale"));
-    intervalLabel.setText(TR("inspector.interval"), juce::dontSendNotification);
-    intervalClearButton.setButtonText(TR("inspector.clear"));
     rows[0]->caption = TR("inspector.correct_pitch");
     rows[1]->caption = TR("inspector.flatten_curve");
     rows[2]->caption = TR("inspector.pitch_drift");
@@ -545,18 +508,6 @@ void VariAudioInspector::refreshFromProject()
                             ? TR("inspector.target_selected").replace("{n}", juce::String(count))
                             : TR("inspector.target_all").replace("{n}", juce::String(count)),
                         juce::dontSendNotification);
-
-    const bool canEditInterval = count > 0;
-    intervalLabel.setEnabled(canEditInterval);
-    intervalEditor.setEnabled(canEditInterval);
-    intervalClearButton.setEnabled(canEditInterval);
-    if (!intervalEditor.hasKeyboardFocus(true))
-    {
-        const auto cents = getIntervalCents ? getIntervalCents() : std::nullopt;
-        intervalEditor.setText(cents ? juce::String(*cents / 100.0f, 2)
-                                     : juce::String(),
-                               juce::dontSendNotification);
-    }
 
     if (editingRow)
         return; // never fight the user's drag
@@ -642,28 +593,6 @@ void VariAudioInspector::applyScaleMode(ScaleMode mode)
     refreshFromProject();
 }
 
-void VariAudioInspector::commitIntervalEditor()
-{
-    if (!onIntervalCentsChanged)
-        return;
-    const auto text = intervalEditor.getText().trim();
-    if (text.isEmpty())
-    {
-        refreshFromProject();
-        return;
-    }
-    const double semitones = text.getDoubleValue();
-    if (!std::isfinite(semitones))
-    {
-        refreshFromProject();
-        return;
-    }
-    onIntervalCentsChanged(static_cast<float>(semitones * 100.0));
-    intervalEditor.setText(juce::String(semitones, 2),
-                           juce::dontSendNotification);
-    refreshFromProject();
-}
-
 void VariAudioInspector::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xFF121212u));
@@ -733,14 +662,6 @@ void VariAudioInspector::layoutContent(int width)
     engineStatusLabel.setBounds(card.removeFromTop(kEngineStatusHeight));
     card.removeFromTop(kRowGap);
     targetLabel.setBounds(card.removeFromTop(kTargetLabelHeight));
-
-    card.removeFromTop(kRowGap);
-    auto intervalRow = card.removeFromTop(kIntervalRowHeight);
-    intervalClearButton.setBounds(intervalRow.removeFromRight(58).reduced(0, 1));
-    intervalRow.removeFromRight(4);
-    intervalLabel.setBounds(intervalRow.removeFromLeft(92));
-    intervalEditor.setBounds(intervalRow.reduced(0, 1));
-    card.removeFromTop(kRowGap);
 
     rowsBoxBounds = card.removeFromTop(kRowsBoxHeight);
     auto rowArea = rowsBoxBounds.reduced(0, 2);
