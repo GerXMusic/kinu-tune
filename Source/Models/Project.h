@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Utils/BoundaryTransition.h"
 #include "Note.h"
 #include <optional>
 #include <vector>
@@ -210,6 +211,10 @@ public:
     void deselectAllNotes();
     void clearAllDirty();
 
+    // D-207: per-frontier transition controls, keyed by the two note sources.
+    BoundaryTransitionStore &getBoundaryTransitions() { return boundaryTransitions; }
+    const BoundaryTransitionStore &getBoundaryTransitions() const { return boundaryTransitions; }
+
     // Global settings
     float getGlobalPitchOffset() const { return globalPitchOffset; }
     void setGlobalPitchOffset(float offset) { globalPitchOffset = offset; }
@@ -365,6 +370,9 @@ private:
 
     AudioData audioData;
     std::vector<Note> notes;
+
+    // D-207: keyed by the note sources; empty means no boundary edits.
+    BoundaryTransitionStore boundaryTransitions;
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
