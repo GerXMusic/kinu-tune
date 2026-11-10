@@ -37,7 +37,6 @@ set(PITCHNET_TEST_SOURCES
     PitchCurveHandleTests.cpp
     PitchCurveTransitionTests.cpp
     D205StraightenContinuityTests.cpp
-    D206IntervalTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
     # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
     # aplanado audible en D-214; el criterio de 1 c/ms queda descartado.

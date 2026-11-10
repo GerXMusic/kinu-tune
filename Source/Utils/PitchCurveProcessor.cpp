@@ -31,58 +31,6 @@ namespace
         return note.getActiveDeltaPitch();
     }
 
-    // D-206: the base a note contributes to the smoothed step curve. It is the
-    // corrected MIDI (not the analysed one), with the tilt split around the
-    // centre exactly as collectNoteSegments() does.
-    float correctedBaseMidi(const Note& note)
-    {
-        return note.getMidiNote() + note.getPitchOffset()
-             - (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
-    }
-
-    const Note* findPreviousNote(const std::vector<Note>& allNotes,
-                                 const Note& targetNote)
-    {
-        const Note* prevNote = nullptr;
-        int prevNoteEndFrame = -1;
-        for (const auto& candidate : allNotes) {
-            if (&candidate == &targetNote || candidate.isRest())
-                continue;
-            const int candidateEnd = candidate.getEndFrame();
-            if (candidateEnd <= targetNote.getStartFrame() &&
-                candidateEnd > prevNoteEndFrame) {
-                prevNote = &candidate;
-                prevNoteEndFrame = candidateEnd;
-            }
-        }
-        return prevNote;
-    }
-
-    // D-206: an explicit interval wins over the vibrato/simplify handle. After
-    // the contour is transformed, add the constant that puts the note's mean
-    // at baseLeft + interval. The plateau is exactly that value; the handle
-    // only shapes the contour around it. Absent interval or no left neighbour
-    // leaves the curve untouched (pre-D-206 behaviour).
-    void applyIntervalOffset(const std::vector<Note>& allNotes,
-                             const Note& note,
-                             std::vector<float>& delta)
-    {
-        const auto& intervalCents = note.getIntervalCents();
-        if (!intervalCents.has_value() || delta.empty())
-            return;
-
-        const Note* leftNote = findPreviousNote(allNotes, note);
-        if (leftNote == nullptr)
-            return;
-
-        const float mean = PitchToolOperations::computeMean(delta);
-        const float targetMidi =
-            correctedBaseMidi(*leftNote) + *intervalCents / 100.0f;
-        const float offset = targetMidi - (correctedBaseMidi(note) + mean);
-        for (auto& value : delta)
-            value += offset;
-    }
-
     PitchToolOperations::AdjacentNoteContext buildAdjacentContext(
         const std::vector<Note>& allNotes, const Note& targetNote)
     {
@@ -674,10 +622,7 @@ namespace PitchCurveProcessor
                 for (auto& v : transformedDelta)
                     v = v * dScale + dOffset;
             }
-
-            // D-206: interval constraint after every contour transformation.
-            applyIntervalOffset(allNotes, note, transformedDelta);
-
+            
             for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
             {
                 const int globalIdx = startFrame + i;
@@ -799,9 +744,6 @@ namespace PitchCurveProcessor
                 for (auto& v : transformedDelta)
                     v = v * dScale + dOffset;
             }
-
-            // D-206: interval constraint after every contour transformation.
-            applyIntervalOffset(allNotes, *note, transformedDelta);
 
             for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
             {
@@ -925,9 +867,6 @@ namespace PitchCurveProcessor
                 for (auto& v : transformedDelta)
                     v = v * dScale + dOffset;
             }
-
-            // D-206: interval constraint after every contour transformation.
-            applyIntervalOffset(allNotes, *note, transformedDelta);
 
             for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
             {

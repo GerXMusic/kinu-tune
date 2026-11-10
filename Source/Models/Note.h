@@ -222,15 +222,7 @@ public:
     int getSmoothRightFrames() const { return smoothRightFrames; }
     void setSmoothRightFrames(int frames) { smoothRightFrames = frames; }
 
-    // D-206: optional interval in cents relative to the corrected base of the
-    // previous (left) note. When present, the note's plateau is pinned to
-    // baseLeft + intervalCents regardless of the vibrato/simplify handle,
-    // which only modulates the contour around that plateau. Absent means the
-    // previous behaviour (no interval constraint).
-    const std::optional<float>& getIntervalCents() const { return intervalCents; }
-    void setIntervalCents(float cents) { intervalCents = cents; }
-    void clearIntervalCents() { intervalCents.reset(); }
-
+    // Delta scale/offset (post-transformation, from delta control handles)
     float getDeltaScale() const { return deltaScale; }
     void setDeltaScale(float scale) { deltaScale = scale; }
     float getDeltaOffset() const { return deltaOffset; }
@@ -339,9 +331,6 @@ private:
     // Post-transformation scale/offset from delta control handles
     float deltaScale = 1.0f;        // Applied after all other transformations (1.0=unchanged)
     float deltaOffset = 0.0f;       // Added after scale (0.0=unchanged)
-    // D-206: optional interval (cents) relative to the left note's corrected
-    // base. Empty keeps the pre-D-206 behaviour for every existing project.
-    std::optional<float> intervalCents;
 
     std::vector<float> f0Values;
     bool renderedEdit = false; // Audio for this note is present in the composite
