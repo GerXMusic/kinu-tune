@@ -1,6 +1,5 @@
 #include "PitchCurveProcessor.h"
 #include "BasePitchCurve.h"
-#include "BoundaryTransition.h"
 #include "CurveResampler.h"
 #include "PitchToolOperations.h"
 #include "../Utils/Constants.h"
@@ -246,191 +245,6 @@ namespace
                     value += static_cast<float>(join.step * w);
                 else
                     value -= static_cast<float>(join.step * (1.0 - w));
-            }
-        }
-    }
-
-    // D-207: per-frontier transition between two contiguous notes. widthMs is
-    // the window at each side of the join; amountPercent -100 replaces it with
-    // a cubic Bezier, +100 with a cosine easing, 0 is a no-op (D-205 result is
-    // bit-identical). The window and the curve are evaluated in samples; only
-    // the resulting values are stored on the existing frame grid.
-    void applyBoundaryTransitions(Project& project, int totalFrames,
-                                  int rangeStart = 0, int rangeEnd = -1)
-    {
-        auto& audioData = project.getAudioData();
-        const auto& store = project.getBoundaryTransitions();
-        if (store.empty() || totalFrames <= 0)
-            return;
-        if (static_cast<int>(audioData.basePitch.size()) < totalFrames ||
-            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
-            return;
-
-        std::vector<const Note*> ordered;
-        ordered.reserve(project.getNotes().size());
-        for (const auto& note : project.getNotes())
-            if (!note.isRest())
-                ordered.push_back(&note);
-        std::sort(ordered.begin(), ordered.end(),
-                  [](const Note* a, const Note* b) {
-                      if (a->getStartFrame() != b->getStartFrame())
-                          return a->getStartFrame() < b->getStartFrame();
-                      return a->getEndFrame() < b->getEndFrame();
-                  });
-
-        const double hopSize = static_cast<double>(HOP_SIZE);
-        const double sampleRate =
-            static_cast<double>(std::max(1, audioData.sampleRate));
-
-        auto sampleLinear = [&](const std::vector<float>& values,
-                                double framePosition) {
-            const double clamped = std::clamp(
-                framePosition, 0.0, static_cast<double>(totalFrames - 1));
-            const int i0 = static_cast<int>(std::floor(clamped));
-            const int i1 = std::min(i0 + 1, totalFrames - 1);
-            const double f = clamped - i0;
-            return static_cast<double>(values[static_cast<size_t>(i0)]) * (1.0 - f)
-                 + static_cast<double>(values[static_cast<size_t>(i1)]) * f;
-        };
-
-        for (size_t i = 1; i < ordered.size(); ++i)
-        {
-            if (ordered[i]->getStartFrame() != ordered[i - 1]->getEndFrame())
-                continue; // a gap is an onset (D-053)
-            const int boundary = ordered[i]->getStartFrame();
-            if (boundary <= 0 || boundary >= totalFrames)
-                continue;
-            if (rangeEnd >= 0 && (boundary < rangeStart || boundary >= rangeEnd))
-                continue;
-
-            BoundaryTransition transition;
-            if (!store.get(ordered[i - 1]->getSrcStartFrame(),
-                           ordered[i]->getSrcStartFrame(), transition))
-                continue;
-            if (transition.widthMs <= 0.0f ||
-                transition.amountPercent == 0.0f)
-                continue;
-
-            const int leftFrames = ordered[i - 1]->getDurationFrames();
-            const int rightFrames = ordered[i]->getDurationFrames();
-            if (leftFrames <= 0 || rightFrames <= 0)
-                continue;
-
-            // W per side, clamped to half of the shortest note.
-            const double capSamples =
-                0.5 * std::min(leftFrames, rightFrames) * hopSize;
-            const double windowSamples = std::min(
-                static_cast<double>(std::llround(
-                    transition.widthMs * sampleRate / 1000.0)),
-                capSamples);
-            if (windowSamples < 1.0)
-                continue;
-
-            const double s0 =
-                std::max(0.0, boundary * hopSize - windowSamples);
-            const double s1 = std::min(
-                static_cast<double>((totalFrames - 1)) * hopSize,
-                boundary * hopSize + windowSamples);
-            const double span = s1 - s0;
-            if (span < 1.0)
-                continue;
-
-            const int sFirst = static_cast<int>(std::ceil(s0));
-            const int sLast = static_cast<int>(std::floor(s1));
-            if (sLast < sFirst)
-                continue;
-
-            auto composedAt = [&](double sample) {
-                const double framePosition = sample / hopSize;
-                return sampleLinear(audioData.basePitch, framePosition) +
-                       sampleLinear(audioData.deltaPitch, framePosition);
-            };
-            auto baseAt = [&](double sample) {
-                return sampleLinear(audioData.basePitch, sample / hopSize);
-            };
-
-            // P0/P3 are the real curve at the window edges, so the seam is
-            // continuous by construction. Tangents come from the base, as the
-            // criterion asks; the neighbour plateau is the value P3 reaches
-            // when the window covers the base ramp.
-            const double y0 = composedAt(s0);
-            const double y3 = composedAt(s1);
-            const double m0 = baseAt(s0 + 1.0) - baseAt(s0);
-            const double m3 = baseAt(s1) - baseAt(s1 - 1.0);
-            // Asymmetric cubic: a long handle at the start (slow departure)
-            // and a short one at the end (fast arrival). Both control points
-            // stay on the tangents fixed by the criterion, so the slopes at
-            // P0 and P3 are m0 and m3. x(t) is not linear, so each sample
-            // inverts it by bisection.
-            const double x0 = s0;
-            const double x3 = s1;
-            const double x1 = s0 + 0.35 * span;
-            const double x2 = s1 - 0.25 * span;
-            const double y1 = y0 + m0 * 0.35 * span;
-            const double y2 = y3 - m3 * 0.25 * span;
-            auto bezierX = [&](double t) {
-                const double u = 1.0 - t;
-                return u * u * u * x0 + 3.0 * u * u * t * x1 +
-                       3.0 * u * t * t * x2 + t * t * t * x3;
-            };
-            auto bezierY = [&](double t) {
-                const double u = 1.0 - t;
-                return u * u * u * y0 + 3.0 * u * u * t * y1 +
-                       3.0 * u * t * t * y2 + t * t * t * y3;
-            };
-            auto bezierAtSample = [&](double sample) {
-                double lo = 0.0;
-                double hi = 1.0;
-                for (int iteration = 0; iteration < 40; ++iteration)
-                {
-                    const double mid = 0.5 * (lo + hi);
-                    if (bezierX(mid) < sample)
-                        lo = mid;
-                    else
-                        hi = mid;
-                }
-                return bezierY(0.5 * (lo + hi));
-            };
-
-            const float amount = transition.amountPercent;
-            const double weight = std::abs(amount) / 100.0;
-
-            // Sample-resolution evaluation. The frame grid is the only stored
-            // resolution, so each frame takes the value at its sample centre.
-            std::vector<float> values(
-                static_cast<size_t>(sLast - sFirst + 1));
-            for (int sample = sFirst; sample <= sLast; ++sample)
-            {
-                const double t = std::clamp(
-                    (static_cast<double>(sample) - s0) / span, 0.0, 1.0);
-                const double original = composedAt(sample);
-                double shaped;
-                if (amount < 0.0f)
-                {
-                    shaped = bezierAtSample(static_cast<double>(sample));
-                }
-                else
-                {
-                    shaped = y0 + (y3 - y0) * 0.5 *
-                                       (1.0 - std::cos(M_PI * t));
-                }
-                values[static_cast<size_t>(sample - sFirst)] =
-                    static_cast<float>(original +
-                                       weight * (shaped - original));
-            }
-
-            const int fFirst = static_cast<int>(std::ceil(s0 / hopSize));
-            const int fLast = static_cast<int>(std::floor(s1 / hopSize));
-            for (int frame = fFirst; frame <= fLast; ++frame)
-            {
-                const int sample =
-                    static_cast<int>(std::llround(frame * hopSize));
-                if (sample < sFirst || sample > sLast)
-                    continue;
-                const float value =
-                    values[static_cast<size_t>(sample - sFirst)];
-                audioData.deltaPitch[static_cast<size_t>(frame)] =
-                    value - audioData.basePitch[static_cast<size_t>(frame)];
             }
         }
     }
@@ -819,8 +633,6 @@ namespace PitchCurveProcessor
 
         // D-205: make the composed delta continuous at contiguous joins.
         applyDeltaJoinContinuity(project, totalFrames);
-        // D-207: per-frontier Bezier / cosine transition (no-op if unset).
-        applyBoundaryTransitions(project, totalFrames);
 
         // D-182: smooth the edited note boundaries before caching F0.
         applyEditedBoundaryGlide(project, totalFrames);
@@ -942,10 +754,7 @@ namespace PitchCurveProcessor
         }
 
         // D-205: same join continuity inside the rebuilt window.
-        applyDeltaJoinContinuity(project, totalFrames);
-
-        // D-207: same boundary window inside the rebuilt range.
-        applyBoundaryTransitions(project, totalFrames, minFrame, maxFrame);
+        applyDeltaJoinContinuity(project, totalFrames, minFrame, maxFrame);
 
         // D-182: smooth the edited note boundaries before caching F0. D-189:
         // limited to this padded window so the next drag step is exact.
@@ -1069,10 +878,6 @@ namespace PitchCurveProcessor
 
         // D-205: same join continuity inside the rebuilt window.
         applyDeltaJoinContinuity(project, totalFrames, minAffectedFrame,
-                                 maxAffectedFrame);
-
-        // D-207: same boundary window inside the rebuilt range.
-        applyBoundaryTransitions(project, totalFrames, minAffectedFrame,
                                  maxAffectedFrame);
 
         // D-182: an edited boundary can smooth the delta a little past the
