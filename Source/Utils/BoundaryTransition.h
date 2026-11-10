@@ -57,6 +57,7 @@ public:
     void clear() { values.clear(); }
     bool empty() const { return values.empty(); }
     size_t size() const { return values.size(); }
+    const std::map<Key, BoundaryTransition> &all() const { return values; }
 
 private:
     std::map<Key, BoundaryTransition> values;
