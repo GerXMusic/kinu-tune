@@ -224,24 +224,9 @@ juce::var ProjectSerializer::toJson(const Project& project,
     loopObj->setProperty("end", loopRange.endSeconds);
     obj->setProperty("loop", juce::var(loopObj));
 
-    // D-208: per-frontier transitions. Optional: absent for documents written
-    // before the field existed (and when no frontier is edited).
-    if (!project.getBoundaryTransitions().empty()) {
-        juce::Array<juce::var> transitions;
-        for (const auto &[key, transition] :
-             project.getBoundaryTransitions().all()) {
-            auto *entry = new juce::DynamicObject();
-            entry->setProperty("left", key.first);
-            entry->setProperty("right", key.second);
-            entry->setProperty("widthMs", transition.widthMs);
-            entry->setProperty("amountPercent", transition.amountPercent);
-            transitions.add(juce::var(entry));
-        }
-        obj->setProperty("boundaryTransitions", transitions);
-    }
-
     // Notes array
-    juce::Array<juce::var> notesArray;    for (const auto& note : project.getNotes()) {
+    juce::Array<juce::var> notesArray;
+    for (const auto& note : project.getNotes()) {
         notesArray.add(noteToJson(note, includeAnalysisCache,
                                   includePitchData));
     }
@@ -435,23 +420,6 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         const double loopEnd = loopVar.getProperty("end", 0.0);
         project.setLoopRange(loopStart, loopEnd);
         project.setLoopEnabled(loopVar.getProperty("enabled", false));
-    }
-
-    // D-208: per-frontier transitions (optional; absent = none).
-    project.getBoundaryTransitions().clear();
-    if (auto *transitions =
-            json.getProperty("boundaryTransitions", juce::var()).getArray()) {
-        for (const auto &entry : *transitions) {
-            const int left = static_cast<int>(entry.getProperty("left", -1));
-            const int right = static_cast<int>(entry.getProperty("right", -1));
-            const float widthMs =
-                static_cast<float>(entry.getProperty("widthMs", 0.0));
-            const float amountPercent =
-                static_cast<float>(entry.getProperty("amountPercent", 0.0));
-            if (left >= 0 && right >= 0)
-                project.getBoundaryTransitions().set(left, right, widthMs,
-                                                     amountPercent);
-        }
     }
 
     // Notes
