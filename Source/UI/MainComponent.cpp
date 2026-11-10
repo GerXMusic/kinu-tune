@@ -777,6 +777,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
   variAudioInspector.onParamEditValue = [this](float value)
   { pianoRoll.setInspectorEditValue(value); };
   variAudioInspector.onParamEditEnd = [this] { pianoRoll.endInspectorEdit(); };
+  variAudioInspector.getIntervalCents = [this]
+  { return pianoRoll.getSelectedIntervalCents(); };
+  variAudioInspector.onIntervalCentsChanged = [this](std::optional<float> cents)
+  { pianoRoll.setSelectedIntervalCents(cents); };
   variAudioInspector.getNoteEngine = [this]
   { return getSelectionNoteEngine(); };
   variAudioInspector.getEngineStatus =

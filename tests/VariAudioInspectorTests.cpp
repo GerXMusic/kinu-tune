@@ -371,10 +371,20 @@ int main()
         CHECK(rootBox->getText().isEmpty());
 
         // Taller than the default editor: the column scrolls instead of
-        // cutting the harmony buttons off.
+        // cutting the harmony buttons off. The interval TextEditor has its
+        // own internal viewport, so select the outer column viewport by the
+        // tall content it shows.
         const auto viewports = findChildren<juce::Viewport>(inspector);
-        CHECK(viewports.size() == 1);
-        CHECK(viewports.front()->getViewedComponent()->getHeight() > inspector.getHeight());
+        juce::Viewport* columnViewport = nullptr;
+        for (auto* viewport : viewports)
+            if (viewport->getViewedComponent() != nullptr &&
+                viewport->getViewedComponent()->getHeight() > inspector.getHeight())
+            {
+                columnViewport = viewport;
+                break;
+            }
+        CHECK(columnViewport != nullptr);
+        CHECK(columnViewport->getViewedComponent()->getHeight() > inspector.getHeight());
     }
 
     // --- Correct Pitch survives harmony, arrow keys and snapped drags ----

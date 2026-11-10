@@ -94,6 +94,13 @@ public:
   void endInspectorEdit();
   bool isInspectorEditActive() const { return inspectorEditActive; }
 
+  // D-206: optional interval (cents) of the selected/first target note,
+  // relative to the left neighbour's corrected base. Passing nullopt removes
+  // it. Rebuilds the full base/delta curve because every note may depend on
+  // the previous one.
+  std::optional<float> getSelectedIntervalCents() const;
+  void setSelectedIntervalCents(const std::optional<float> &cents);
+
   // VariAudio "Show All Smart Controls" (false = default set only).
   void setShowAllSmartControls(bool showAll);
   bool getShowAllSmartControls() const { return showAllSmartControls; }

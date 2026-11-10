@@ -321,6 +321,8 @@
   "inspector.pitch_drift": "ピッチドリフト",
   "inspector.shift_formant": "フォルマントをシフト",
   "inspector.volume": "ボリューム",
+  "inspector.interval": "インターバル (st)",
+  "inspector.clear": "解除",
   "inspector.target_none": "セグメントがありません",
   "inspector.target_selected": "対象: 選択中の {n} セグメント",
   "inspector.target_all": "対象: すべてのセグメント ({n})"
