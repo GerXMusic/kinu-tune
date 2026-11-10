@@ -870,6 +870,10 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("tiltRight", note.getTiltRight());
     obj->setProperty("vibrato", note.getVibrato());
     obj->setProperty("pitchDrift", note.getPitchDrift());
+    // D-206: optional interval. Omitted when absent, so a project written
+    // before the field existed round-trips to the same JSON.
+    if (note.getIntervalCents().has_value())
+        obj->setProperty("intervalCents", *note.getIntervalCents());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
 
@@ -946,6 +950,12 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
     note.setVibrato(static_cast<float>(json.getProperty("vibrato", 1.0)));
     note.setPitchDrift(static_cast<float>(json.getProperty("pitchDrift", 1.0)));
+    // D-206: absent in every project written before the field existed.
+    const juce::var intervalVar = json.getProperty("intervalCents", juce::var());
+    if (intervalVar.isVoid())
+        note.clearIntervalCents();
+    else
+        note.setIntervalCents(static_cast<float>(intervalVar));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
 
