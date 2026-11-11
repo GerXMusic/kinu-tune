@@ -4070,11 +4070,11 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   if (!hasDirtyBlocks || flushChainActive)
     return false;
 
-  // Fallback documented: ARA transport requests are queued and the host may
-  // run them late or ignore them (ARAInterface.h:2155-2195). If it keeps
-  // playing, what is heard is the audio processed so far.
+  // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
   // P1b: con bloques sucios se retiene el transporte (stop -> flush -> start),
   // tambien en plugin; mudear la salida evita oir el audio anterior.
+  flushResumePosition = lastHostPlaybackSeconds;
+  DBG_P1B("resume pos=" + juce::String(flushResumePosition));
   if (onRequestHostPlayState)
     onRequestHostPlayState(false);
 
@@ -4422,6 +4422,8 @@ void MainComponent::finishBackendRender(bool success)
     if (playAfterFlush)
     {
       playAfterFlush = false;
+      if (onRequestHostSeek)
+        onRequestHostSeek(flushResumePosition);
       play();
     }
   }
@@ -5026,6 +5028,8 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
 {
   if (!isPluginMode())
     return;
+
+  lastHostPlaybackSeconds = timeSeconds;
 
   // The host reports transport position on ITS timeline; everything below is
   // in project time. Convert here, at the boundary. Do not clamp before the

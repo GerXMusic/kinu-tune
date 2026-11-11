@@ -346,6 +346,8 @@ private:
   bool deferredRenderPending = false;
   bool flushChainActive = false;
   bool playAfterFlush = false;
+  double lastHostPlaybackSeconds = 0.0;
+  double flushResumePosition = 0.0;
   // P1b fase 4: el guardado espera al flush y se reanuda cuando este termina.
   bool resumeSaveAfterFlush = false;
   bool saveAsAfterFlush = false;
