@@ -237,7 +237,6 @@ namespace
       project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
       // Same range the edit and its undo mark (Project::markNoteEditDirtyRange).
-      
       project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
     }
 
@@ -1876,7 +1875,6 @@ void PianoRollComponent::finishTrackGesture()
       }
       if (last < first) continue;
       PitchCurveProcessor::rebuildBaseFromNotes(*target.project);
-      
       target.project->markNoteEditDirtyRange(first, last);
       target.project->setModified(true);
       if (target.project == safe->project) {
@@ -3294,7 +3292,6 @@ void PianoRollComponent::setInspectorEditValue(float value)
   if (inspectorEditParam != InspectorParam::Volume)
   {
     PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
-    
     project->markNoteEditDirtyRange(minFrame, maxFrame);
     invalidateBasePitchCache();
     if (onPitchEdited)
@@ -3367,7 +3364,6 @@ void PianoRollComponent::endInspectorEdit()
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  
   project->markNoteEditDirtyRange(minFrame, maxFrame);
   invalidateBasePitchCache();
 
@@ -3710,7 +3706,6 @@ bool PianoRollComponent::shiftNotesBySemitones(
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
     invalidateBasePitchCache();
 
-    
     project->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
 
     if (onPitchEdited)
@@ -3735,7 +3730,6 @@ bool PianoRollComponent::shiftNotesBySemitones(
           for (auto *note : notes)
             if (note)
               note->markSynthDirty();
-          
           projectPtr->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
         },
         oldSources, newSources);
@@ -4899,7 +4893,6 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note)
 
   // Always set F0 dirty range for synthesis (needed for undo/redo to trigger
   // resynthesis)
-  
   project->markNoteEditDirtyRange(startFrame, endFrame);
 
   // Trigger repaint

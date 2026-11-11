@@ -1689,7 +1689,6 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                                             : araAnalysisTimelineOffsetSeconds);
                   view->bindRealtimeProcessor(realtimeProcessor);
                 }
-                
                 view->finishBackendRender(success);
                 view->setStatusMessage({});
               } else if (success && !renderActiveAraRegion &&

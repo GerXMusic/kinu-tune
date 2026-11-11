@@ -30,7 +30,6 @@ void rebuildProjectForNotes(Project *project,
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
 
-  
   project->markNoteEditDirtyRange(minFrame, maxFrame);
 }
 }
@@ -141,7 +140,6 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       // Start single note dragging
       isDragging = true;
       dragStartedByMouseDown = true;
-      
       draggedNote = note;
       owner_.updatePitchToolHandlesFromSelection();
       dragStartY = worldY;
@@ -504,7 +502,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
           dirtyStart = std::min(dirtyStart, note->getStartFrame());
           dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
         }
-        
         project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
       }
 
@@ -593,7 +590,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
           dirtyStart = std::min(dirtyStart, note->getStartFrame());
           dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
         }
-        
         project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
       }
 
@@ -652,16 +648,13 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   // Single note drag end
   if (isDragging && draggedNote)
   {
-    
     if (!dragStartedByMouseDown)
     {
       // P1b: arrastre que no nacio de un mouse-down en esta secuencia. Se
       // limpia sin marcar sucio.
-      
       isDragging = false;
       draggedNote = nullptr;
       dragStartedByMouseDown = false;
-      
       return true;
     }
     float newOffset = draggedNote->getPitchOffset();
@@ -691,7 +684,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       owner_.invalidateBasePitchCache();
 
       // Mark dirty range for synthesis
-      
       project->markNoteEditDirtyRange(startFrame, endFrame);
 
       // Create undo action
@@ -725,7 +717,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
               {
                 PitchCurveProcessor::rebuildBaseFromNotes(
                     *projectPtr);
-                
                 projectPtr->markNoteEditDirtyRange(capturedStart,
                                                    capturedEnd);
                 if (n)
@@ -887,7 +878,6 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                   std::max(maxFrame, note->getEndFrame());
             }
           }
-          
           project->markNoteEditDirtyRange(minFrame, maxFrame);
 
           owner_.updatePitchToolHandlesFromSelection();

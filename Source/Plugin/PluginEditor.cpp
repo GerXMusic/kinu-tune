@@ -1791,7 +1791,6 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
           if (!view)
             return;
 
-          
           // P1b: los playState que provocan nuestro propio stop/start durante
           // el flush no deben reabrir la cadena.
           if (view->isFlushChainActive())

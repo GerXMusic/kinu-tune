@@ -378,7 +378,6 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         last = std::max(last, center.note->getEndFrame());
       }
       if (last < first) continue;
-      
       state.target.project->markNoteEditDirtyRange(first, last);
       if (state.target.project == safeThis->pianoRoll.getProject()) {
         if (safeThis->pianoRoll.onPitchEdited) safeThis->pianoRoll.onPitchEdited();
@@ -409,7 +408,6 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       project->setModified(true);
       if (last >= first) {
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        
         project->markNoteEditDirtyRange(first, last);
       }
       if (project == safeThis->pianoRoll.getProject()) activeChanged = true;

@@ -192,7 +192,6 @@ void PitchEditor::endNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    
     project->markNoteEditDirtyRange(startFrame, endFrame);
 
     // Create undo action
@@ -222,7 +221,6 @@ void PitchEditor::endNoteDrag()
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              
               projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
               if (n)
                 n->markSynthDirty();
@@ -402,7 +400,6 @@ void PitchEditor::endMultiNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    
     project->markNoteEditDirtyRange(expandedStart, expandedEnd);
 
     // Create undo action for multi-note drag
@@ -445,7 +442,6 @@ void PitchEditor::endMultiNoteDrag()
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              
               projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
             }
           },

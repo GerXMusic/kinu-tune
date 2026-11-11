@@ -188,12 +188,10 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
-    
 }
 
 int Project::markEditedNotesDirty()
 {
-    
     editedBlockRanges.clear();
     editedBlockCursor = -1;
 
@@ -315,7 +313,6 @@ bool Project::hasDirtyNotes() const
 
 void Project::setF0DirtyRange(int startFrame, int endFrame)
 {
-    
     if (f0DirtyStart < 0 || startFrame < f0DirtyStart)
         f0DirtyStart = startFrame;
     if (f0DirtyEnd < 0 || endFrame > f0DirtyEnd)
@@ -326,7 +323,6 @@ void Project::markNoteEditDirtyRange(int startFrame, int endFrame)
 {
     if (startFrame > endFrame)
         return;
-    
 
     // Covers the base-pitch glide into neighbouring notes (the 80 ms
     // smoothing window reaches ~4 frames past a note) and the splice fades

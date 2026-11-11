@@ -2103,7 +2103,6 @@ void MainComponent::pollMcpControl()
         else
         {
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
-          
           project->markNoteEditDirtyRange(minFrame, maxFrame);
           project->setModified(true);
           pianoRoll.repaint();
@@ -4006,7 +4005,6 @@ void MainComponent::markRenderDirty()
     return;
 
   const auto range = project->getDirtyFrameRange();
-  
   if (range.first >= 0 && range.second > range.first)
     deferredRenders.markBlock(range.first, range.second);
 
@@ -4048,7 +4046,6 @@ void MainComponent::flushDirtyBlocks()
 bool MainComponent::flushDirtyBlocksForHostPlay()
 {
   auto *project = getProject();
-  
   if (project == nullptr || editorController == nullptr)
     return false;
 
@@ -4063,7 +4060,6 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
   // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
   flushResumePosition = lastHostPlaybackSeconds;
-  
   // P1b: un arrastre pendiente no debe sobrevivir al stop del flush.
   pianoRoll.dropTransientNotePointers();
   if (onRequestHostPlayState)
@@ -4071,7 +4067,6 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
 
   deferredRenderPending = true;
   playAfterFlush = true;
-  
   flushDirtyBlocks();
   if (!flushChainActive)
   {
@@ -4079,7 +4074,6 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
     if (onRequestHostPlayState)
       onRequestHostPlayState(true);
   }
-  
   return true;
 }
 
@@ -4240,7 +4234,6 @@ void MainComponent::onZoomChanged(float pixelsPerSecond)
 
 void MainComponent::notifyProjectDataChanged()
 {
-  
   if (onProjectDataChanged)
     onProjectDataChanged();
 }
@@ -4396,7 +4389,6 @@ void MainComponent::finishBackendRender(bool success)
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
                            : ParameterPanel::RenderStatus::Failed);
 
-  
   // P1b: el flush de Play acabo; se limpian los bloques renderizados (misma
   // operacion que la ruta standalone), se baja la cadena y se arranca.
   if (success && flushChainActive)

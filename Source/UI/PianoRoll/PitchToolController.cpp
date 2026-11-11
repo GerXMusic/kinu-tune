@@ -60,7 +60,6 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
     affectedNotes.push_back(handle.note);
   if (affectedNotes.empty())
     return false;
-  
   // Capture original transformation parameters (not curves)
   originalParams.clear();
   originalParams.reserve(affectedNotes.size());
@@ -69,12 +68,10 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
     if (note)
     {
       auto params = TransformParams::fromNote(*note);
-      
       // Store baseline midiNote (without tilt mean shift)
       // This ensures tilt adjustments are absolute, not cumulative
       const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
       params.midiNote = note->getMidiNote() - currentTiltMean;
-      
       originalParams.push_back(params);
     }
     else
@@ -236,7 +233,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag UP = positive semitoneDelta = left edge goes UP
         const float amount = semitoneDelta;
         note->setTiltLeft(origParams.tiltLeft + amount);
-        
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + newTiltMean;
@@ -246,7 +242,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       {
         const float amount = semitoneDelta;
         note->setTiltRight(origParams.tiltRight + amount);
-        
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + newTiltMean;
@@ -269,7 +264,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         const float dragDelta = -dragDeltaY / 100.0f;
         const float newScale = origParams.vibrato + dragDelta;
         note->setVibrato(newScale);
-        
         // Preserve tilt offset when adjusting vibrato.
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + currentTiltMean;
@@ -309,7 +303,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // 5px per additional frame, range [5, 50]
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(dragDeltaX / 5.0f));
         note->setSmoothLeftFrames(transitionFrames);
-        
         // Preserve tilt offset when adjusting smoothing
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + currentTiltMean;
@@ -321,7 +314,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Use -dragDeltaX so LEFT drag increases frames
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(-dragDeltaX / 5.0f));
         note->setSmoothRightFrames(transitionFrames);
-        
         // Preserve tilt offset when adjusting smoothing
         const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + currentTiltMean;
@@ -350,7 +342,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
   // NON-DESTRUCTIVE: Recompose only the affected notes' delta + f0
   // This is much faster than rebuildBaseFromNotes() which rebuilds everything
   PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
-  
   // Mark dirty range for synthesis
   if (!notes.empty())
   {
@@ -361,7 +352,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       minFrame = std::min(minFrame, note->getStartFrame());
       maxFrame = std::max(maxFrame, note->getEndFrame());
     }
-    
     project->markNoteEditDirtyRange(minFrame, maxFrame);
   }
 
@@ -382,7 +372,6 @@ void PitchToolController::cancel()
     {
       const auto& params = originalParams[i];
       params.applyToNote(*affectedNotes[i]);
-      
       // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
       const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;
       NotePitch::restore(*affectedNotes[i], params.midiNote + tiltMean,
