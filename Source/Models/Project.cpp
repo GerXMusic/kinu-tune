@@ -206,6 +206,9 @@ void Project::clearAllDirty()
 
 int Project::markEditedNotesDirty()
 {
+    DBG_P1B("markEditedNotesDirty this=" +
+            juce::String::toHexString((juce::int64)(juce::pointer_sized_int)this) +
+            " notes=" + juce::String((int)notes.size()));
     editedBlockRanges.clear();
     editedBlockCursor = -1;
 
@@ -327,6 +330,9 @@ bool Project::hasDirtyNotes() const
 
 void Project::setF0DirtyRange(int startFrame, int endFrame)
 {
+    DBG_P1B("setF0DirtyRange this=" +
+            juce::String::toHexString((juce::int64)(juce::pointer_sized_int)this) +
+            " r=" + juce::String(startFrame) + "," + juce::String(endFrame));
     if (f0DirtyStart < 0 || startFrame < f0DirtyStart)
         f0DirtyStart = startFrame;
     if (f0DirtyEnd < 0 || endFrame > f0DirtyEnd)
@@ -337,6 +343,9 @@ void Project::markNoteEditDirtyRange(int startFrame, int endFrame)
 {
     if (startFrame > endFrame)
         return;
+    DBG_P1B("markNoteEditDirtyRange this=" +
+            juce::String::toHexString((juce::int64)(juce::pointer_sized_int)this) +
+            " r=" + juce::String(startFrame) + "," + juce::String(endFrame));
 
     // Covers the base-pitch glide into neighbouring notes (the 80 ms
     // smoothing window reaches ~4 frames past a note) and the splice fades

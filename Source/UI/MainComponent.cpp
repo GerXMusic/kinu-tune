@@ -3997,6 +3997,19 @@ void MainComponent::resynthesizeIncremental()
 
 // P1b: an edit, an undo, an engine change, an MCP command or DAW automation
 // only marks. The audio is not touched here; the blocks wait for Play.
+#define DBG_P1B(msg)                                                          \
+  do {                                                                        \
+    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
+        .getChildFile("pitchcore_p1b_trace.log")                              \
+        .appendText("[" +                                                      \
+                    juce::Time::getCurrentTime().toString(true, true, true,    \
+                                                           true) +            \
+                    "][tid=" +                                                 \
+                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
+                                                  juce::Thread::getCurrentThreadId()) + \
+                    "] " + juce::String(msg) + "\n");                          \
+  } while (0)
+
 void MainComponent::markRenderDirty()
 {
   auto *project = getProject();
@@ -4004,6 +4017,9 @@ void MainComponent::markRenderDirty()
     return;
 
   const auto range = project->getDirtyFrameRange();
+  DBG_P1B("markRenderDirty this=" +
+          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)project) +
+          " r=" + juce::String(range.first) + "," + juce::String(range.second));
   if (range.first >= 0 && range.second > range.first)
     deferredRenders.markBlock(range.first, range.second);
 
@@ -4038,19 +4054,6 @@ void MainComponent::flushDirtyBlocks()
   flushChainActive = true;
   resynthesizeIncremental();
 }
-
-#define DBG_P1B(msg)                                                          \
-  do {                                                                        \
-    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
-        .getChildFile("pitchcore_p1b_trace.log")                              \
-        .appendText("[" +                                                      \
-                    juce::Time::getCurrentTime().toString(true, true, true,    \
-                                                           true) +            \
-                    "][tid=" +                                                 \
-                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
-                                                  juce::Thread::getCurrentThreadId()) + \
-                    "] " + juce::String(msg) + "\n");                          \
-  } while (0)
 
 // P1b fase 3: the host started playback. With dirty blocks the transport is
 // held back: stop, render, restart. Without them this returns false and the
