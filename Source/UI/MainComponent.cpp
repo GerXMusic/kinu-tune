@@ -2697,6 +2697,24 @@ void MainComponent::saveProject(bool saveAs)
   if (!project)
     return;
 
+  // P1b fase 4: no se persiste ningun bloque sucio. El flush corre antes de
+  // escribir el fichero; si sigue en vuelo, el guardado se reanuda cuando la
+  // cadena de flush termina (resynthesizeIncremental -> resumeSaveAfterFlush).
+  if (!resumeSaveAfterFlush &&
+      (project->hasDirtyNotes() || project->hasF0DirtyRange()))
+  {
+    resumeSaveAfterFlush = true;
+    saveAsAfterFlush = saveAs;
+    deferredRenderPending = true;
+    playAfterFlush = false;
+    toolbar.showProgress(TR("progress.synthesizing"));
+    toolbar.setProgress(-1.0f);
+    flushDirtyBlocks();
+    if (flushChainActive)
+      return; // the save resumes when the last block is clean
+    resumeSaveAfterFlush = false;
+  }
+
   project->uiWidth = getWidth();
   project->uiHeight = getHeight();
 
