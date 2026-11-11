@@ -4407,10 +4407,11 @@ void MainComponent::finishBackendRender(bool success)
 
   DBG_P1B("finishBackendRender success=" + juce::String(success ? 1 : 0) +
           " chain=" + juce::String(flushChainActive ? 1 : 0));
-  // P1b: el flush de Play acabo; se baja la cadena antes de arrancar para que
-  // el playState que genere nuestro start no reabra el flush.
+  // P1b: el flush de Play acabo; se limpian los bloques renderizados (misma
+  // operacion que la ruta standalone), se baja la cadena y se arranca.
   if (success && flushChainActive)
   {
+    deferredRenders.clear();
     flushChainActive = false;
     play();
   }
