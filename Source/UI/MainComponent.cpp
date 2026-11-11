@@ -4090,6 +4090,10 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
     if (onRequestHostPlayState)
       onRequestHostPlayState(true);
   }
+  DBG_P1B("flush read project=" +
+          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)project) +
+          " dirtyNotes=" + juce::String(project->hasDirtyNotes() ? 1 : 0) +
+          " f0Dirty=" + juce::String(project->hasF0DirtyRange() ? 1 : 0));
   return true;
 }
 

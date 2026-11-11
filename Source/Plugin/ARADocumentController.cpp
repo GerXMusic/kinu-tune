@@ -961,6 +961,15 @@ bool PitchNetPlaybackRenderer::processBlock(
   // P1b: silencio durante el flush de Play (mismo flag que processBlock).
   if (auto *proc = docCtrl->getEditorProcessor();
       proc != nullptr && proc->isBackendFlushActive()) {
+    static std::atomic<juce::int64> lastMuteLogMs{0};
+    const auto nowMs = (juce::int64)juce::Time::getMillisecondCounterHiRes();
+    if (nowMs - lastMuteLogMs.load(std::memory_order_relaxed) >= 1000) {
+      lastMuteLogMs.store(nowMs, std::memory_order_relaxed);
+      juce::File::getSpecialLocation(juce::File::tempDirectory)
+          .getChildFile("pitchcore_p1b_trace.log")
+          .appendText("[mute] flushActive=" +
+                      juce::String(proc->isBackendFlushActive() ? 1 : 0) + "\n");
+    }
     buffer.clear();
     return true;
   }
