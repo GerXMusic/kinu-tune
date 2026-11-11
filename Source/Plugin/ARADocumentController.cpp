@@ -947,6 +947,29 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 bool PitchNetPlaybackRenderer::processBlock(
     juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
     const juce::AudioPlayHead::PositionInfo &posInfo) noexcept {
+  // P1b: contador de llamadas con transporte parado, solo al cambiar de estado
+  // o cada 2 s (no por bloque).
+  {
+    static thread_local juce::int64 playingCalls = 0;
+    static thread_local juce::int64 stoppedCalls = 0;
+    static thread_local juce::int64 lastLogMs = 0;
+    static thread_local int lastState = -1;
+    const bool countedPlaying = posInfo.getIsPlaying();
+    if (countedPlaying)
+      ++playingCalls;
+    else
+      ++stoppedCalls;
+    const auto nowMs = (juce::int64)juce::Time::getMillisecondCounterHiRes();
+    if (lastState != (countedPlaying ? 1 : 0) || nowMs - lastLogMs >= 2000) {
+      lastState = countedPlaying ? 1 : 0;
+      lastLogMs = nowMs;
+      juce::File::getSpecialLocation(juce::File::tempDirectory)
+          .getChildFile("pitchcore_p1b_trace.log")
+          .appendText(juce::String("[renderer-count] playing=") +
+                      juce::String(playingCalls) + " stopped=" +
+                      juce::String(stoppedCalls) + "\n");
+    }
+  }
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
   if (!docCtrl) {
