@@ -410,6 +410,7 @@ private:
       std::make_shared<ParamSyncState>();
 
   PluginTransportController transportController;
+  std::atomic<bool> backendFlushActive{false};
   RealtimePitchProcessor realtimeProcessor;
 #if JucePlugin_Enable_ARA
   PitchNetDocumentController *araDocumentController = nullptr;

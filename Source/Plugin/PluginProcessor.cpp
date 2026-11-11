@@ -637,6 +637,13 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     didProcessHostSync = true;
     checkParameterChanges();
 
+    // P1b: durante el flush de Play en plugin no suena el audio anterior.
+    if (backendFlushActive.load(std::memory_order_acquire))
+    {
+      buffer.clear();
+      return;
+    }
+
     const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
     if (handled) {
       // ARA playback has no meaningful input/dry buffer. The playback renderer
@@ -1478,6 +1485,11 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (controller == nullptr)
     return;
 
+  // P1b: si este render viene del flush de Play, se silencia la salida hasta
+  // que termine (se limpia en el callAsync de cierre).
+  if (mainComponent != nullptr && mainComponent->isFlushChainActive())
+    backendFlushActive.store(true, std::memory_order_release);
+
   auto *backendProject = controller->getProject();
   if (!backendProject)
   {
@@ -1658,6 +1670,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         juce::MessageManager::callAsync(
             [this, renderSafeMain, success, renderActiveAraRegion,
              renderRegionStartSeconds]() {
+              backendFlushActive.store(false, std::memory_order_release);
               if (auto *view =
                       dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
                 if (success) {
