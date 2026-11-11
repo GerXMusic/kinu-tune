@@ -329,6 +329,15 @@ private:
   void finishPianoKeyAudition();
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
+  // P1b (render al Play): an edit, an undo/redo, an engine change, an MCP
+  // command or DAW automation only marks. Nothing renders until Play.
+  void markRenderDirty();
+  // P1b: renders the dirty blocks, one per pass, and only then starts the
+  // transport. The cursor waits for the last block.
+  void flushDirtyBlocks();
+  bool deferredRenderPending = false;
+  bool flushChainActive = false;
+  bool playAfterFlush = false;
   // Engine change: the audio was rendered by the previous engine, so every
   // edited note is rendered again by the new one (Project::markEditedNotesDirty).
   void rerenderEditedNotes();

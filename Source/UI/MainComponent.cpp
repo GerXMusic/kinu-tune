@@ -1064,7 +1064,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { afterHistoryChange(requiresResynthesis); };
   pianoRoll.onPitchEditFinished = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
     // Melodyne-style: trigger real-time processor update in plugin mode
     notifyProjectDataChanged();
     if (isPluginMode() && onPitchEditFinished)
@@ -1072,7 +1072,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   pianoRoll.onPitchPreviewRenderRequested = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
   };
   pianoRoll.onPitchEditCommitted = [this]()
   {
@@ -1151,7 +1151,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   parameterPanel.onParameterEditFinished = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
     // Melodyne-style: trigger real-time processor update in plugin mode
     notifyProjectDataChanged();
     if (isPluginMode() && onPitchEditFinished)
@@ -2098,7 +2098,7 @@ void MainComponent::pollMcpControl()
           project->setModified(true);
           pianoRoll.repaint();
           onPitchEdited();
-          resynthesizeIncremental();
+          markRenderDirty();
           notifyProjectDataChanged();
           if (isPluginMode() && onPitchEditFinished)
             onPitchEditFinished();
@@ -3926,6 +3926,27 @@ void MainComponent::resynthesizeIncremental()
           return;
         }
 
+        // P1b: the flush continues block by block. The project renders one
+        // silence-bounded block per pass (D-197), so the transport waits until
+        // none is left dirty.
+        if (safeThis->flushChainActive)
+        {
+          auto *chainProject = safeThis->getProject();
+          if (chainProject != nullptr &&
+              (chainProject->hasDirtyNotes() || chainProject->hasF0DirtyRange()))
+          {
+            safeThis->resynthesizeIncremental();
+            return;
+          }
+
+          safeThis->flushChainActive = false;
+          if (safeThis->playAfterFlush)
+          {
+            safeThis->playAfterFlush = false;
+            safeThis->play();
+          }
+        }
+
         safeThis->pianoRoll.invalidateWaveformCache();
         safeThis->pianoRoll.repaint();
         if (safeThis->isPluginMode())
@@ -3933,6 +3954,35 @@ void MainComponent::resynthesizeIncremental()
       },
       pendingIncrementalResynth,
       isPluginMode());
+}
+
+// P1b: an edit, an undo, an engine change, an MCP command or DAW automation
+// only marks. The audio is not touched here; the blocks wait for Play.
+void MainComponent::markRenderDirty()
+{
+  if (getProject() == nullptr || editorController == nullptr)
+    return;
+
+  deferredRenderPending = true;
+}
+
+// P1b: Play from the UI. Renders the dirty blocks first and only then starts
+// the transport; the cursor does not advance until the last block is done.
+void MainComponent::flushDirtyBlocks()
+{
+  if (!deferredRenderPending || flushChainActive)
+    return;
+
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+  {
+    deferredRenderPending = false;
+    return;
+  }
+
+  deferredRenderPending = false;
+  flushChainActive = true;
+  resynthesizeIncremental();
 }
 
 void MainComponent::rerenderEditedNotes()
@@ -3946,7 +3996,7 @@ void MainComponent::rerenderEditedNotes()
   if (project->markEditedNotesDirty() == 0)
     return;
 
-  resynthesizeIncremental();
+  markRenderDirty();
 }
 
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
@@ -4067,7 +4117,7 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
 
     // The engine decides how the audio is produced, so the affected notes have
     // to be rendered again; the action left them dirty and synth-dirty.
-    resynthesizeIncremental();
+    markRenderDirty();
     notifyProjectDataChanged();
   }
 
@@ -4153,7 +4203,7 @@ void MainComponent::afterHistoryChange(bool requiresResynthesis)
   {
     // Don't mark all notes as dirty - the action marked the notes it changed
     // and set any F0 dirty range. This avoids synthesizing the entire project.
-    resynthesizeIncremental();
+    markRenderDirty();
   }
 
   // Update command states (undo/redo availability changed)
@@ -5242,7 +5292,7 @@ void MainComponent::triggerResynthesis()
     if (totalFrames > 0)
       project->setF0DirtyRange(0, totalFrames);
   }
-  resynthesizeIncremental();
+  markRenderDirty();
   notifyProjectDataChanged();
   if (onPitchEditFinished)
     onPitchEditFinished();
