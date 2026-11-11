@@ -155,6 +155,9 @@ public:
 
   // Real-time processor access
   RealtimePitchProcessor &getRealtimeProcessor() { return realtimeProcessor; }
+  bool isBackendFlushActive() const {
+    return backendFlushActive.load(std::memory_order_acquire);
+  }
   double getHostSampleRate() const { return hostSampleRate; }
 
 #if JucePlugin_Enable_ARA

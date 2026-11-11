@@ -458,6 +458,7 @@ public:
   // headless/playback owner so canvas work cannot be dispatched to a processor
   // with no UI.
   void setEditorProcessor(PitchNetAudioProcessor *processor);
+  PitchNetAudioProcessor *getEditorProcessor() const { return editorProcessor; }
   void releaseEditorProcessor(PitchNetAudioProcessor *processor);
   void ensureHeadlessPlaybackBinding();
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);

@@ -958,6 +958,13 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
+  // P1b: silencio durante el flush de Play (mismo flag que processBlock).
+  if (auto *proc = docCtrl->getEditorProcessor();
+      proc != nullptr && proc->isBackendFlushActive()) {
+    buffer.clear();
+    return true;
+  }
+
   // Produce nothing while the host is mutating the model graph: any region
   // this block would read may be freed before the block finishes.
   //
