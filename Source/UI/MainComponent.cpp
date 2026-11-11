@@ -4018,11 +4018,6 @@ void MainComponent::pushSweepState()
   const auto state = sweep::fromQueue(deferredRenders);
   pianoRoll.setSweepState(state.active, state.blockStart, state.blockEnd,
                           state.remaining);
-  // P1b: la vista de pista/ARA usa `pianoRollView`, construida con la misma
-  // instancia de `pianoRoll` (MainComponent.cpp:549). Se empuja tambien por su
-  // acceso publico para que el estado llegue a la vista visible.
-  pianoRollView.getPianoRoll().setSweepState(
-      state.active, state.blockStart, state.blockEnd, state.remaining);
 }
 
 // P1b: Play from the UI. Renders the dirty blocks first and only then starts
@@ -4393,11 +4388,6 @@ void MainComponent::finishBackendRender(bool success)
   if (!success)
     return;
 
-  // P1b: la ruta de plugin no pasa por el cierre de la cadena standalone
-  // (resynthesizeIncremental), asi que aqui se vacia la cola y se empuja el
-  // estado para apagar el barrido al terminar el render.
-  deferredRenders.clear();
-  pushSweepState();
   pianoRoll.invalidateWaveformCache();
   pianoRoll.repaint();
 }
