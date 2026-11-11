@@ -4042,9 +4042,25 @@ void MainComponent::flushDirtyBlocks()
 // P1b fase 3: the host started playback. With dirty blocks the transport is
 // held back: stop, render, restart. Without them this returns false and the
 // play edge goes through untouched (no stop/start).
+#define DBG_P1B(msg)                                                          \
+  do {                                                                        \
+    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
+        .getChildFile("pitchcore_p1b_trace.log")                              \
+        .appendText("[" +                                                      \
+                    juce::Time::getCurrentTime().toString(true, true, true,    \
+                                                           true) +            \
+                    "][tid=" +                                                 \
+                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
+                                                  juce::Thread::getCurrentThreadId()) + \
+                    "] " + juce::String(msg) + "\n");                          \
+  } while (0)
+
 bool MainComponent::flushDirtyBlocksForHostPlay()
 {
   auto *project = getProject();
+  DBG_P1B("flushDirtyBlocksForHostPlay dirtyBlocks=" +
+          juce::String(deferredRenders.dirtyBlockCount()) +
+          " chain=" + juce::String(flushChainActive ? 1 : 0));
   if (project == nullptr || editorController == nullptr)
     return false;
 
@@ -4063,6 +4079,9 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
 
   deferredRenderPending = true;
   playAfterFlush = true;
+  DBG_P1B("flush launch id=" +
+          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)this) +
+          " dirty=" + juce::String(deferredRenders.dirtyBlockCount()));
   flushDirtyBlocks();
   if (!flushChainActive)
   {
@@ -4385,6 +4404,8 @@ void MainComponent::finishBackendRender(bool success)
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
                            : ParameterPanel::RenderStatus::Failed);
 
+  DBG_P1B("finishBackendRender success=" + juce::String(success ? 1 : 0) +
+          " chain=" + juce::String(flushChainActive ? 1 : 0));
   // P1b: cierre del flush de Play en modo plugin. La cadena standalone cierra
   // en el callback de resynthesizeIncremental; la de plugin termina aqui.
   if (flushChainActive)
@@ -4396,6 +4417,7 @@ void MainComponent::finishBackendRender(bool success)
     if (success && playAfterFlush)
     {
       playAfterFlush = false;
+      DBG_P1B("start transport after flush");
       play();
     }
     flushChainActive = false;

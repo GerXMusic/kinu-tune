@@ -1672,6 +1672,20 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                                             : araAnalysisTimelineOffsetSeconds);
                   view->bindRealtimeProcessor(realtimeProcessor);
                 }
+#define DBG_P1B(msg)                                                          \
+  do {                                                                        \
+    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
+        .getChildFile("pitchcore_p1b_trace.log")                              \
+        .appendText("[" +                                                      \
+                    juce::Time::getCurrentTime().toString(true, true, true,    \
+                                                           true) +            \
+                    "][tid=" +                                                 \
+                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
+                                                  juce::Thread::getCurrentThreadId()) + \
+                    "] " + juce::String(msg) + "\n");                          \
+  } while (0)
+                DBG_P1B("plugin finishBackendRender success=" +
+                        juce::String(success ? 1 : 0));
                 view->finishBackendRender(success);
                 view->setStatusMessage({});
               } else if (success && !renderActiveAraRegion &&

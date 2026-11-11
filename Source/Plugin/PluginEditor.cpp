@@ -1790,6 +1790,20 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
           if (!view)
             return;
 
+#define DBG_P1B(msg)                                                          \
+  do {                                                                        \
+    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
+        .getChildFile("pitchcore_p1b_trace.log")                              \
+        .appendText("[" +                                                      \
+                    juce::Time::getCurrentTime().toString(true, true, true,    \
+                                                           true) +            \
+                    "][tid=" +                                                 \
+                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
+                                                  juce::Thread::getCurrentThreadId()) + \
+                    "] " + juce::String(msg) + "\n");                          \
+  } while (0)
+          DBG_P1B("transport playState=" +
+                  juce::String(isPlaying ? 1 : 0));
           // P1b fase 3: en el borde de arranque, con bloques sucios, el
           // transporte se retiene (stop -> flush -> start). Sin sucios esto
           // devuelve false y el Play pasa sin ciclo stop/start.
