@@ -4066,6 +4066,10 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
 
   const bool hasDirtyBlocks =
       project->hasDirtyNotes() || project->hasF0DirtyRange();
+  // P1b: sin bloques en la cola ni rango F0 sucio no hay flush que hacer; el
+  // Play del host no debe convertirse en stop/flush/start.
+  if (deferredRenders.dirtyBlockCount() == 0 && !project->hasF0DirtyRange())
+    return false;
   if (!hasDirtyBlocks || flushChainActive)
     return false;
 
@@ -4406,23 +4410,6 @@ void MainComponent::finishBackendRender(bool success)
 
   DBG_P1B("finishBackendRender success=" + juce::String(success ? 1 : 0) +
           " chain=" + juce::String(flushChainActive ? 1 : 0));
-  // P1b: cierre del flush de Play en modo plugin. La cadena standalone cierra
-  // en el callback de resynthesizeIncremental; la de plugin termina aqui.
-  if (flushChainActive)
-  {
-    // El bloque pendiente ya se renderizo: la cola queda vacia y el barrido
-    // pasa a inactivo.
-    deferredRenders.clear();
-    pushSweepState();
-    if (success && playAfterFlush)
-    {
-      playAfterFlush = false;
-      DBG_P1B("start transport after flush");
-      play();
-    }
-    flushChainActive = false;
-  }
-
   if (!success)
     return;
 
