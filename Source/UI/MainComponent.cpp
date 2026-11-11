@@ -4039,9 +4039,6 @@ void MainComponent::flushDirtyBlocks()
   resynthesizeIncremental();
 }
 
-// P1b fase 3: the host started playback. With dirty blocks the transport is
-// held back: stop, render, restart. Without them this returns false and the
-// play edge goes through untouched (no stop/start).
 #define DBG_P1B(msg)                                                          \
   do {                                                                        \
     juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
@@ -4055,19 +4052,19 @@ void MainComponent::flushDirtyBlocks()
                     "] " + juce::String(msg) + "\n");                          \
   } while (0)
 
+// P1b fase 3: the host started playback. With dirty blocks the transport is
+// held back: stop, render, restart. Without them this returns false and the
+// play edge goes through untouched (no stop/start).
 bool MainComponent::flushDirtyBlocksForHostPlay()
 {
   auto *project = getProject();
-  DBG_P1B("flushDirtyBlocksForHostPlay dirtyBlocks=" +
-          juce::String(deferredRenders.dirtyBlockCount()) +
-          " chain=" + juce::String(flushChainActive ? 1 : 0));
+  DBG_P1B("flushDirty entrance");
   if (project == nullptr || editorController == nullptr)
     return false;
 
   const bool hasDirtyBlocks =
       project->hasDirtyNotes() || project->hasF0DirtyRange();
-  // P1b: sin bloques en la cola ni rango F0 sucio no hay flush que hacer; el
-  // Play del host no debe convertirse en stop/flush/start.
+  // Sin bloques en la cola ni rango F0 sucio no hay flush que hacer.
   if (deferredRenders.dirtyBlockCount() == 0 && !project->hasF0DirtyRange())
     return false;
   if (!hasDirtyBlocks || flushChainActive)
@@ -4410,6 +4407,14 @@ void MainComponent::finishBackendRender(bool success)
 
   DBG_P1B("finishBackendRender success=" + juce::String(success ? 1 : 0) +
           " chain=" + juce::String(flushChainActive ? 1 : 0));
+  // P1b: el flush de Play acabo; se baja la cadena antes de arrancar para que
+  // el playState que genere nuestro start no reabra el flush.
+  if (success && flushChainActive)
+  {
+    flushChainActive = false;
+    play();
+  }
+
   if (!success)
     return;
 

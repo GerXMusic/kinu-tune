@@ -339,6 +339,7 @@ private:
   // P1b fase 3: borde de arranque del Play del host. Devuelve true si el
   // transporte se retiene para renderizar y se reanuda al terminar la cadena.
   bool flushDirtyBlocksForHostPlay() override;
+  bool isFlushChainActive() const override { return flushChainActive; }
   // P1b fase 6: cola de bloques pendientes. El barrido se dibuja desde aqui.
   DeferredRenderQueue deferredRenders;
   void pushSweepState();

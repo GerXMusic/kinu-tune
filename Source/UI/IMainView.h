@@ -185,6 +185,9 @@ public:
   // transport back: it stops the host, renders the dirty blocks and restarts
   // playback when they are done. False means there was nothing to do.
   virtual bool flushDirtyBlocksForHostPlay() { return false; }
+  // P1b: dice si la cadena de flush sigue en curso, para que el callback del
+  // transporte ignore los playState que provocan nuestro propio stop/start.
+  virtual bool isFlushChainActive() const { return false; }
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
