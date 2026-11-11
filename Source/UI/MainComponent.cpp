@@ -3935,6 +3935,9 @@ void MainComponent::resynthesizeIncremental()
         if (safeThis == nullptr)
           return;
         safeThis->toolbar.showProgress(message);
+        // P1b fase 6: el barrido avanza con los repintados; el progreso del
+        // render no toca el piano roll por su cuenta.
+        safeThis->pianoRoll.repaint();
       },
       [safeThis](bool success)
       {
