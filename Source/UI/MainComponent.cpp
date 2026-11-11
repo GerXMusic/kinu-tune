@@ -4411,6 +4411,11 @@ void MainComponent::finishBackendRender(bool success)
   // operacion que la ruta standalone), se baja la cadena y se arranca.
   if (success && flushChainActive)
   {
+    // La ruta standalone limpia estos estados en el proyecto del render
+    // (IncrementalSynthesizer::clearAllDirty); en plugin el editor conserva su
+    // copia, asi que se limpia aqui antes de arrancar.
+    if (auto *doneProject = getProject())
+      doneProject->clearAllDirty();
     deferredRenders.clear();
     flushChainActive = false;
     play();
