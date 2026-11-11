@@ -1013,6 +1013,27 @@ bool PitchNetPlaybackRenderer::processBlock(
   }
   if (!anyPending)
     renderMuteLatched = false;
+  static thread_local bool lastTracedPending = false;
+  static thread_local bool lastTracedPlaying = false;
+  if (anyPending != lastTracedPending || isPlayingNow != lastTracedPlaying) {
+    lastTracedPending = anyPending;
+    lastTracedPlaying = isPlayingNow;
+    juce::String key;
+    for (auto *region : getPlaybackRegions())
+      if (auto *mod = region->getAudioModification<PitchNetAudioModification>()) {
+        key = mod->getLiveKey() + "@" +
+              juce::String::toHexString(
+                  (juce::int64)(juce::pointer_sized_int)mod);
+        break;
+      }
+    juce::File::getSpecialLocation(juce::File::tempDirectory)
+        .getChildFile("pitchcore_p1b_trace.log")
+        .appendText(juce::String("[renderer] isPlaying=") +
+                    (isPlayingNow ? "1" : "0") + " realtime=" +
+                    (realtimeNow ? "1" : "0") + " anyPending=" +
+                    (anyPending ? "1" : "0") + " latched=" +
+                    (renderMuteLatched ? "1" : "0") + " key=" + key + "\n");
+  }
   previousIsPlaying = isPlayingNow;
   if (realtimeNow && renderMuteLatched && anyPending) {
     buffer.clear();

@@ -1663,8 +1663,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         // P1b: el render termino (bien o mal): se levanta el silencio. Si fallo,
         // vuelve a oirse el audio anterior en lugar de quedar mudo.
         if (renderModification != nullptr)
-          renderModification->renderPending.store(false,
-                                                  std::memory_order_release);
+          renderModification->setRenderPending(false, "publish_or_fail");
         if (target != nullptr) {
           if (auto it = araRegions.find(renderRegionKey); it != araRegions.end())
             ++it->second.revision;
@@ -1744,7 +1743,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
   // pestillo del playback renderer la silencia en el siguiente Play.
   if (activeModification != nullptr &&
       (project.hasDirtyNotes() || project.hasF0DirtyRange()))
-    activeModification->renderPending.store(true, std::memory_order_release);
+    activeModification->setRenderPending(true, "updateProjectState");
 #endif
 #if JucePlugin_Enable_ARA
   // D-179: publish the engine to the shared modification so another window
@@ -2177,7 +2176,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
 #if JucePlugin_Enable_ARA
   // P1b: al cerrar el editor no debe quedar una region muda para siempre.
   if (mc == nullptr && activeModification != nullptr)
-    activeModification->renderPending.store(false, std::memory_order_release);
+    activeModification->setRenderPending(false, "lifecycle");
 #endif
   if (mainComponent != nullptr && mainComponent != mc) {
     if (auto *project = mainComponent->getProject())
@@ -3128,7 +3127,7 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
 
   // P1b: al desactivar la region no debe quedar muda para siempre.
   if (activeModification != nullptr)
-    activeModification->renderPending.store(false, std::memory_order_release);
+    activeModification->setRenderPending(false, "lifecycle");
   activeModification = nullptr;
   activeRegionKey.clear();
   activeRegionSelector.clear();
