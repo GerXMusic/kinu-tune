@@ -7,13 +7,16 @@ This build is made on GitHub Actions and checked there by creating it the way a 
    Copy the "Kinu Tune.vst3" folder to:
      C:\Program Files\Common Files\VST3\
 
-2. "models" フォルダーを次の場所にコピーします(フォルダーが無ければ作ります)。
-   Copy the "models" folder into (create the folders if needed):
-     %APPDATA%\Keinoaza\Kinu Tune\
-   結果として %APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx などがある状態にします。
-   so that %APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx exists.
+2. AI のモデルを置くフォルダーを作ります。
+   エクスプローラーのアドレス欄に %APPDATA% と入力して開き、
+   その中に「Keinoaza」という名前のフォルダーを、さらにその中に「Kinu Tune」という名前のフォルダーを作ります。
+   Create a folder for the AI models: in File Explorer type %APPDATA% in the address bar,
+   create a folder named "Keinoaza" there, and a folder named "Kinu Tune" inside it.
 
-3. DAW を起動し直し、プラグインを再スキャンします。
+3. この zip の中の "models" フォルダーを、いま作った「Kinu Tune」フォルダーの中に入れます。
+   Move the "models" folder from this zip into that "Kinu Tune" folder.
+
+4. DAW を起動し直し、プラグインを再スキャンします。
    Restart your DAW and rescan plugins.
 
 プラグインを挿すと落ちる・解析が始まらない場合は、Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)をインストールしてから、DAW を起動し直してください。

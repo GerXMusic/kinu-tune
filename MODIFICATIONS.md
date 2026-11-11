@@ -136,6 +136,11 @@ The full history of the changes is in the git log of this repository.
   builds the Windows release; packaging/INSTALL-*.txt are the install notes in
   the release zips. From 0.1.1 the macOS release also contains the Audio Unit
   (`Kinu Tune.component`) besides the VST3.
+- Installers: the upstream PitchNet.pkgproj and PitchNet.iss are not used.
+  `packaging/macos/build-pkg.sh` builds a macOS package that installs into the
+  user's home; `packaging/windows/KinuTune.iss` is the Windows installer, built
+  and checked by `.github/workflows/windows-installer.yml`. Both are made from
+  the files of the release zips.
 
 ### Tests and checks
 - New unit tests: HarmonyIntervalTests, HarmonyApplyTests,
@@ -152,6 +157,14 @@ The full history of the changes is in the git log of this repository.
 - cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
   ONNX Runtime folder) from the macOS bundles after linking and fails the build
   if one is left.
+- tests/ModelInferenceTests.cpp loads the shipped models and checks analysis
+  and synthesis with numbers (FCPE reports a tone's pitch, GAME finds the note,
+  the vocoder and PSOLA shift it by a minor third). It is the one test the CI
+  Windows job also runs, so Windows is known to analyse and synthesise.
+- cmake/DependencyHashes.cmake records the SHA-256 of every archive CMake
+  downloads (ONNX Runtime, the DirectML NuGet packages, the GAME models); a
+  download that does not match stops the configure step. The GitHub Actions
+  workflows pin the actions they use to commit ids instead of tags.
 - tools/windows/check-vst3.ps1 (run by both workflows) creates the Windows
   plug-in in a minimal host (tools/windows/vst3-instantiate) on the runner's
   runtime, on an older Visual C++ runtime and in clean Windows containers with
@@ -166,6 +179,9 @@ New files:
 - `MODIFICATIONS.md`, `licenses/*`, `Resources/fonts/*-OFL.txt`
 - `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
   `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
+- `.github/workflows/windows-installer.yml`, `packaging/macos/build-pkg.sh`,
+  `packaging/macos/installer/*`, `packaging/windows/KinuTune.iss`,
+  `tools/windows/check-installer.ps1`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`
 - `Source/Undo/InspectorEditAction.h`

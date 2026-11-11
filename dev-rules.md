@@ -72,7 +72,9 @@
 - 不具合を直す時は、直す前に失敗するテストを足す
 - コミットの前に、テスト全部(`ctest --test-dir build`)と pluginval(厳しさ 5)を通す。`pitchnet_ui` にリンクするテストは、UI を変えたら全体をビルドしてから流す
 - GitHub に送ったら、自動チェック(CI)が通ったことを確かめる
+- モデルの読み込み・推論・合成(FCPE・GAME・声の合成モデル・PSOLA)を変えた時は、`tests/ModelInferenceTests.cpp` が通ることを確かめる。これは CI の Windows ジョブでも走る唯一のモデル検査で、Windows で解析と合成が動く根拠はここだけにある。新しいモデルや合成エンジンを足したら、この検査にも段階を足す
 - 新しく作るソースファイルの先頭には、Kinu Tune の著作権とライセンスの3行を書く(既存の新規ファイルと同じ文面)
+- GitHub の URL を渡されて実装・移植する時、依存を新しく足す時、第三者のフォーク(例: Rowryu/kinu-tune)からコードを取り込む時は、§14 の安全確認を先に行い、3段階の判定を報告してから動かす
 
 ## 12. ONNX Runtime は読み込めた時だけ呼ぶ
 
@@ -80,3 +82,23 @@
 - 読み込めない時(Windows ではたいてい Visual C++ 再頒布可能パッケージが入っていない)は、API のポインターが空のままになる。この状態で `Ort::` を1つでも呼ぶと落ちる。`Ort::Env` を作る所・`Ort::GetAvailableProviders` など ONNX Runtime を呼ぶ所は、先に `OnnxRuntime::isAvailable()` を確かめる(今は FCPE・RMVPE・GAME・声の合成・GPU の一覧・設定画面の6か所)。解析の入口 `EditorController::analyzeAudio` と、最初に開いたエディターは `OnnxRuntime::showUnavailableMessageOnce()` で直し方を見せる(1プロセスに1回だけ。ARA のホストはクリップごとに解析するので、毎回出すと何枚も重なる)。理由は記録(Windows はデバッガー出力)に出る
 - 新しく ONNX Runtime を呼ぶ所を足したら、同じく先に確かめ、`tests/OnnxRuntimeAvailabilityTests.cpp` にその入口を足す
 - 破ると: `OnnxRuntimeAvailabilityTests` が落ちる(API を空にした状態で各入口を通すので、確かめ忘れた所でテストが落ちる。ただし GPU の一覧の DirectML の判定は Windows の DirectML 版でしか通らず、macOS のテストでは通らない)。Windows では CI の `tools/windows/check-vst3.ps1` の、ランタイムの無いコンテナーでの検査が落ちる
+
+## 13. インストーラーは zip の中身から作る
+
+- Mac の `.pkg`(`packaging/macos/build-pkg.sh`)と Windows のインストーラー(`packaging/windows/KinuTune.iss`、`.github/workflows/windows-installer.yml`)は、配布する zip を展開したものから作る。インストーラーのためだけにビルドし直さない。zip とインストーラーの中身が同じだと言えるのはこのため
+- Mac は利用者のホームの中(手で入れる手順と同じ場所)に入れる。管理者のパスワードが要らず、手で入れたものを上書きする。`/Library` に入れると、手で入れた `~/Library` のものと2つ並ぶ
+- Mac の `.pkg` では、同じ識別子のバンドルが別の場所にあるとインストーラーがそこへ入れてしまう(relocation)。`build-pkg.sh` は `BundleIsRelocatable` を切っている。部品を足す時も同じ関数を通す
+- macOS はこの Mac で作ったファイルに消せない属性(`com.apple.provenance`)を付け、`pkgbuild` はそれを「._」のファイルとして中身に入れる。`build-pkg.sh` は中身を cpio と mkbom で作り直して取り除き、仕上がった中身に残っていれば失敗する
+- Windows の `AppId` は変えない。変えると新しい版が古い版を見つけられず、2つ入る
+- Mac の `.pkg` にはライセンス文書(LICENSE・THIRD_PARTY_NOTICES.txt・MODIFICATIONS.md・licenses)も入れる(モデルと同じフォルダー)。zip と Windows のインストーラーにも入っている
+- Windows のインストーラーはモデルを `%PROGRAMDATA%` に入れる。プラグインは `%APPDATA%\Keinoaza\Kinu Tune\models` が「フォルダーとして」あれば、ファイルが欠けていてもそちらだけを読む(ファイルごとに `%PROGRAMDATA%` へは戻らない)。README はインストーラーで入れる人に `%APPDATA%` 側を消すよう書いている。モデルを変える版を出す時は、この順番に気をつける。インストーラーはモデルのフォルダーを空にしない(利用者が置く rmvpe.onnx を消さないため)
+- 破ると: Windows は `windows-installer.yml` の `tools/windows/check-installer.ps1`(まっさらなコンテナーで入れて、プラグインを作って、消す)が落ちる。ただしモデルを実際に読み込むところまでは確かめていない。Mac は自動の検査が無い。作り直したら、この Mac で `installer -pkg <pkg> -target CurrentUserHomeDirectory` で入れ、zip の中身と `diff -r` で同じこと、属性が付いていないことを確かめる
+
+## 14. 外から取り込むコードは安全確認してから動かし、取り込んだものはハッシュかコミット ID で固定する
+
+- 守ること: 外部リポジトリのコード・依存・GitHub Actions のアクションは、`~/.claude/skills/_shared/external-code-intake.md` の手順(空のフォルダーに取得→自動で走る仕掛けの洗い出し→`scan_external_code.sh`→依存の固定→3段階の判定を報告)を通してから、ビルド・インストール・テストに入れる。判定が「注意点あり」以上なら、動かすかどうかはユーザーが決める
+- 必ず通す入口: 確認の記録は `verify-map.md`(確認日・コミットID・判定・注意点)と、ライセンスと出典は `THIRD_PARTY_NOTICES.txt` / `docs/source-ledger.md`
+- CMake がダウンロードするファイル(ONNX Runtime・DirectML の NuGet・GAME モデル)の SHA-256 は `cmake/DependencyHashes.cmake` の表が正本で、ダウンロードは必ず表の値で検証する。`ONNXRUNTIME_VERSION`・`DIRECTML_VERSION`・`GAME_MODELS_VERSION` を上げる時は、新しいファイルを 2 回取得して値が一致することを見てから表も同じコミットで更新する。表に無い変種(Linux の GPU 版、存在しない CUDA 13 版)は `-DPITCHNET_ALLOW_UNPINNED_DOWNLOADS=ON` を付けない限り構成が止まる。`GAME_MODELS_URL` を差し替える時は `GAME_MODELS_SHA256` も渡す
+- GitHub Actions の `uses:` は 40 桁のコミット ID で指定し、行末のコメントに版名を残す。タグ(`@v7`)やブランチ名では指定しない。新しい版に上げる時は `gh api repos/<owner>/<repo>/git/ref/tags/<版>` で ID を取る
+- サブモジュール(JUCE・ARA_SDK・r8brain)はコミット ID で固定されている。進める時は `git submodule status` の変化をコミットの説明に書く
+- 破ると: ダウンロードの中身が表と違えば、構成(configure)が「hash mismatch」で止まる。表の更新忘れも同じ所で止まる。アクションのタグ指定は自動テストが無く、`grep -rn 'uses:' .github/workflows | grep -v '@[0-9a-f]\{40\}'` で見つける(ローカルの `./.github/workflows/…` 参照は対象外)

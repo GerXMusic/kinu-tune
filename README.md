@@ -42,28 +42,49 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 
 ### インストール(配布版)
 
+[Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) のインストーラーを使うのが簡単です。
+
+Mac 版(`Kinu-Tune-<版>-macOS-arm64.pkg`):
+
+1. ダウンロードした pkg を開きます
+2. 「開けません」と出た時は、「システム設定 > プライバシーとセキュリティ」の下に出る「このまま開く」を押して、もう一度開きます(Apple の公証を受けていないため)
+3. 「続ける」「インストール」と進めます。管理者のパスワードは要りません。AU 版が要らない場合は「カスタマイズ」で外せます
+4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+
+消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune`(モデルとライセンス文書)を削除します。
+
+Windows 版(`Kinu-Tune-<版>-Windows-x64-Setup.exe`):
+
+1. 前に zip から手で入れていた場合は、`%APPDATA%\Keinoaza\Kinu Tune` フォルダーを先に削除します(残っていると、プラグインはそちらのモデルを使い続けます)
+2. ダウンロードした exe を開きます
+3. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
+4. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
+5. DAW を起動し直し、プラグインを再スキャンします
+
+消す時は、Windows の「設定 > アプリ」から Kinu Tune をアンインストールします。
+
+#### zip から手で入れる場合
+
+Mac 版:
+
 1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
 2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
-3. `models` フォルダーを `~/Library/Application Support/Keinoaza/Kinu Tune/` の中に入れます(`.../Kinu Tune/models/fcpe.onnx` などになる配置)
-4. 配布版は Apple の公証を受けていないため、ターミナルで次を実行して「開発元未確認」の制限を外します
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
-   ```
-
-   AU 版を入れた場合は、続けて次も実行します
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
-   ```
-
+3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
+4. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` などになる配置)
 5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+6. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
+7. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
+   ```
 
 Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
 1. `Kinu Tune.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
-2. `models` フォルダーを `%APPDATA%\Keinoaza\Kinu Tune\` の中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
-3. DAW を起動し直してプラグインを再スキャンします
+2. AI のモデルを置くフォルダーを作ります。エクスプローラーのアドレス欄に `%APPDATA%` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
+3. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
+4. DAW を起動し直してプラグインを再スキャンします
 
 挿すと落ちる、または解析が始まらない場合は、[Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)](https://aka.ms/vc14/vc_redist.x64.exe)をインストールしてから DAW を起動し直してください。AI の部品(ONNX Runtime)がこれを必要とします。足りない時は、プラグインが画面で知らせて解析を止めます。
 
@@ -73,6 +94,69 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 2. オーディオ > エクステンション > Kinu Tune で解析します
 3. 左のエディタースケールで曲のキーを選びます
 4. その下のハモリ欄で「3度 上」などを押します(何も選んでいなければ全ノート、選んでいればそのノートだけが動きます)
+
+### ショートカット一覧
+
+表記は Mac のキーです。Windows では Cmd を Ctrl、Option を Alt に読み替えてください。
+
+キーボード
+
+| キー | 動き |
+|---|---|
+| ↑ / ↓ | 選択中のセグメントの音程を動かす(吸着モードに従う。絶対=次の半音またはスケール音ちょうど、相対・オフ=半音) |
+| Shift + ↑ / ↓ | 1 セント単位で動かす(吸着を無視) |
+| ← / → | 前後のセグメントへ選択を移す |
+| 1 / 2 / 3 / 4 | ツール切替: 選択 / 分割 / ピッチ描き込み / タイミング |
+| Shift + F | 全体表示(横は時間軸全体、縦は歌っている音域) |
+| Cmd + Z | 元に戻す |
+| Shift + Cmd + Z、Cmd + Y | やり直し |
+| Cmd + A | すべて選択 |
+| Shift + Cmd + D | デルタピッチ(編集量)の表示切替 |
+| Shift + Cmd + B | ベースピッチの表示切替 |
+| Cmd + , | 設定画面 |
+| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | 開く / 保存 / 名前を付けて保存 / 音声を書き出す(単体アプリ向け) |
+| Space | 再生 / 一時停止(単体アプリだけ。プラグインではホストの Space がそのまま効く) |
+| Esc | 停止 |
+| Home / End | 先頭へ / 末尾へ |
+| Cmd + Q | 終了(単体アプリだけ) |
+
+マウス(選択ツール)
+
+| 操作 | 動き |
+|---|---|
+| クリック | そのセグメントだけを選択 |
+| Shift + クリック | 選択に追加(一緒にドラッグできる) |
+| Cmd + クリック | 選択に追加 / 解除 |
+| Shift + ダブルクリック | 以降の同じ音程のセグメントをすべて選択 |
+| ダブルクリック(セグメント本体) | そのセグメントだけを解析時の状態に戻す(音程・カーブ・フォルマント・音量・タイミング)。元に戻す 1 回で取り消せる |
+| Option + クリック(セグメント上) | その位置で分割 |
+| セグメントを上下にドラッグ | 音程を動かす。ドラッグ中はそのセグメントを繰り返し試聴し、離すと止まる |
+| 空いている所をドラッグ / クリック | 画面を動かす / 選択を外す |
+| Shift + ドラッグ(空いている所から) | 範囲選択(波形の上から始めても範囲選択) |
+| マウスを乗せる | 音名と、十分にズームしていればスマートコントロール(ストレート化・ピッチ補正・結合・傾き・フォルマント・音量)を表示 |
+
+ドラッグ中に吸着を切り替える修飾キー
+
+| 押しながらドラッグ | 吸着 |
+|---|---|
+| Shift | オフ(自由に動く) |
+| Cmd | 絶対(半音・スケール音ぴったり) |
+| Option | 相対(元のずれを保って半音単位) |
+
+何も押さなければ、インスペクタの「ピッチスナップモード」に従います(既定は絶対)。
+
+ズームと画面移動
+
+| 操作 | 動き |
+|---|---|
+| ホイール / Shift + ホイール | 縦スクロール / 横スクロール |
+| Cmd + ホイール | 横方向の拡大縮小(マウス位置を中心に) |
+| Shift + Cmd + ホイール、Option + ホイール | 縦方向の拡大縮小 |
+| Cmd + ドラッグ(空いている所) | 縦横の拡大縮小 |
+| Option + ドラッグ(空いている所) | 縦方向の拡大縮小 |
+| Option + ダブルクリック(空いている所) | 全体表示(Shift + F と同じ) |
+
+VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグでのズームと Option + クリックでの縮小(Option は縦の拡大縮小に割り当てました)。セグメントを削除するキーもありません。
 
 ### AI モデルについて
 
@@ -86,7 +170,7 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 
 - GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。Kinu Tune の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
 - モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
-- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を上記の `models` フォルダーに置くと使えます
+- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/Kinu Tune/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\Kinu Tune\models`、zip から入れた場合 `%APPDATA%\Keinoaza\Kinu Tune\models`)
 
 ### 通信とテレメトリー
 
@@ -121,30 +205,114 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 
 ### Installing a release
 
+The installers on [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) are the easy way.
+
+macOS (`Kinu-Tune-<version>-macOS-arm64.pkg`):
+
+1. Open the downloaded package.
+2. If macOS says it cannot be opened, click "Open Anyway" in System Settings > Privacy & Security and open it again (the release is not notarized).
+3. Click Continue and Install. No administrator password is needed. To leave out the Audio Unit, use Customize.
+4. Restart your DAW and rescan plugins.
+
+To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune` (the models and licence texts).
+
+Windows (`Kinu-Tune-<version>-Windows-x64-Setup.exe`):
+
+1. If you installed from the zip before, delete the `%APPDATA%\Keinoaza\Kinu Tune` folder first (while it is there, the plug-in keeps using the models in it).
+2. Open the downloaded installer.
+3. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
+4. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
+5. Restart your DAW and rescan plugins.
+
+To remove it, uninstall Kinu Tune in Windows Settings > Apps.
+
+#### Installing from the zip by hand
+
+macOS:
+
 1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
 2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
-3. Copy the `models` folder into `~/Library/Application Support/Keinoaza/Kinu Tune/` (so that `.../Kinu Tune/models/fcpe.onnx` exists).
-4. The release is not notarized. Remove the quarantine flag in Terminal:
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Application\ Support/Keinoaza/Kinu\ Tune
-   ```
-
-   If you installed the Audio Unit, also run:
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
-   ```
-
+3. Create a folder for the AI models: in Finder choose Go > Go to Folder…, enter `~/Library/Application Support`, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
+4. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` exists).
 5. Restart your DAW and rescan plugins.
+6. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
+7. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
+   ```
 
 Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
 
 1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
-2. Copy the `models` folder into `%APPDATA%\Keinoaza\Kinu Tune\` (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
-3. Restart your DAW and rescan plugins.
+2. Create a folder for the AI models: in File Explorer type `%APPDATA%` in the address bar, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
+3. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
+4. Restart your DAW and rescan plugins.
 
 If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
+
+### Shortcuts
+
+Keys are given for Mac. On Windows read Cmd as Ctrl and Option as Alt.
+
+Keyboard
+
+| Key | Action |
+|---|---|
+| Up / Down | Move the selected segments' pitch (follows the snap mode: Absolute = to the next semitone or scale note exactly, Relative and Off = one semitone) |
+| Shift + Up / Down | Move by one cent (ignores snapping) |
+| Left / Right | Select the previous / next segment |
+| 1 / 2 / 3 / 4 | Tool: Select / Split / Pitch drawing / Timing |
+| Shift + F | Zoom to fit (the whole time range, and the sung pitch range vertically) |
+| Cmd + Z | Undo |
+| Shift + Cmd + Z, Cmd + Y | Redo |
+| Cmd + A | Select all |
+| Shift + Cmd + D | Show / hide the delta pitch (amount of edit) |
+| Shift + Cmd + B | Show / hide the base pitch |
+| Cmd + , | Settings |
+| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | Open / Save / Save as / Export audio (standalone app) |
+| Space | Play / pause (standalone app only; as a plug-in the host's Space works as usual) |
+| Esc | Stop |
+| Home / End | Go to start / end |
+| Cmd + Q | Quit (standalone app only) |
+
+Mouse (Select tool)
+
+| Action | Result |
+|---|---|
+| Click | Select only that segment |
+| Shift + click | Add to the selection (drags together) |
+| Cmd + click | Add to / remove from the selection |
+| Shift + double-click | Select every following segment with the same pitch |
+| Double-click a segment | Reset only that segment to its analysed state (pitch, curve, formant, volume, timing); one Undo takes it back |
+| Option + click on a segment | Split it there |
+| Drag a segment up / down | Move its pitch; while dragging, the segment loops as a preview and stops when you release |
+| Drag / click on empty space | Pan the view / clear the selection |
+| Shift + drag from empty space | Rubber-band selection (starting on the waveform also selects) |
+| Hover | Shows the note name and, when zoomed in enough, the smart controls (straighten, pitch correction, glue, tilt, formant, volume) |
+
+Modifier keys while dragging a pitch
+
+| Hold while dragging | Snap |
+|---|---|
+| Shift | Off (free movement) |
+| Cmd | Absolute (exactly on semitones or scale notes) |
+| Option | Relative (keeps the original deviation, moves in semitones) |
+
+With no modifier the inspector's Pitch Snap Mode applies (Absolute by default).
+
+Zoom and navigation
+
+| Action | Result |
+|---|---|
+| Wheel / Shift + wheel | Scroll vertically / horizontally |
+| Cmd + wheel | Zoom horizontally around the pointer |
+| Shift + Cmd + wheel, Option + wheel | Zoom vertically |
+| Cmd + drag on empty space | Zoom both ways |
+| Option + drag on empty space | Zoom vertically |
+| Option + double-click on empty space | Zoom to fit (same as Shift + F) |
+
+Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Option + click to zoom out (Option is used for vertical zoom here). There is no key for deleting a segment.
 
 ### Model files
 
@@ -154,7 +322,7 @@ If the plug-in crashes when inserted or never starts analysing, install the [lat
 | GAME | Note segmentation | Model weights: CC BY-NC-SA 4.0 (source: MIT) |
 | PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder above.
+The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
 
 ### Network and telemetry
 
