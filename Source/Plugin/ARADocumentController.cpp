@@ -947,29 +947,6 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
 bool PitchNetPlaybackRenderer::processBlock(
     juce::AudioBuffer<float> &buffer, juce::AudioProcessor::Realtime realtime,
     const juce::AudioPlayHead::PositionInfo &posInfo) noexcept {
-  // P1b: contador de llamadas con transporte parado, solo al cambiar de estado
-  // o cada 2 s (no por bloque).
-  {
-    static thread_local juce::int64 playingCalls = 0;
-    static thread_local juce::int64 stoppedCalls = 0;
-    static thread_local juce::int64 lastLogMs = 0;
-    static thread_local int lastState = -1;
-    const bool countedPlaying = posInfo.getIsPlaying();
-    if (countedPlaying)
-      ++playingCalls;
-    else
-      ++stoppedCalls;
-    const auto nowMs = (juce::int64)juce::Time::getMillisecondCounterHiRes();
-    if (lastState != (countedPlaying ? 1 : 0) || nowMs - lastLogMs >= 2000) {
-      lastState = countedPlaying ? 1 : 0;
-      lastLogMs = nowMs;
-      juce::File::getSpecialLocation(juce::File::tempDirectory)
-          .getChildFile("pitchcore_p1b_trace.log")
-          .appendText(juce::String("[renderer-count] playing=") +
-                      juce::String(playingCalls) + " stopped=" +
-                      juce::String(stoppedCalls) + "\n");
-    }
-  }
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
   if (!docCtrl) {
@@ -1016,11 +993,10 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
-  // P1b: silencio desde el primer Play tras una edicion, no al editar. El
-  // pestillo se engancha en el borde stop->play y solo en tiempo real.
+  // P1b: mientras la modificacion tenga un render pendiente no se oye el audio
+  // anterior. No depende de isPlaying ni de transiciones de play.
   const bool realtimeNow =
       (realtime == juce::AudioProcessor::Realtime::yes);
-  const bool isPlayingNow = posInfo.getIsPlaying();
   bool anyPending = false;
   for (auto *region : getPlaybackRegions())
     if (auto *mod = region->getAudioModification<PitchNetAudioModification>();
@@ -1028,37 +1004,16 @@ bool PitchNetPlaybackRenderer::processBlock(
       anyPending = true;
       break;
     }
-  if (!isPlayingNow) {
-    previousIsPlaying = false;
-    renderMuteLatched = false;
-  } else if (realtimeNow && !previousIsPlaying && anyPending) {
-    renderMuteLatched = true;
-  }
-  if (!anyPending)
-    renderMuteLatched = false;
   static thread_local bool lastTracedPending = false;
-  static thread_local bool lastTracedPlaying = false;
-  if (anyPending != lastTracedPending || isPlayingNow != lastTracedPlaying) {
+  if (anyPending != lastTracedPending) {
     lastTracedPending = anyPending;
-    lastTracedPlaying = isPlayingNow;
-    juce::String key;
-    for (auto *region : getPlaybackRegions())
-      if (auto *mod = region->getAudioModification<PitchNetAudioModification>()) {
-        key = mod->getLiveKey() + "@" +
-              juce::String::toHexString(
-                  (juce::int64)(juce::pointer_sized_int)mod);
-        break;
-      }
     juce::File::getSpecialLocation(juce::File::tempDirectory)
         .getChildFile("pitchcore_p1b_trace.log")
-        .appendText(juce::String("[renderer] isPlaying=") +
-                    (isPlayingNow ? "1" : "0") + " realtime=" +
-                    (realtimeNow ? "1" : "0") + " anyPending=" +
-                    (anyPending ? "1" : "0") + " latched=" +
-                    (renderMuteLatched ? "1" : "0") + " key=" + key + "\n");
+        .appendText(juce::String("[renderer] anyPending=") +
+                    (anyPending ? "1" : "0") + " realtime=" +
+                    (realtimeNow ? "1" : "0") + "\n");
   }
-  previousIsPlaying = isPlayingNow;
-  if (realtimeNow && renderMuteLatched && anyPending) {
+  if (realtimeNow && anyPending) {
     buffer.clear();
     return true;
   }
