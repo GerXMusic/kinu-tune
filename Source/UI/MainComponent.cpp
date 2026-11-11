@@ -4070,12 +4070,11 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   if (!hasDirtyBlocks || flushChainActive)
     return false;
 
-  // Fallback, documented: the ARA transport requests are queued for the host
-  // and it may run them late or ignore them (ARAInterface.h:2155-2195). If the
-  // host keeps playing, what is heard until the flush ends is the audio
-  // processed so far; the restart below is then a no-op. Nothing here promises
-  // that the cursor stopped at zero movement.
-  if (onRequestHostPlayState)
+  // Fallback documented: ARA transport requests are queued and the host may
+  // run them late or ignore them (ARAInterface.h:2155-2195). If it keeps
+  // playing, what is heard is the audio processed so far.
+  // P1b: en plugin no se pide stop; standalone conserva stop -> flush -> start.
+  if (!isPluginMode() && onRequestHostPlayState)
     onRequestHostPlayState(false);
 
   deferredRenderPending = true;
@@ -4418,7 +4417,6 @@ void MainComponent::finishBackendRender(bool success)
       doneProject->clearAllDirty();
     deferredRenders.clear();
     flushChainActive = false;
-    play();
   }
 
   if (!success)
