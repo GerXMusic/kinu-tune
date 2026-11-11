@@ -950,7 +950,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
-  { play(); };
+  {
+    playAfterFlush = true;
+    flushDirtyBlocks(); // render the dirty blocks first, one per pass
+    if (!flushChainActive)
+    {
+      playAfterFlush = false;
+      play();
+    }
+  };
   toolbar.onPause = [this]()
   { pause(); };
   toolbar.onStop = [this]()
