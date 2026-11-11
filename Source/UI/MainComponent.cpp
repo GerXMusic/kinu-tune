@@ -3953,6 +3953,13 @@ void MainComponent::resynthesizeIncremental()
             safeThis->playAfterFlush = false;
             safeThis->play();
           }
+          // P1b fase 4: el guardado que esperaba al flush se reanuda aqui,
+          // con los bloques ya limpios.
+          if (safeThis->resumeSaveAfterFlush)
+          {
+            safeThis->resumeSaveAfterFlush = false;
+            safeThis->saveProject(safeThis->saveAsAfterFlush);
+          }
         }
 
         safeThis->pianoRoll.invalidateWaveformCache();
@@ -3991,6 +3998,40 @@ void MainComponent::flushDirtyBlocks()
   deferredRenderPending = false;
   flushChainActive = true;
   resynthesizeIncremental();
+}
+
+// P1b fase 3: the host started playback. With dirty blocks the transport is
+// held back: stop, render, restart. Without them this returns false and the
+// play edge goes through untouched (no stop/start).
+bool MainComponent::flushDirtyBlocksForHostPlay()
+{
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return false;
+
+  const bool hasDirtyBlocks =
+      project->hasDirtyNotes() || project->hasF0DirtyRange();
+  if (!hasDirtyBlocks || flushChainActive)
+    return false;
+
+  // Fallback, documented: the ARA transport requests are queued for the host
+  // and it may run them late or ignore them (ARAInterface.h:2155-2195). If the
+  // host keeps playing, what is heard until the flush ends is the audio
+  // processed so far; the restart below is then a no-op. Nothing here promises
+  // that the cursor stopped at zero movement.
+  if (onRequestHostPlayState)
+    onRequestHostPlayState(false);
+
+  deferredRenderPending = true;
+  playAfterFlush = true;
+  flushDirtyBlocks();
+  if (!flushChainActive)
+  {
+    playAfterFlush = false;
+    if (onRequestHostPlayState)
+      onRequestHostPlayState(true);
+  }
+  return true;
 }
 
 void MainComponent::rerenderEditedNotes()

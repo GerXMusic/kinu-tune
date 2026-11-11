@@ -72,6 +72,22 @@ target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
 
 # P1b (render al Play): deferred dirty blocks and the mark-only triggers.
+# P1b fase 3: el borde de Play del host.
+add_executable(P1bHostPlayTests P1bHostPlayTests.cpp)
+target_link_libraries(P1bHostPlayTests PRIVATE pitchnet_core)
+target_compile_features(P1bHostPlayTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bHostPlayTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_hostplay COMMAND P1bHostPlayTests)
+
+# P1b fase 4: flush forzado antes de guardar.
+add_executable(P1bSaveTests P1bSaveTests.cpp)
+target_link_libraries(P1bSaveTests PRIVATE pitchnet_core)
+target_compile_features(P1bSaveTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bSaveTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_save COMMAND P1bSaveTests)
+
 # Two groups, same executable: "deferred" is the bare queue behaviour, "wiring"
 # is the invariant over MainComponent.cpp and the undo history size.
 add_executable(P1bRenderAtPlayTests P1bRenderAtPlayTests.cpp)

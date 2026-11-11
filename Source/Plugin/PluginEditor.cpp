@@ -1790,6 +1790,12 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
           if (!view)
             return;
 
+          // P1b fase 3: en el borde de arranque, con bloques sucios, el
+          // transporte se retiene (stop -> flush -> start). Sin sucios esto
+          // devuelve false y el Play pasa sin ciclo stop/start.
+          if (isPlaying && view->flushDirtyBlocksForHostPlay())
+            return;
+
           view->updateHostPlaybackState(isPlaying);
         });
   } else {

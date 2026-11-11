@@ -335,9 +335,15 @@ private:
   // P1b: renders the dirty blocks, one per pass, and only then starts the
   // transport. The cursor waits for the last block.
   void flushDirtyBlocks();
+  // P1b fase 3: borde de arranque del Play del host. Devuelve true si el
+  // transporte se retiene para renderizar y se reanuda al terminar la cadena.
+  bool flushDirtyBlocksForHostPlay() override;
   bool deferredRenderPending = false;
   bool flushChainActive = false;
   bool playAfterFlush = false;
+  // P1b fase 4: el guardado espera al flush y se reanuda cuando este termina.
+  bool resumeSaveAfterFlush = false;
+  bool saveAsAfterFlush = false;
   // Engine change: the audio was rendered by the previous engine, so every
   // edited note is rendered again by the new one (Project::markEditedNotesDirty).
   void rerenderEditedNotes();

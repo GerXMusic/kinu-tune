@@ -181,6 +181,10 @@ public:
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
+  // P1b: the host started playback. Returns true when the view is holding the
+  // transport back: it stops the host, renders the dirty blocks and restarts
+  // playback when they are done. False means there was nothing to do.
+  virtual bool flushDirtyBlocksForHostPlay() { return false; }
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
