@@ -88,6 +88,14 @@ target_compile_definitions(P1bSaveTests PRIVATE
     P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
 add_test(NAME P1b_save COMMAND P1bSaveTests)
 
+# P1b fase 5: al abrir se usa el render guardado, sin resintetizar.
+add_executable(P1bOpenTests P1bOpenTests.cpp)
+target_link_libraries(P1bOpenTests PRIVATE pitchnet_core)
+target_compile_features(P1bOpenTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bOpenTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_open COMMAND P1bOpenTests)
+
 # Two groups, same executable: "deferred" is the bare queue behaviour, "wiring"
 # is the invariant over MainComponent.cpp and the undo history size.
 add_executable(P1bRenderAtPlayTests P1bRenderAtPlayTests.cpp)
