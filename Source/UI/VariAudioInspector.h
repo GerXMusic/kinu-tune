@@ -64,6 +64,22 @@ public:
     std::function<void(float)> onParamEditValue;
     std::function<void()> onParamEditEnd;
 
+    // Per-note engine (M2 paso 2, D-125). The value shown is the one the
+    // selection will render with; a change that the silence rule refuses is
+    // reported back by the owner, and this poll puts the menu where the audio
+    // actually is.
+    std::function<std::optional<NoteEngine>()> getNoteEngine;
+    std::function<void(NoteEngine)> onNoteEngineChanged;
+
+    // D-185: what the note renders with, and — when the last request was
+    // refused by D-129 — what was asked. Transparency only; the rule does not
+    // change here.
+    struct EngineStatus {
+        SynthesisEngineType effective = SynthesisEngineType::Psola;
+        std::optional<NoteEngine> refusedRequest;
+    };
+    std::function<std::optional<EngineStatus>()> getEngineStatus;
+
 private:
     class ComboLookAndFeel; // shrinks long scale names to fit the menu
 
@@ -113,6 +129,9 @@ private:
     juce::ComboBox smartControlsBox;
     juce::Label snapModeLabel;
     juce::ComboBox snapModeBox;
+    juce::Label engineLabel;
+    juce::ComboBox engineBox;
+    juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
     std::array<std::unique_ptr<ValueRow>, 5> rows;
     bool editingRow = false;
@@ -130,6 +149,7 @@ private:
     // pick whose (asynchronous) onChange has not run yet; refresh must not
     // overwrite it, or onChange would read the old value back.
     int shownSnapModeId = 0;
+    int shownEngineId = 0;
     int shownRootId = 0;
     int shownModeId = 0;
 

@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "Note.h"
+#include <optional>
 #include <vector>
 #include <memory>
 #include <utility>
@@ -189,6 +190,22 @@ public:
     std::vector<Note *> getSelectedNotes();
     bool removeNoteByStartFrame(int startFrame);
     std::vector<Note *> getDirtyNotes();
+    // A completed render clears the dirty flags on the project it rendered.
+    // The persistent project must take that state back as well, or the next
+    // edit re-renders every note and untouched blocks stop being bit-exact.
+    void applyRenderedNoteState(const Project &rendered);
+    // A dirty note is restored from the pristine source only when it is
+    // neutral *and* no project-wide edit (pitch/formant) or per-note engine
+    // choice changes what should be rendered. Otherwise the neutral reset
+    // would overwrite the very synthesis the edit asked for.
+    bool shouldResetNeutralNoteToOriginal(const Note &note) const;
+    // True when the project's audio differs from the raw ARA source and must
+    // therefore be published with the region. It is the inverse of "every
+    // note is neutral", extended with the edits that live outside a note's
+    // pitch fields: a project-wide pitch/formant offset and an explicit
+    // per-note engine choice (the engine changes the rendered timbre even
+    // when the note's pitch is untouched).
+    bool hasRegionEdits() const;
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
     void clearAllDirty();
@@ -202,6 +219,24 @@ public:
 
     float getVolume() const { return volume; }
     void setVolume(float vol) { volume = vol; }
+
+    // Engine this document was last rendered with (D-174, I-19). Absent in
+    // documents written before the field existed and in fresh projects: those
+    // follow the process/user preference, which stays the default for new
+    // work. Once the user picks an engine for a document, the choice travels
+    // inside the Project (and therefore inside the ARA/plugin archive), so a
+    // second document with a different engine is not overwritten by whichever
+    // one was modified last.
+    const std::optional<SynthesisEngineType> &getSynthesisEngine() const
+    {
+        return synthesisEngine;
+    }
+    void setSynthesisEngine(SynthesisEngineType type)
+    {
+        synthesisEngine = type;
+        modified = true;
+    }
+    void clearSynthesisEngine() { synthesisEngine.reset(); }
 
     // Per-project pitch-center correction strength (0-100%).  ARA regions
     // carry their own Project, so this remains independent per region.
@@ -237,6 +272,15 @@ public:
     // one. A project-wide pitch offset or formant shift reaches every note.
     // Returns the number of notes marked; nothing is marked when it is 0.
     int markEditedNotesDirty();
+
+    // D-197: independent walk over the last markEditedNotesDirty() selection,
+    // grouped into blocks separated by D-129 silence. Dirty flags are untouched.
+    bool hasEditedBlockPlan() const;
+    bool nextEditedBlockRange(int &startFrame, int &endFrame);
+
+    // D-197: edited notes are grouped into blocks separated by D-129 silence.
+    // Only one block is marked dirty per render, so two distant edits no
+    // longer force a single render spanning the whole gap between them.
 
     // F0 curve dirty tracking (for pitch tools and undo/redo)
     void setF0DirtyRange(int startFrame, int endFrame);
@@ -327,9 +371,16 @@ private:
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
 
+    // Per-document engine choice; absent = follow the shared preference.
+    std::optional<SynthesisEngineType> synthesisEngine;
+
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
+
+    // D-197 edited-note block walk (padded frame spans, not note flags).
+    std::vector<std::pair<int, int>> editedBlockRanges;
+    int editedBlockCursor = -1;
 
     bool modified = false;
 
@@ -341,3 +392,4 @@ private:
     int scaleRootNote = 0; // 0 = C, 1 = C#, ..., 11 = B
     std::shared_ptr<MacroParameters> macroParameters;
 };
+

@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "AraEnginePolicy.h"
 #include "../Utils/AudioResampler.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
@@ -77,6 +78,12 @@ namespace {
 constexpr std::uint32_t kPluginStateMagic = 0x504E5053u; // PNPS
 constexpr int kPluginStateBinaryVersion = 1;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-138: identity of each plugin instance in this process, so a write to the
+// static bypass flag can be attributed to the instance that made it.
+std::atomic<int> diagProcessorInstanceCounter{0};
+#endif
+
 bool writeStateString(juce::OutputStream &out, const juce::String &text) {
   const auto bytes = text.getNumBytesAsUTF8();
   return out.writeInt64(static_cast<juce::int64>(bytes)) &&
@@ -108,15 +115,7 @@ void mergeRenderedState(Project &target, const Project &rendered) {
   targetAudio.timelineOffsetSeconds = renderedAudio.timelineOffsetSeconds;
   targetAudio.playbackRegionRanges = renderedAudio.playbackRegionRanges;
 
-  auto &targetNotes = target.getNotes();
-  const auto &renderedNotes = rendered.getNotes();
-  if (targetNotes.size() == renderedNotes.size()) {
-    for (size_t i = 0; i < targetNotes.size(); ++i) {
-      const auto &renderedNote = renderedNotes[i];
-      targetNotes[i].setRenderedEdit(renderedNote.hasRenderedEdit());
-      targetNotes[i].setSynthDirty(renderedNote.isSynthDirty());
-    }
-  }
+  target.applyRenderedNoteState(rendered);
 }
 
 // Some AAX hosts deactivate an effect as soon as a rendered block contains an
@@ -192,10 +191,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 PitchNetAudioProcessor::createParameterLayout() {
   std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-  // Bypass — standard host bypass
-  params.push_back(std::make_unique<juce::AudioParameterBool>(
-      juce::ParameterID{PARAM_BYPASS, 1}, "Bypass", false));
-
   // Output Gain — post-processing volume in dB
   params.push_back(std::make_unique<juce::AudioParameterFloat>(
       juce::ParameterID{PARAM_OUTPUT_GAIN, 1}, "Output Gain",
@@ -233,6 +228,14 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     :
 #endif
       apvts(*this, nullptr, "PitchNetParameters", createParameterLayout()) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-138: identity of this plugin instance, so a write to the static bypass
+  // flag can be attributed to the instance that made it.
+  diagInstanceId = ++diagProcessorInstanceCounter;
+  // D-141: registry of live instances (key = id, never a controller pointer).
+  araRegisterProcessor(diagInstanceId, this);
+  ARA_DIAG("D141 instance created: " + juce::String(diagInstanceId));
+#endif
   // The standalone app does this at startup; a plug-in instance has no such
   // entry point, so the saved (or system) language is applied here instead.
   Localization::loadFromSettings();
@@ -243,7 +246,6 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   OnnxRuntime::initialise();
 
   // Cache raw parameter pointers for lock-free audio-thread access
-  bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);
   outputGainParamValue = apvts.getRawParameterValue(PARAM_OUTPUT_GAIN);
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
@@ -308,6 +310,17 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-146: instance identity for the processed-audio lock owner tracker.
+  araDiagLockInstance = diagInstanceId;
+#endif
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-142 route (c): "the FX registers itself here" attempt. Only diagnostics:
+  // the last registration wins, and the render trace records which instance
+  // that is and what bypass value it holds.
+  araPrepareInstance.store(diagInstanceId, std::memory_order_relaxed);
+  araPrepareParamMilli.store(-2, std::memory_order_relaxed);
+#endif
 
   // Report zero latency — PitchNet uses pre-computed audio buffers,
   // so output at time T corresponds to input at time T (no analysis delay).
@@ -323,6 +336,75 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   // source) regardless of whether state restore ran before or after this.
   if (isPlaybackRenderer())
     ensureHeadlessAraBinding();
+#endif
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-143: which role is this instance, which region sequences (tracks) it
+  // sees, and their host refs (the track identity used by key (b)).
+  {
+    juce::String roles;
+    if (isPlaybackRenderer())
+      roles += "P";
+    if (isEditorRenderer())
+      roles += "E";
+    juce::String sequences;
+    auto collect = [this, &sequences](auto *renderer) {
+      for (auto *region : renderer->getPlaybackRegions()) {
+        if (region == nullptr)
+          continue;
+        auto *sequence = region->getRegionSequence();
+        if (sequence == nullptr)
+          continue;
+        const char *name = sequence->getName();
+        const auto ref = static_cast<juce::uint64>(
+            reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+        sequences << " [" << (name != nullptr ? name : "?") << " ref="
+                  << juce::String::toHexString(static_cast<juce::int64>(ref))
+                  << " h=" << juce::String::toHexString(araHashName(name)) << "]";
+        // D-143: only the FX role registers as the identity source; the
+        // playback renderer just reports its own track. Registering from the
+        // renderer would map the track to the renderer instance, not the FX.
+      }
+    };
+    if (auto *playback = getPlaybackRenderer<PitchNetPlaybackRenderer>())
+      collect(playback);
+    if (auto *editor = getEditorRenderer<PitchNetEditorRenderer>()) {
+      // The editor renderer may have no playback regions but it does have the
+      // document's region sequences (tracks) - that is the key the FX instance
+      // can read for itself.
+      for (auto *sequence : editor->getRegionSequences()) {
+        if (sequence == nullptr)
+          continue;
+        const char *name = sequence->getName();
+        const auto ref = static_cast<juce::uint64>(
+            reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+        sequences << " [" << (name != nullptr ? name : "?") << " ref="
+                  << juce::String::toHexString(static_cast<juce::int64>(ref))
+                  << " h=" << juce::String::toHexString(araHashName(name)) << "]";
+        araRegisterTrackRef(ref, diagInstanceId, this);
+      }
+      // Also the document's sequences (what the FX instance can reach through
+      // its editor renderer's document controller): informational only, they
+      // are NOT registered - the document is shared and would map a track id
+      // to the wrong instance (D-143).
+      if (auto *dc = editor->getDocumentController()) {
+        if (auto *doc = dc->getDocument()) {
+          for (auto *sequence : doc->getRegionSequences()) {
+            if (sequence == nullptr)
+              continue;
+            const char *name = sequence->getName();
+            const auto ref = static_cast<juce::uint64>(
+                reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+            sequences << " {doc:" << (name != nullptr ? name : "?") << " ref="
+                      << juce::String::toHexString(static_cast<juce::int64>(ref))
+                      << "}";
+          }
+        }
+      }
+    }
+    ARA_DIAG("D143 role: instance=" + juce::String(diagInstanceId) + " roles=" +
+             roles + " bypass=-2 seqs=" + sequences);
+
+  }
 #endif
 
   // Non-ARA capture controller.
@@ -534,14 +616,17 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
   bool didProcessHostSync = false;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-146: instance identity for the processed-audio lock owner tracker.
+  araDiagLockInstance = diagInstanceId;
+#endif
 
-  // Check bypass — if bypassed, pass through input unchanged
-  const bool bypassed = bypassParamValue->load() >= 0.5f;
-  if (bypassed) {
-    // Transport sync still needs to run even when bypassed
-    transportController.processBlock(getPlayHead(), hostSampleRate);
-    return; // Input buffer passes through unchanged
-  }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-153: the plugin no longer reads an internal bypass parameter. Per-track
+  // bypass is the host's job; this path is always the non-bypassed render.
+  if (araDocumentController != nullptr)
+    araDocumentController->setBypassIntentForDiagnostics(0.0f);
+#endif
 
 #if JucePlugin_Enable_ARA
   // ARA mode: let ARA renderer handle audio, then apply output processing.
@@ -552,7 +637,15 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     didProcessHostSync = true;
     checkParameterChanges();
 
-    if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+    // P1b: durante el flush de Play en plugin no suena el audio anterior.
+    if (backendFlushActive.load(std::memory_order_acquire))
+    {
+      buffer.clear();
+      return;
+    }
+
+    const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
+    if (handled) {
       // ARA playback has no meaningful input/dry buffer. The playback renderer
       // replaces the buffer from ARA audio modifications or original sources,
       // so mixing against the host input can mute playback when that input is
@@ -563,6 +656,24 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
       sanitiseARAOutput(buffer);
       return;
     }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-134: the block was not handled by ARA. Record whether the plugin is
+    // bound at all, so "ARA not ready" can be told apart from a renderer that
+    // ran and produced silence.
+    {
+      AraBlockTrace record;
+      juce::int64 t = 0;
+      if (auto *ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+          t = pos->getTimeInSamples().orFallback(0);
+      record.t = t;
+      record.n = buffer.getNumSamples();
+      record.exitCode = 5;
+      record.bound = isBoundToARA() ? 1 : 0;
+      record.thread = araDiagThreadId();
+      araBlockTracePush(record);
+    }
+#endif
   }
 #endif
 
@@ -591,12 +702,18 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
 void PitchNetAudioProcessor::processBlockBypassed(
     juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
-  juce::ignoreUnused(midiMessages);
+  juce::ignoreUnused(buffer, midiMessages);
 
-  // Transport sync still runs when bypassed so cursor stays in sync
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-153: per-track bypass is the host's job. If a host still calls the
+  // plugin-level bypass, leave the input untouched; in ARA that means the host
+  // must disable the FX, not the plugin, to hear the raw track.
+  if (araDocumentController != nullptr)
+    araDocumentController->setBypassIntentForDiagnostics(1.0f);
+#endif
+
+  // Keep the transport cursor in sync on this path too.
   transportController.processBlock(getPlayHead(), hostSampleRate);
-
-  // Input passes through unchanged (buffer already contains input)
 }
 
 void PitchNetAudioProcessor::processNonARAMode(
@@ -1368,6 +1485,11 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (controller == nullptr)
     return;
 
+  // P1b: si este render viene del flush de Play, se silencia la salida hasta
+  // que termine (se limpia en el callAsync de cierre).
+  if (mainComponent != nullptr && mainComponent->isFlushChainActive())
+    backendFlushActive.store(true, std::memory_order_release);
+
   auto *backendProject = controller->getProject();
   if (!backendProject)
   {
@@ -1411,8 +1533,12 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       *backendProject,
       [safeMain](const juce::String &message) {
         juce::MessageManager::callAsync([safeMain, message]() {
-          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
             view->setStatusMessage(message);
+            // P1b: el barrido del piano roll avanza tambien en modo plugin,
+            // donde la lambda de progreso de MainComponent no llega a crearse.
+            safeMain->repaint();
+          }
         });
       },
       [this, controller, renderActiveAraRegion, renderRegionKey, renderRegionRevision,
@@ -1498,6 +1624,9 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                        " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
                        " changedRanges=" +
                        juce::String(static_cast<int>(renderChangedSampleRanges.size())));
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+              araNotePublish(diagInstanceId);
+#endif
               renderModification->setProcessedAudio(
                   processedSlice, processedRate,
                   /*startSampleInModification*/ 0);
@@ -1531,6 +1660,10 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
           }
         }
 
+        // P1b: el render termino (bien o mal): se levanta el silencio. Si fallo,
+        // vuelve a oirse el audio anterior en lugar de quedar mudo.
+        if (renderModification != nullptr)
+          renderModification->renderPending.store(false, std::memory_order_release);
         if (target != nullptr) {
           if (auto it = araRegions.find(renderRegionKey); it != araRegions.end())
             ++it->second.revision;
@@ -1541,6 +1674,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         juce::MessageManager::callAsync(
             [this, renderSafeMain, success, renderActiveAraRegion,
              renderRegionStartSeconds]() {
+              backendFlushActive.store(false, std::memory_order_release);
               if (auto *view =
                       dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
                 if (success) {
@@ -1569,8 +1703,41 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       pendingRerun, true);
 }
 
+void PitchNetAudioProcessor::applyDocumentSynthesisEngine(
+    const Project &project) {
+  if (const auto engine = project.getSynthesisEngine())
+    renderEngine->value.store(*engine);
+}
+
+void PitchNetAudioProcessor::applySharedDocumentEngine(Project &project) {
+#if JucePlugin_Enable_ARA
+  if (activeModification != nullptr)
+    if (const auto chosen = pitchnet::chooseSharedEngine(
+            activeModification->getDocumentSynthesisEngine(),
+            project.getSynthesisEngine()))
+      project.setSynthesisEngine(*chosen);
+#else
+  juce::ignoreUnused(project);
+#endif
+}
+
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
+  applyDocumentSynthesisEngine(project);
+#if JucePlugin_Enable_ARA
+  // P1b: una edicion con bloques sucios deja la region pendiente de render; el
+  // pestillo del playback renderer la silencia en el siguiente Play.
+  if (activeModification != nullptr &&
+      (project.hasDirtyNotes() || project.hasF0DirtyRange()))
+    activeModification->renderPending.store(true, std::memory_order_release);
+#endif
+#if JucePlugin_Enable_ARA
+  // D-179: publish the engine to the shared modification so another window
+  // switching to this region sees it even if its cached Project is older.
+  if (activeModification != nullptr)
+    if (auto engine = project.getSynthesisEngine())
+      activeModification->setDocumentSynthesisEngine(engine);
+#endif
   ++araCanvasEditSerial;
   std::unique_ptr<Project> araRegionScopedProject;
 #if JucePlugin_Enable_ARA
@@ -1592,6 +1759,10 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
       araRegionScopedProject != nullptr ? *araRegionScopedProject : project;
 
   araAnalysisProjectSnapshot = std::make_unique<Project>(stateProject);
+  // Only a canvas project scoped to the active region can stand in for that
+  // region's archive; a document/composite snapshot must not (D-166).
+  araAnalysisSnapshotRegionKey =
+      araRegionScopedProject != nullptr ? activeRegionKey : juce::String();
   invalidateAraAnalysisProjectJson();
   araAnalysisReady =
       stateProject.getAudioData().waveform.getNumSamples() > 0 &&
@@ -1633,6 +1804,9 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
                  juce::String(processed.getNumSamples()) + " rate=" +
                  juce::String(processedRate, 1) + " offset=0" +
                  " fp=" + juce::String(araDiagFingerprint(processed), 6));
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        araNotePublish(diagInstanceId);
+#endif
         activeModification->setProcessedAudio(processed, processedRate,
                                               /*startSampleInModification*/ 0);
 
@@ -1666,28 +1840,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
 
 #if JucePlugin_Enable_ARA
 bool PitchNetAudioProcessor::projectHasRegionEdits(const Project &project) {
-  if (project.getGlobalPitchOffset() != 0.0f ||
-      project.getFormantShift() != 0.0f)
-    return true;
-
-  // Compare each note against the original rather than trusting
-  // hasRenderedEdit(). That flag is historical: it records that a note once
-  // contributed to the persisted composite, and it is only refreshed for
-  // commit anchors, so resetting one note cleared its own flag while every
-  // other previously-edited note kept the whole region on the resynthesis
-  // path. A fully reset region therefore never fell back to the untouched ARA
-  // source, and stayed on a re-synthesised blob whose splice boundaries are
-  // audible as a click on every syllable.
-  //
-  // isNeutralForOriginalWaveform() checks timing, pitch, baked delta, offset,
-  // formant, volume, tilt, vibrato, drift, smoothing and delta scale, so a
-  // note it calls neutral is one the original audio already represents
-  // exactly.
-  for (const auto &note : project.getNotes())
-    if (!note.isRest() && !note.isNeutralForOriginalWaveform())
-      return true;
-
-  return false;
+  return project.hasRegionEdits();
 }
 #endif
 const Project *PitchNetAudioProcessor::projectForPersistentState() const {
@@ -1898,6 +2051,7 @@ bool PitchNetAudioProcessor::restoreProjectJsonToProcessorState(
   if (!ProjectSerializer::fromJson(*restoredProject, parsed))
     return false;
   adoptMacroParameters(*restoredProject);
+  applyDocumentSynthesisEngine(*restoredProject);
 
   araAnalysisTimelineOffsetSeconds =
       restoredProject->getAudioData().timelineOffsetSeconds;
@@ -1928,6 +2082,7 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
   if (ProjectSerializer::fromBinaryArchive(*restoredProject, data,
                                             sizeInBytes)) {
     adoptMacroParameters(*restoredProject);
+    applyDocumentSynthesisEngine(*restoredProject);
     pendingStateJson.clear();
     araAnalysisTimelineOffsetSeconds =
         restoredProject->getAudioData().timelineOffsetSeconds;
@@ -2003,6 +2158,11 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     trackAnalysisCancelled = false;
     trackAnalysisAttempted.clear();
   }
+#endif
+#if JucePlugin_Enable_ARA
+  // P1b: al cerrar el editor no debe quedar una region muda para siempre.
+  if (mc == nullptr && activeModification != nullptr)
+    activeModification->renderPending.store(false, std::memory_order_release);
 #endif
   if (mainComponent != nullptr && mainComponent != mc) {
     if (auto *project = mainComponent->getProject())
@@ -2421,6 +2581,17 @@ void PitchNetAudioProcessor::setActiveAraRegion(
   if (key.isEmpty())
     return;
 
+  // D-180: measurement only. Stores the total even on an early return.
+  const double activationStartMs =
+      juce::Time::getMillisecondCounterHiRes();
+  struct ActivationTotalGuard {
+    std::atomic<double> &target;
+    double startMs;
+    ~ActivationTotalGuard() {
+      target.store(juce::Time::getMillisecondCounterHiRes() - startMs);
+    }
+  } activationTotal{lastActivationTotalMs, activationStartMs};
+
   const auto selector = pitchnetRegionSelector(*region);
 
   if (key != activeRegionKey && trackAnalysisRunning) {
@@ -2430,6 +2601,8 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     trackAnalysisCancelled = false;
     trackAnalysisAttempted.clear();
   }
+  lastActivationCancelMs.store(
+      juce::Time::getMillisecondCounterHiRes() - activationStartMs);
 
   if (key == activeRegionKey) {
     // Studio One Event FX can bind and select the playback region before the
@@ -2490,7 +2663,11 @@ void PitchNetAudioProcessor::setActiveAraRegion(
     if ((it == araRegions.end() || !it->second.project) &&
         activeModification != nullptr) {
       juce::MemoryBlock archive;
+      const double archiveCopyStartMs =
+          juce::Time::getMillisecondCounterHiRes();
       if (activeModification->copyProjectArchive(archive)) {
+        lastActivationCopyMs.store(
+            juce::Time::getMillisecondCounterHiRes() - archiveCopyStartMs);
         restoreAraRegionProject(key, archive.getData(), archive.getSize());
         // Restoring the archive can synchronously hydrate and move the Project
         // into the canvas. Its map slot is then empty by design, not evidence
@@ -2516,6 +2693,7 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       pendingRegionCanvasAnalysisKey.clear();
       regionCanvasAnalysisPending.store(false);
       attachMacroParameters(*it->second.project);
+      applySharedDocumentEngine(*it->second.project);
       auto displaced =
           mainComponent->exchangeProject(std::move(it->second.project));
       juce::ignoreUnused(displaced);
@@ -2933,6 +3111,9 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
         ? getTrackUndoManager(activeUndoTrackKey) : undoManager.get());
   }
 
+  // P1b: al desactivar la region no debe quedar muda para siempre.
+  if (activeModification != nullptr)
+    activeModification->renderPending.store(false, std::memory_order_release);
   activeModification = nullptr;
   activeRegionKey.clear();
   activeRegionSelector.clear();
@@ -2999,6 +3180,14 @@ bool PitchNetAudioProcessor::serializeAraRegionProject(
   if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
       mainComponent != nullptr)
     project = mainComponent->getProject();
+  // Editor already closed (or the canvas no longer owns the project): the
+  // processor's snapshot is the last editor state and is fresher than the
+  // region cache, which is only refreshed when the canvas is released. Without
+  // this, a global switch changed just before saving was written to the VST
+  // state but not to the ARA region archive (D-166).
+  if (project == nullptr && regionKey == araAnalysisSnapshotRegionKey &&
+      araAnalysisProjectSnapshot)
+    project = araAnalysisProjectSnapshot.get();
   if (project == nullptr) {
     const auto it = araRegions.find(regionKey);
     if (it != araRegions.end())
@@ -3236,6 +3425,8 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
   auto installRestoredProject = [this, &regionKey](
                                     std::unique_ptr<Project> project) {
     attachMacroParameters(*project);
+    applyDocumentSynthesisEngine(*project);
+    applySharedDocumentEngine(*project);
 
     // Restored state is filed under the live key by the document controller, so
     // there is no archived-to-live migration left to do. What stood here
@@ -3312,32 +3503,59 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     pushTimelineDisplayOffset();
     if (auto *shown = mainComponent->getProject())
       stampActiveRegionSpan(*shown);
+    const double bindStartMs = juce::Time::getMillisecondCounterHiRes();
     mainComponent->bindRealtimeProcessor(realtimeProcessor);
+    lastActivationBindMs.store(
+        juce::Time::getMillisecondCounterHiRes() - bindStartMs);
     canvasShowsActiveAraRegion = true;
     mainComponent->hideAnalysisProgress();
     {
       const auto span = activeRegionSpanInModificationTime();
+      const double focusStartMs = juce::Time::getMillisecondCounterHiRes();
       mainComponent->focusTimelineRange(span.first, span.second);
+      lastActivationFocusMs.store(
+          juce::Time::getMillisecondCounterHiRes() - focusStartMs);
     }
   };
 
   auto project = std::make_unique<Project>();
-  if (ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
-      projectHasRestorableAnalysisData(*project)) {
+  // D-180: measurement only. Includes the mel rebuild that v10+ archives do on
+  // load; that is the cost the message thread pays before the new track appears.
+  const double restoreStartMs = juce::Time::getMillisecondCounterHiRes();
+  const bool binaryRestored =
+      ProjectSerializer::fromBinaryArchive(*project, data, sizeInBytes) &&
+      projectHasRestorableAnalysisData(*project);
+  if (binaryRestored) {
+    const double parseMs =
+        juce::Time::getMillisecondCounterHiRes() - restoreStartMs;
+    lastArchiveRestoreMs.store(parseMs);
+    lastActivationParseMs.store(parseMs);
+    const double installStartMs =
+        juce::Time::getMillisecondCounterHiRes();
     installRestoredProject(std::move(project));
+    lastActivationInstallMs.store(
+        juce::Time::getMillisecondCounterHiRes() - installStartMs);
     return;
   }
 
   const juce::String json(juce::CharPointer_UTF8(static_cast<const char *>(data)),
                           sizeInBytes);
   const auto parsed = juce::JSON::parse(json);
-  if (!parsed.isObject())
-    return;
-
   project = std::make_unique<Project>();
-  if (ProjectSerializer::fromJson(*project, parsed) &&
-      projectHasRestorableAnalysisData(*project))
+  const bool jsonRestored =
+      parsed.isObject() && ProjectSerializer::fromJson(*project, parsed) &&
+      projectHasRestorableAnalysisData(*project);
+  const double parseMs =
+      juce::Time::getMillisecondCounterHiRes() - restoreStartMs;
+  lastArchiveRestoreMs.store(parseMs);
+  lastActivationParseMs.store(parseMs);
+  if (jsonRestored) {
+    const double installStartMs =
+        juce::Time::getMillisecondCounterHiRes();
     installRestoredProject(std::move(project));
+    lastActivationInstallMs.store(
+        juce::Time::getMillisecondCounterHiRes() - installStartMs);
+  }
 }
 
 void PitchNetAudioProcessor::attachMacroParameters(Project &project) {
@@ -3380,6 +3598,9 @@ void PitchNetAudioProcessor::ensureHeadlessAraBinding() {
   // so loading a saved project with the UI closed still wires the playback
   // renderer to the realtime processor and can restore project state.
   if (auto *pr = getPlaybackRenderer<PitchNetPlaybackRenderer>()) {
+    ARA_DIAG("D141 headless: instance=" + juce::String(diagInstanceId) +
+             " renderer=" + ARA_DIAG_PTR(pr) + " dc=" +
+             ARA_DIAG_PTR(pr->getDocController()));
     if (auto *dc = pr->getDocController()) {
       setAraDocumentController(dc);
 
@@ -3410,6 +3631,10 @@ void PitchNetAudioProcessor::didBindToARA() noexcept {
 }
 
 PitchNetAudioProcessor::~PitchNetAudioProcessor() {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("D141 instance destroyed: " + juce::String(diagInstanceId));
+  araUnregisterProcessor(diagInstanceId);
+#endif
   // Cancel every backend before member destruction starts joining workers.
   for (auto& entry : modificationRenders)
     if (entry.second.controller) entry.second.controller->requestShutdown();

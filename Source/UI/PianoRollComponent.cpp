@@ -488,6 +488,10 @@ void PianoRollComponent::setHorizontalScrollBarVisible(bool shouldShow)
 
 void PianoRollComponent::paint(juce::Graphics &g)
 {
+  // D-180: measurement only.
+  const double paintStartMs = juce::Time::getMillisecondCounterHiRes();
+  ++paintCount;
+
   updatePitchToolHandlesFromSelection();
 
   // Background (solid to keep grid clean)
@@ -627,6 +631,11 @@ void PianoRollComponent::paint(juce::Graphics &g)
                                       .withTrimmedBottom(horizontalScrollBarSize);
   g.setColour(juce::Colour(0xFF3C3C3Cu));
   g.drawRect(canvasBorderBounds, 1);
+
+  // D-180: measurement only.
+  lastPaintDurationMs =
+      juce::Time::getMillisecondCounterHiRes() - paintStartMs;
+  maxPaintDurationMs = std::max(maxPaintDurationMs, lastPaintDurationMs);
 }
 
 void PianoRollComponent::resized()
@@ -3474,7 +3483,8 @@ void PianoRollComponent::dropTransientNotePointers()
   // committed safely any more (the list may already be rebuilt).
   inspectorEditActive = false;
   inspectorEditNotes.clear();
-  inspectorEditOldParams.clear();
+  if (selectHandler_)
+    selectHandler_->cancel();  inspectorEditOldParams.clear();
   inspectorEditSourceMidi.clear();
   hoveredNote = nullptr;
   if (pitchToolHandles)

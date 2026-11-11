@@ -34,8 +34,8 @@ constexpr int kBrightnessRowHeight = 28;
 constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
-    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
-    kRenderStatusRowHeight + kInnerPadY;
+    kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
+    (kRowGap + 1) + kRenderStatusRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
@@ -548,7 +548,7 @@ void ParameterPanel::resized()
         engineRow.removeFromLeft(columnGap);
     }
 
-    bounds.removeFromTop(kRowGap);
+    bounds.removeFromTop(kRowGap + 1);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
     if (renderDeviceRowVisible)

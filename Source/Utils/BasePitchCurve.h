@@ -9,14 +9,14 @@
 
 /**
  * Generates a smoothed base pitch curve from note MIDI values.
- * 
+ *
  * Algorithm: Step function smoothing with cosine-windowed convolution
  * Reference: ds-editor-lite BasePitchCurve (based on OpenSVIP Ace plugin)
- * 
+ *
  * The algorithm:
  * 1. Creates a step function where each note has a constant semitone value
  * 2. At note boundaries, switches at the midpoint between notes
- * 3. Applies cosine-windowed convolution (119-point kernel, ?59ms, 0.12s window)
+ * 3. Applies cosine-windowed convolution (81-point kernel, ~80 ms window)
  * 4. Results in a smooth base pitch curve that preserves note transitions
  */
 class BasePitchCurve
@@ -26,6 +26,10 @@ public:
         int startFrame;
         int endFrame;
         float midiNote;
+        // target - original, in semitones. Zero for an unmodified note and for
+        // callers that only need the plain base curve. D-182 uses it to find
+        // the boundaries that need a glide.
+        float shiftSemitones = 0.0f;
     };
 
     // Accessors for incremental preview utilities.
@@ -52,8 +56,10 @@ public:
                                                     int numFrames);
 
 private:
-                static constexpr int KERNEL_SIZE = 81;  // ~80ms total window at 1000Hz sampling
-                static constexpr double SMOOTH_WINDOW = 0.08;  // 80ms total window for faster transitions
+    static constexpr int KERNEL_SIZE = 81;  // ~80ms total window at 1000Hz sampling
+    static constexpr double SMOOTH_WINDOW = 0.08;  // 80ms total window for faster transitions
 
     static std::vector<double> createCosineKernel();
+    static std::vector<float> generateSmoothed(const std::vector<NoteSegment>& notes,
+                                                int totalFrames);
 };

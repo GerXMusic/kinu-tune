@@ -101,6 +101,15 @@ public:
   void requestPluginProjectRender(const Project &project,
                                   PitchNetAudioModification* target = nullptr);
   void updateProjectStateFromEditor(const Project &project);
+  // D-174: the engine choice belongs to the document. Applying a restored
+  // project updates the shared render preference of THIS processor (never the
+  // process/user settings file), so background/ARA controllers agree with the
+  // editor and a second document keeps its own engine.
+  void applyDocumentSynthesisEngine(const Project &project);
+  // D-179: apply the modification's shared engine (written by whichever
+  // instance last changed it) to a per-instance cached project before it is
+  // shown. The cached Project is only a copy; the modification is shared.
+  void applySharedDocumentEngine(Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
@@ -146,6 +155,9 @@ public:
 
   // Real-time processor access
   RealtimePitchProcessor &getRealtimeProcessor() { return realtimeProcessor; }
+  bool isBackendFlushActive() const {
+    return backendFlushActive.load(std::memory_order_acquire);
+  }
   double getHostSampleRate() const { return hostSampleRate; }
 
 #if JucePlugin_Enable_ARA
@@ -184,6 +196,27 @@ public:
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
   juce::String getActiveAraRegionSelector() const {
     return activeRegionSelector;
+  }
+  // D-180: measurement only. Time spent decoding/restoring a region archive in
+  // the last restoreAraRegionProject() call.
+  double getLastArchiveRestoreMs() const {
+    return lastArchiveRestoreMs.load();
+  }
+  // D-180: measurement only. Breakdown of the last setActiveAraRegion() call.
+  struct AraActivationTiming {
+    double cancelMs = 0.0;
+    double copyMs = 0.0;
+    double parseMs = 0.0;
+    double installMs = 0.0;
+    double focusMs = 0.0;
+    double bindMs = 0.0;
+    double totalMs = 0.0;
+  };
+  AraActivationTiming getLastAraActivationTiming() const {
+    return {lastActivationCancelMs.load(), lastActivationCopyMs.load(),
+            lastActivationParseMs.load(), lastActivationInstallMs.load(),
+            lastActivationFocusMs.load(), lastActivationBindMs.load(),
+            lastActivationTotalMs.load()};
   }
   // Read-only view of a modification's Project, for drawing the regions of a
   // track in Track mode. For the modification on the canvas this is the live
@@ -290,14 +323,23 @@ public:
   juce::AudioProcessorValueTreeState &getAPVTS() { return apvts; }
 
   // Parameter IDs (stable across versions for automation compatibility)
-  static constexpr const char *PARAM_BYPASS = "bypass";
   static constexpr const char *PARAM_OUTPUT_GAIN = "outputGain";
   static constexpr const char *PARAM_DRY_WET = "dryWet";
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-139 pre-test: the instance id of THIS processor.
+  int getDiagInstanceId() const { return diagInstanceId; }
+#endif
+
 private:
   void handleAsyncUpdate() override;
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-138: identity of this plugin instance.
+  int diagInstanceId = -1;
+#endif
 
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
@@ -349,7 +391,6 @@ private:
   juce::AudioProcessorValueTreeState apvts;
 
   // Raw parameter value pointers for lock-free audio-thread access
-  std::atomic<float> *bypassParamValue = nullptr;
   std::atomic<float> *outputGainParamValue = nullptr;
   std::atomic<float> *dryWetParamValue = nullptr;
   std::atomic<float> *pitchOffsetParamValue = nullptr;
@@ -372,6 +413,7 @@ private:
       std::make_shared<ParamSyncState>();
 
   PluginTransportController transportController;
+  std::atomic<bool> backendFlushActive{false};
   RealtimePitchProcessor realtimeProcessor;
 #if JucePlugin_Enable_ARA
   PitchNetDocumentController *araDocumentController = nullptr;
@@ -409,6 +451,11 @@ private:
   bool araAnalysisReady = false;
   double araAnalysisTimelineOffsetSeconds = 0.0;
   std::unique_ptr<Project> araAnalysisProjectSnapshot;
+  // Region whose live project the snapshot above was built from. Empty when
+  // the snapshot is a document/composite project. serializeAraRegionProject
+  // uses it as the freshest copy when the editor has already closed but the
+  // region cache still holds an older project (D-166).
+  juce::String araAnalysisSnapshotRegionKey;
   // Built on demand from araAnalysisProjectSnapshot. Serialising a
   // multi-minute take to JSON text costs tens of MB of string work, and
   // nothing in non-ARA plug-in mode ever reads it, so only pay for it where it
@@ -471,6 +518,15 @@ private:
   // must not take over the canvas or hide the region's progress popup.
   std::atomic<bool> regionCanvasAnalysisPending{false};
   std::atomic<std::uint64_t> regionCanvasAnalysisGeneration{0};
+  // D-180: measurement only (see plan/m2/d180-criterio.md).
+  std::atomic<double> lastArchiveRestoreMs{0.0};
+  std::atomic<double> lastActivationCancelMs{0.0};
+  std::atomic<double> lastActivationCopyMs{0.0};
+  std::atomic<double> lastActivationParseMs{0.0};
+  std::atomic<double> lastActivationInstallMs{0.0};
+  std::atomic<double> lastActivationFocusMs{0.0};
+  std::atomic<double> lastActivationBindMs{0.0};
+  std::atomic<double> lastActivationTotalMs{0.0};
   juce::String pendingRegionCanvasAnalysisKey;
   // Message-thread queue bookkeeping; never retain host-owned region pointers.
   std::set<juce::String> trackAnalysisAttempted;

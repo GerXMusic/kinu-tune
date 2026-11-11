@@ -80,7 +80,8 @@ void PitchCurveRenderer::updateBasePitchCacheIfNeeded()
         if (!note.isRest())
         {
           noteSegments.push_back(
-              {note.getStartFrame(), note.getEndFrame(), note.getMidiNote()});
+              {note.getStartFrame(), note.getEndFrame(), note.getMidiNote(),
+               note.getAdjustedMidiNote() - note.getOriginalMidiNote()});
         }
       }
 

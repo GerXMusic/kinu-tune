@@ -338,6 +338,15 @@ static bool mixProcessedRegionAudio(juce::AudioBuffer<float> &buffer,
 // PitchNetPlaybackRenderer
 //==============================================================================
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-137: the bypass parameter of the project (the intent of the render),
+// written by the processor that renders before every block.
+std::atomic<float>
+    PitchNetDocumentController::bypassIntentForDiagnostics{-1.0f};
+std::atomic<juce::int64>
+    PitchNetDocumentController::bypassIntentWriterThread{-1};
+#endif
+
 PitchNetDocumentController *
 PitchNetPlaybackRenderer::getDocController() const {
   auto *docController = getDocumentController();
@@ -354,6 +363,16 @@ void PitchNetPlaybackRenderer::prepareToPlay(
   numChannels = numChannelsIn;
   tempBuffer =
       std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: reference buffers for the per-block comparison. Pre-allocated here
+  // so the render thread never allocates.
+  diagRawBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+  diagProcessedBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+  diagTempBuffer =
+      std::make_unique<juce::AudioBuffer<float>>(numChannels, maxBlockSize);
+#endif
 
   bool useBuffered = (alwaysNonRealtime == AlwaysNonRealtime::no);
   juce::ignoreUnused(useBuffered);
@@ -388,6 +407,12 @@ void PitchNetPlaybackRenderer::ensureRenderResourcesFor(
 
   rawResamplingStates.try_emplace(region);
   processedResamplingStates.try_emplace(region);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: mirror slots, so a reference render can reuse the very same
+  // resampler state the real path uses.
+  diagRawResamplingStates.try_emplace(region);
+  diagProcessedResamplingStates.try_emplace(region);
+#endif
 
   auto *modification = region->getAudioModification();
   auto *source =
@@ -418,6 +443,78 @@ void PitchNetPlaybackRenderer::willRemovePlaybackRegion(
   processedResamplingStates.erase(region);
 }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+// D-136: analysis frames of a block window whose pitch ratio differs from 1.
+//
+// The ratio is the one the synthesiser builds
+// (IncrementalSynthesizer::buildPitchRatioCurve): target F0 (project base pitch
+// + delta + global pitch offset) over source F0, with the same 1e-3 tolerance.
+// Returns -1 when the project cannot be reached (editor closed) or the window
+// cannot be mapped to project frames.
+static int diagCountRatioNotOneFrames(const Project *project,
+                                      const juce::ARAPlaybackRegion &region,
+                                      juce::int64 timeInSamples, int numSamples,
+                                      double outputSampleRate) {
+  if (project == nullptr || region.getAudioModification() == nullptr)
+    return -1;
+  auto *source = region.getAudioModification()->getAudioSource();
+  if (source == nullptr)
+    return -1;
+  const double sourceRate = source->getSampleRate();
+  if (sourceRate <= 0.0 || outputSampleRate <= 0.0)
+    return -1;
+
+  const auto &audioData = project->getAudioData();
+  const auto &srcF0 =
+      audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+  if (srcF0.empty() || audioData.basePitch.empty())
+    return -1;
+
+  // Playback time of the block -> source (modification) samples.
+  const double blockStartSeconds =
+      static_cast<double>(timeInSamples) / outputSampleRate;
+  const double offsetSeconds =
+      blockStartSeconds - region.getStartInPlaybackTime();
+  const auto modStart =
+      region.getStartInAudioModificationSamples() +
+      static_cast<juce::int64>(std::llround(offsetSeconds * sourceRate));
+  const auto modEnd =
+      modStart + static_cast<juce::int64>(
+                      std::llround(static_cast<double>(numSamples) /
+                                   outputSampleRate * sourceRate));
+
+  // Modification samples -> project analysis frames (hop 512 at project rate).
+  const double projectRate = static_cast<double>(audioData.sampleRate);
+  const int frameStart = static_cast<int>(
+      std::floor(static_cast<double>(modStart) * projectRate / sourceRate /
+                 HOP_SIZE));
+  const int frameEnd = static_cast<int>(
+      std::ceil(static_cast<double>(modEnd) * projectRate / sourceRate /
+                HOP_SIZE));
+  const int clampedStart = std::max(frameStart, 0);
+  const int clampedEnd =
+      std::min(frameEnd, static_cast<int>(audioData.basePitch.size()));
+  if (clampedEnd <= clampedStart)
+    return 0;
+
+  const auto target = project->getAdjustedF0ForRange(clampedStart, clampedEnd);
+  int count = 0;
+  for (size_t i = 0; i < target.size(); ++i) {
+    const int frame = clampedStart + static_cast<int>(i);
+    if (frame < 0 || frame >= static_cast<int>(srcF0.size()))
+      continue;
+    const float sourceF0 = srcF0[static_cast<size_t>(frame)];
+    const float targetF0 = target[i];
+    if (sourceF0 > 0.0f && targetF0 > 0.0f) {
+      const float ratio = targetF0 / sourceF0;
+      if (std::abs(ratio - 1.0f) > 1e-3f)
+        ++count;
+    }
+  }
+  return count;
+}
+#endif
+
 bool PitchNetPlaybackRenderer::renderProcessedRegions(
     juce::AudioBuffer<float> &buffer, juce::int64 timeInSamples,
     int numSamples) {
@@ -428,9 +525,41 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
   // it.
   bool renderedAny = false;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-134: per-block accounting. Read-only; it never changes which audio is
+  // selected. rawAttempted/rawHadResources are aggregated over the regions
+  // that intersect this block.
+  int diagRegions = 0;
+  int diagIntersecting = 0;
+  int diagRawAttempted = 0;
+  int diagRawHadResources = 0;
+  int diagProcessedRendered = 0;
+  bool diagRawPathRan = false;
+  int diagProcLocked = -1;
+  int diagProcHasAudio = -1;
+  float diagProcFingerprint = 0.0f;
+  int diagLockFailCount = -1;
+  int diagLockOwnerKind = -1;
+  juce::int64 diagLockOwnerThread = 0;
+  int diagLockOwnerInstance = -1;
+  double diagLockHeldMs = -1.0;
+  int diagLockWaited = 0;
+  int diagLockResolved = 0;
+  double diagLockWaitMs = 0.0;
+  const juce::int64 diagThread = araDiagThreadId();
+#endif
+
   const juce::Range<double> blockRange(
       static_cast<double>(timeInSamples) / sampleRate,
       static_cast<double>(timeInSamples + numSamples) / sampleRate);
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: the reference buffers are rebuilt for every block.
+  if (diagRawBuffer != nullptr)
+    diagRawBuffer->clear();
+  if (diagProcessedBuffer != nullptr)
+    diagProcessedBuffer->clear();
+#endif
 
   for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
     if (!region || !region->getAudioModification())
@@ -442,11 +571,43 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
              .getIntersectionWith(blockRange)
              .isEmpty();
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ++diagRegions;
+    if (intersectsBlock)
+      ++diagIntersecting;
+#endif
+
     bool renderedRegion = false;
 
-    if (auto *modification =
-            region->getAudioModification<PitchNetAudioModification>()) {
-      const auto lock = modification->tryLockProcessedAudio();
+      if (auto *modification =
+              region->getAudioModification<PitchNetAudioModification>()) {
+      auto lock = modification->tryLockProcessedAudio();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      diagProcLocked = lock.isLocked() ? 1 : 0;
+      if (!lock.isLocked()) {
+        diagLockWaited = 1;
+        diagLockFailCount = araLockFailureCount.load(std::memory_order_relaxed);
+        diagLockOwnerKind = araLockFailOwnerKind.load(std::memory_order_relaxed);
+        diagLockOwnerThread = araLockFailOwnerThread.load(std::memory_order_relaxed);
+        diagLockOwnerInstance = araLockFailOwnerInstance.load(std::memory_order_relaxed);
+        diagLockHeldMs = araLockFailOwnerHeldMs.load(std::memory_order_relaxed);
+      }
+#endif
+      // D-147: another render thread may hold this lock for a very short
+      // critical section (measured: 0.003-0.03 ms). Retry with a bounded wait
+      // (5 ms) before falling back to the raw source, so a block that asks for
+      // the processed audio gets it instead of dropping to raw.
+      if (!lock.isLocked()) {
+        const double waitStart = juce::Time::getMillisecondCounterHiRes();
+        const double deadline = waitStart + 5.0;
+        while (!lock.retryLock() &&
+               juce::Time::getMillisecondCounterHiRes() < deadline)
+          juce::Thread::yield();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        diagLockResolved = lock.isLocked() ? 1 : 0;
+        diagLockWaitMs = juce::Time::getMillisecondCounterHiRes() - waitStart;
+#endif
+      }
       if (lock.isLocked()) {
         // The modification owns one processed buffer and every region
         // referencing it is a window onto that one edit layer, so they all
@@ -454,6 +615,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
         // existed when regions owned their own state and a shared fallback
         // would have made an unedited region play an edited sibling's audio.
         const auto *data = modification->getProcessedData();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+        diagProcHasAudio = (data != nullptr && data->hasAudio()) ? 1 : 0;
+        if (data != nullptr && data->hasAudio())
+          diagProcFingerprint = araDiagFingerprint(data->audio);
+#endif
         if (data != nullptr && data->hasAudio()) {
           auto *source = modification->getAudioSource();
           const double modificationRate =
@@ -469,9 +635,31 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
               processedState != processedResamplingStates.end()
                   ? &processedState->second
                   : nullptr);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+          // D-136: mirror the processed render into the reference buffer with
+          // a mirror of the very same resampler state, so the reference holds
+          // exactly the samples the processed path produced in this block.
+          if (diagProcessedBuffer != nullptr) {
+            AraResamplingState *mirror = nullptr;
+            if (processedState != processedResamplingStates.end()) {
+              auto diagState = diagProcessedResamplingStates.find(region);
+              if (diagState != diagProcessedResamplingStates.end())
+                mirror = &diagState->second;
+            }
+            mixProcessedRegionAudio(
+                *diagProcessedBuffer, *region, data->audio, data->sampleRate,
+                data->startSampleInModification, modificationRate, sampleRate,
+                timeInSamples, mirror);
+          }
+#endif
         }
       }
-    }
+      }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    if (renderedRegion)
+      ++diagProcessedRendered;
+#endif
 
     bool rawAttempted = false;
     bool rawHadResources = false;
@@ -483,6 +671,11 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
       rawAttempted = true;
       rawHadResources =
           (it != readers.end() && rawState != rawResamplingStates.end());
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      ++diagRawAttempted;
+      if (rawHadResources)
+        ++diagRawHadResources;
+#endif
       // Resources are created on the model thread by ensureRenderResourcesFor().
       // A missing resampler slot must not mean silence: readPlaybackRegionIntoBlock
       // accepts a null state and falls back to a fresh interpolator per call, which
@@ -499,13 +692,254 @@ bool PitchNetPlaybackRenderer::renderProcessedRegions(
                ++ch)
             buffer.addFrom(ch, 0, *tempBuffer, ch, 0, numSamples);
           renderedRegion = true;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+          diagRawPathRan = true;
+          // D-136: mirror the raw read into the reference buffer with a mirror
+          // of the same resampler state: the reference then holds exactly the
+          // samples the raw path produced in this block.
+          if (diagRawBuffer != nullptr && diagTempBuffer != nullptr) {
+            AraResamplingState *mirror = nullptr;
+            if (rawStatePtr != nullptr) {
+              auto diagState = diagRawResamplingStates.find(region);
+              if (diagState != diagRawResamplingStates.end())
+                mirror = &diagState->second;
+            }
+            diagTempBuffer->clear();
+            if (readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                            timeInSamples, *diagTempBuffer,
+                                            mirror)) {
+              for (int ch = 0; ch < std::min(diagRawBuffer->getNumChannels(),
+                                             diagTempBuffer->getNumChannels());
+                   ++ch)
+                diagRawBuffer->addFrom(ch, 0, *diagTempBuffer, ch, 0, numSamples);
+            }
+          }
+#endif
         }
       }
     }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-136: the raw reference of a region whose raw path did NOT run in this
+    // block. The stateful path resets after a gap, so the fresh (null state)
+    // read is what the raw path would produce here.
+    if (!diagRawPathRan && diagRawBuffer != nullptr &&
+        diagTempBuffer != nullptr) {
+      auto *source = region->getAudioModification()->getAudioSource();
+      auto it = source != nullptr ? readers.find(source) : readers.end();
+      if (it != readers.end()) {
+        diagTempBuffer->clear();
+        if (readPlaybackRegionIntoBlock(region, *it->second, sampleRate,
+                                        timeInSamples, *diagTempBuffer,
+                                        nullptr)) {
+          for (int ch = 0; ch < std::min(diagRawBuffer->getNumChannels(),
+                                         diagTempBuffer->getNumChannels());
+               ++ch)
+            diagRawBuffer->addFrom(ch, 0, *diagTempBuffer, ch, 0, numSamples);
+        }
+      }
+    }
+#endif
 
     renderedAny = renderedAny || renderedRegion;
   }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: per-block references. The raw source and the processed audio are
+  // re-read for the SAME window as this block and compared with the block
+  // output, so a block that took one path or the other can be told apart. The
+  // comparison is only reported when it can be exact (same sample rate on both
+  // sides, so no resampling is involved); otherwise the field stays
+  // unavailable and is not used as a verdict.
+  int diagFramesRatioNotOne = -1;
+  float diagMaxDiffRaw = -1.0f;
+  float diagMaxDiffProcessed = -1.0f;
+  int diagRefFlags = 0;
+  if (diagRawBuffer != nullptr && diagProcessedBuffer != nullptr &&
+      diagRawBuffer->getNumSamples() >= buffer.getNumSamples() &&
+      diagProcessedBuffer->getNumSamples() >= buffer.getNumSamples()) {
+    const Project *diagProject = nullptr;
+    if (auto *docCtrl = getDocController()) {
+      if (auto *mainView = docCtrl->getMainComponent())
+        diagProject = mainView->getProject();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      // The editor may have no project (headless playback after loading a
+      // saved project); the document controller keeps the restored one.
+      if (diagProject == nullptr)
+        diagProject = docCtrl->getDocumentProjectSnapshot();
+#endif
+    }
+
+    auto diagMaxDiffAgainst = [&buffer](const juce::AudioBuffer<float> &ref) {
+      float maximum = 0.0f;
+      const int samples = buffer.getNumSamples();
+      for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+        const float *out = buffer.getReadPointer(ch);
+        const float *reference =
+            ref.getReadPointer(std::min(ch, ref.getNumChannels() - 1));
+        for (int i = 0; i < samples; ++i)
+          maximum = std::max(maximum, std::abs(out[i] - reference[i]));
+      }
+      return maximum;
+    };
+
+    diagMaxDiffRaw = diagMaxDiffAgainst(*diagRawBuffer);
+    diagRefFlags |= 1;
+    diagMaxDiffProcessed = diagMaxDiffAgainst(*diagProcessedBuffer);
+    diagRefFlags |= 2;
+
+    // --- analysis frames of this window whose pitch ratio differs from 1 ---
+    int diagFramesSum = 0;
+    bool diagFramesKnown = false;
+    for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+      if (region == nullptr || region->getAudioModification() == nullptr)
+        continue;
+      const int count = diagCountRatioNotOneFrames(
+          diagProject, *region, timeInSamples, numSamples, sampleRate);
+      if (count < 0)
+        continue;
+      diagFramesKnown = true;
+      diagFramesSum += count;
+    }
+    if (diagFramesKnown)
+      diagFramesRatioNotOne = diagFramesSum;
+  }
+#endif
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-134: one record per block, buffered (see AraBlockTrace). "nonZero"
+  // counts samples != 0 across every channel of the block that was handed to
+  // the renderer, i.e. what this function produced before the processor
+  // sanitises it.
+  {
+    AraBlockTrace record;
+    record.t = timeInSamples;
+    record.n = numSamples;
+    record.exitCode = 0;
+    if (auto *hydrationDocCtrl = getDocController())
+      record.hydrated = hydrationDocCtrl->diagDocumentHydrated() ? 1 : 0;
+    record.regions = diagRegions;
+    record.intersecting = diagIntersecting;
+    record.processedRendered = diagProcessedRendered;
+    record.rawAttempted = diagRawAttempted;
+    record.rawHadResources = diagRawHadResources;
+    record.renderedAny = renderedAny ? 1 : 0;
+    record.thread = diagThread;
+    record.framesRatioNotOne = diagFramesRatioNotOne;
+    record.maxDiffRaw = diagMaxDiffRaw;
+    record.maxDiffProcessed = diagMaxDiffProcessed;
+    record.refFlags = diagRefFlags;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    {
+      record.readTimeMs = juce::Time::getMillisecondCounterHiRes();
+      // D-140: identity of the renderer and of its document controller.
+      record.rendererId =
+          static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(this));
+      record.docControllerId = static_cast<juce::int64>(
+          reinterpret_cast<juce::pointer_sized_int>(getDocController()));
+      // D-141: editor processor and the highest bypass parameter among the
+      // live instances (candidate B-b, measured, not assumed).
+      if (auto *docCtrl = getDocController()) {
+        if (auto *editor = docCtrl->getEditorProcessorForDiagnostics())
+          record.editorInstance = editor->getDiagInstanceId();
+        record.editorParamMilli = -2;
+        record.maxParamInstance = -1;
+        record.maxParamMilli = -2;
+        // D-142 route (c): the instance that registered last in prepareToPlay.
+        record.routeCInstance = araPrepareInstance.load(std::memory_order_relaxed);
+        record.routeCParamMilli = araPrepareParamMilli.load(std::memory_order_relaxed);
+      } else {
+        record.editorInstance = -2;
+        record.maxParamInstance = -2;
+      }
+      // D-143: identity key. The renderer's own track is the region sequence of
+      // its playback regions; key (b) looks up the instance registered under
+      // that host ref. Key (a) is the marker registered at processor creation,
+      // where no host track id exists (-1 = not available).
+      {
+        juce::uint64 trackRef = 0;
+        juce::int64 trackHash = 0;
+        for (auto *region : getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+          if (region == nullptr)
+            continue;
+          auto *sequence = region->getRegionSequence();
+          if (sequence == nullptr)
+            continue;
+          trackRef = static_cast<juce::uint64>(
+              reinterpret_cast<juce::pointer_sized_int>(sequence->getHostRef()));
+          trackHash = araHashName(sequence->getName());
+          break;
+        }
+        record.trackRef = static_cast<juce::int64>(trackRef);
+        record.trackHash = trackHash;
+        int instance = -1;
+        void *processor = nullptr;
+        if (araLookupTrackRef(trackRef, instance, processor))
+          record.keyBInstance = instance;
+        record.keyBParamMilli = -2;
+        record.keyAInstance = -1; // no host track id exists at creation
+        record.keyAParamMilli = -2;
+      }
+      // D-145: why this block rendered processed or raw.
+      record.procLocked = diagProcLocked;
+      record.procHasAudio = diagProcHasAudio;
+      record.procFingerprint = diagProcFingerprint;
+      record.publishCount = araPublishCount.load(std::memory_order_relaxed);
+      const double lastPublish = araPublishLastMs.load(std::memory_order_relaxed);
+      record.msSincePublish =
+          lastPublish > 0.0
+              ? static_cast<float>(juce::Time::getMillisecondCounterHiRes() - lastPublish)
+              : -1.0f;
+      record.publisherInstance = araPublishInstance.load(std::memory_order_relaxed);
+      record.editorOpen = (getDocController() != nullptr &&
+                           getDocController()->getMainComponent() != nullptr)
+                              ? 1
+                              : 0;
+      // D-146: if the processed try-lock failed, who held it.
+      record.lockFailCount = diagLockFailCount;
+      record.lockOwnerKind = diagLockOwnerKind;
+      record.lockOwnerThread = diagLockOwnerThread;
+      record.lockOwnerInstance = diagLockOwnerInstance;
+      record.lockHeldMs = static_cast<float>(diagLockHeldMs);
+      record.lockWaited = diagLockWaited;
+      record.lockResolved = diagLockResolved;
+      record.lockWaitMs = static_cast<float>(diagLockWaitMs);
+      // D-139/D-140: the processor this controller is bound to (owning key).
+      if (auto *docCtrl = getDocController()) {
+        if (auto *processor = docCtrl->getOwningProcessorForDiagnostics()) {
+          record.owningInstance = processor->getDiagInstanceId();
+          record.owningParamMilli = -2;
+        } else {
+          record.owningInstance = -1;
+          record.owningParamMilli = -2;
+        }
+      } else {
+        record.owningInstance = -2;
+        record.owningParamMilli = -2;
+      }
+    }
+#endif
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    // D-137: the bypass parameter of the project at this instant (the intent
+    // of the render), next to the static flag the renderer read.
+    record.bypassParam = getDocController() != nullptr
+                              ? getDocController()->getBypassIntentForDiagnostics()
+                              : -1.0f;
+    record.bypassWriterThread = getDocController() != nullptr
+                                    ? getDocController()->getBypassIntentWriterThread()
+                                    : -1;
+#endif
+    int nonZero = 0;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+      const auto *data = buffer.getReadPointer(ch);
+      for (int i = 0; i < numSamples; ++i)
+        if (data[i] != 0.0f)
+          ++nonZero;
+    }
+    record.nonZero = nonZero;
+    araBlockTracePush(record);
+  }
+#endif
 
   return renderedAny;
 }
@@ -516,6 +950,26 @@ bool PitchNetPlaybackRenderer::processBlock(
   // Get document controller for accessing MainComponent
   auto *docCtrl = getDocController();
   if (!docCtrl) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(1, posInfo.getTimeInSamples().orFallback(0),
+                           buffer.getNumSamples(), araDiagThreadId(), 0);
+#endif
+    buffer.clear();
+    return true;
+  }
+
+  // P1b: silencio durante el flush de Play (mismo flag que processBlock).
+  if (auto *proc = docCtrl->getEditorProcessor();
+      proc != nullptr && proc->isBackendFlushActive()) {
+    static std::atomic<juce::int64> lastMuteLogMs{0};
+    const auto nowMs = (juce::int64)juce::Time::getMillisecondCounterHiRes();
+    if (nowMs - lastMuteLogMs.load(std::memory_order_relaxed) >= 1000) {
+      lastMuteLogMs.store(nowMs, std::memory_order_relaxed);
+      juce::File::getSpecialLocation(juce::File::tempDirectory)
+          .getChildFile("pitchcore_p1b_trace.log")
+          .appendText("[mute] flushActive=" +
+                      juce::String(proc->isBackendFlushActive() ? 1 : 0) + "\n");
+    }
     buffer.clear();
     return true;
   }
@@ -530,6 +984,27 @@ bool PitchNetPlaybackRenderer::processBlock(
   // cycle.
   const auto processingLock = docCtrl->getProcessingLock();
   if (!processingLock.isLocked()) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(2, posInfo.getTimeInSamples().orFallback(0),
+                           buffer.getNumSamples(), araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+#endif
+    buffer.clear();
+    return true;
+  }
+
+  // P1b: mientras la modificacion tenga un render pendiente no se oye el audio
+  // anterior. No depende de isPlaying ni de transiciones de play.
+  const bool realtimeNow =
+      (realtime == juce::AudioProcessor::Realtime::yes);
+  bool anyPending = false;
+  for (auto *region : getPlaybackRegions())
+    if (auto *mod = region->getAudioModification<PitchNetAudioModification>();
+        mod != nullptr && mod->renderPending.load(std::memory_order_acquire)) {
+      anyPending = true;
+      break;
+    }
+  if (realtimeNow && anyPending) {
     buffer.clear();
     return true;
   }
@@ -576,6 +1051,10 @@ bool PitchNetPlaybackRenderer::processBlock(
   };
 
   if (!isPlaying) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(3, timeInSamples, numSamples, araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+#endif
     notifyHostPlayState(false);
     notifyHostStopped();
     buffer.clear();
@@ -583,6 +1062,10 @@ bool PitchNetPlaybackRenderer::processBlock(
   }
 
   if (!hasPlaybackRegions) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    araBlockTracePushExit(4, timeInSamples, numSamples, araDiagThreadId(),
+                           docCtrl->diagDocumentHydrated() ? 1 : 0);
+#endif
     notifyHostPlayState(true);
     buffer.clear();
     return true;
@@ -1313,8 +1796,7 @@ PitchNetDocumentController::~PitchNetDocumentController() {
     analysisJoinerThread.join();
 }
 
-void PitchNetDocumentController::setMainComponent(IMainView *mc) {
-  if (mc == nullptr && mainComponent != nullptr) {
+void PitchNetDocumentController::setMainComponent(IMainView *mc) {  if (mc == nullptr && mainComponent != nullptr) {
     stopAnalysisThread();
     currentAudioSource = nullptr;
   }
@@ -1401,6 +1883,11 @@ void PitchNetDocumentController::setOwningProcessor(
     return;
   }
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("D141 bind owning: instance=" +
+           juce::String(processor->getDiagInstanceId()) + " dc=" +
+           ARA_DIAG_PTR(this));
+#endif
   owningProcessor = processor;
   ensureHeadlessPlaybackBinding();
   flushPendingAraRegionProjects();
@@ -1420,6 +1907,12 @@ void PitchNetDocumentController::releaseOwningProcessor(
 
 void PitchNetDocumentController::setEditorProcessor(
     PitchNetAudioProcessor *processor) {
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  if (processor != nullptr)
+    ARA_DIAG("D141 bind editor: instance=" +
+             juce::String(processor->getDiagInstanceId()) + " dc=" +
+             ARA_DIAG_PTR(this));
+#endif
   editorProcessor = processor;
   flushPendingAraRegionProjects();
 }
@@ -1982,6 +2475,10 @@ void PitchNetDocumentController::willDestroyAudioModification(
   if (modification == nullptr)
     return;
 
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  diagNoteModificationDestroyed(modification->wasRestoredFromArchive());
+#endif
+
   if (currentPlaybackRegion != nullptr &&
       currentPlaybackRegion->getAudioModification() == audioModification) {
     if (previewState.previewedRegion.load() == currentPlaybackRegion)
@@ -2374,6 +2871,9 @@ juce::ARAAudioModification *PitchNetDocumentController::doCreateAudioModificatio
 
   auto *created = new PitchNetAudioModification(audioSource, hostRef,
                                                optionalModificationToClone);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  diagNoteModificationCreated();
+#endif
   ARA_DIAG("createMod mod=" + ARA_DIAG_PTR(created) +
            " src=" + ARA_DIAG_PTR(audioSource) + " clonedFrom=" +
            (optionalModificationToClone
@@ -2501,6 +3001,14 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
           }
         }
       }
+
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+      // D-152: the modification has consumed its archived state (including
+      // the zero-region case). Count it once for the per-block hydrated flag.
+      if (payloadIsUsable && pitchModification != nullptr &&
+          pitchModification->markRestoredFromArchive())
+        diagNoteModificationRestored();
+#endif
 
       if (!audioModification)
         continue;

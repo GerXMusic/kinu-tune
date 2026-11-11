@@ -204,6 +204,50 @@ private:
 };
 
 /**
+ * Action for changing the synthesis engine of a set of notes (M2 paso 2,
+ * D-125). The rule that decides which notes may actually change - a usable
+ * silence before them - is applied before the action is built, so this only
+ * stores what the renderer will honour.
+ */
+class NoteEngineAction : public UndoableAction
+{
+public:
+    struct Change
+    {
+        Note *note = nullptr;
+        NoteEngine before = NoteEngine::Inherit;
+        NoteEngine after = NoteEngine::Inherit;
+    };
+
+    NoteEngineAction(std::vector<Change> changes,
+                     std::function<void()> onChanged = nullptr)
+        : changes(std::move(changes)), onChanged(std::move(onChanged)) {}
+
+    void undo() override { apply(false); }
+    void redo() override { apply(true); }
+
+    juce::String getName() const override { return "Change Note Engine"; }
+
+private:
+    void apply(bool useAfter)
+    {
+        for (auto &change : changes)
+        {
+            if (change.note == nullptr)
+                continue;
+            change.note->setEngine(useAfter ? change.after : change.before);
+            change.note->markDirty();
+            change.note->markSynthDirty();
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    std::vector<Change> changes;
+    std::function<void()> onChanged;
+};
+
+/**
  * Action for snapping a note to the nearest semitone (double-click).
  * Combines midiNote and pitchOffset into a rounded integer MIDI value.
  */

@@ -1,6 +1,7 @@
 #include "MelSpectrogram.h"
 #include <cmath>
 #include <algorithm>
+#include <thread>
 
 MelSpectrogram::MelSpectrogram(int sampleRate, int nFft, int hopSize,
                                int numMels, float fMin, float fMax)
@@ -127,7 +128,8 @@ void MelSpectrogram::createMelFilterbank()
     }
 }
 
-std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int numSamples)
+std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int numSamples,
+                                                        int numThreads)
 {
     // Add center padding for better frame alignment (matches librosa default)
     // This ensures the first frame is centered at hopSize/2
@@ -143,12 +145,63 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
     }
     
     std::vector<std::vector<float>> mel(numFrames);
-    int numBins = nFft / 2 + 1;
+
+    // D-180: the host-backed ARA restore rebuilds the mel on the message
+    // thread. Frames are independent, so splitting them keeps the result
+    // bit-identical while removing most of that wait. Short buffers stay
+    // serial: thread setup would cost more than the work.
+    int threads = numThreads;
+    if (threads <= 0)
+    {
+#if defined(PITCHNET_D180_LEGACY)
+        threads = 1; // D-180 measurement only: pre-fix serial rebuild.
+#else
+        threads = numFrames >= 1024
+                      ? static_cast<int>(std::thread::hardware_concurrency())
+                      : 1;
+        threads = std::clamp(threads, 1, 4);
+#endif
+    }
+    threads = std::clamp(threads, 1, std::min(8, numFrames));
+
+    if (threads <= 1)
+    {
+        computeFrames(audio, numSamples, 0, numFrames, mel);
+        return mel;
+    }
+
+    const int chunk = (numFrames + threads - 1) / threads;
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<size_t>(threads - 1));
+    for (int t = 1; t < threads; ++t)
+    {
+        const int begin = t * chunk;
+        const int end = std::min(numFrames, begin + chunk);
+        if (begin >= end)
+            break;
+        workers.emplace_back([this, audio, numSamples, begin, end, &mel]() {
+            computeFrames(audio, numSamples, begin, end, mel);
+        });
+    }
+    computeFrames(audio, numSamples, 0, std::min(chunk, numFrames), mel);
+    for (auto& worker : workers)
+        worker.join();
     
+    return mel;
+}
+
+void MelSpectrogram::computeFrames(const float* audio, int numSamples,
+                                   int frameBegin, int frameEnd,
+                                   std::vector<std::vector<float>>& mel) const
+{
+    int padLeft = nFft / 2;
+    int numBins = nFft / 2 + 1;
     std::vector<float> frame(nFft * 2, 0.0f);  // Complex FFT buffer
     std::vector<float> mag(numBins);            // Reused across frames
-    
-    for (int i = 0; i < numFrames; ++i)
+    // Each worker owns its FFT; the shared window and filterbank are read-only.
+    juce::dsp::FFT localFft(static_cast<int>(std::log2(nFft)));
+
+    for (int i = frameBegin; i < frameEnd; ++i)
     {
         // Calculate sample position in original audio (accounting for padding)
         int centerSample = i * hopSize;
@@ -179,7 +232,7 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
         }
         
         // Perform FFT
-        fft.performRealOnlyForwardTransform(frame.data());
+        localFft.performRealOnlyForwardTransform(frame.data());
         
         // Compute magnitude spectrum with small epsilon to avoid log(0)
         for (int k = 0; k < numBins; ++k)
@@ -205,6 +258,4 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
             mel[i][m] = std::log(std::max(sum, 1e-10f));
         }
     }
-    
-    return mel;
 }

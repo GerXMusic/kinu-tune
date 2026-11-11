@@ -177,6 +177,10 @@ Vocoder::~Vocoder()
   if (asyncWorker.joinable())
     asyncWorker.join();
 
+  // D-197: finish any background load before tearing down the session.
+  if (loadThread.joinable())
+    loadThread.join();
+
 #ifdef HAVE_ONNXRUNTIME
   onnxSession.reset();
   onnxEnv.reset();
@@ -1305,3 +1309,44 @@ Ort::SessionOptions Vocoder::createSessionOptions()
   return sessionOptions;
 }
 #endif
+
+// ---- D-197: background load + warm-up ----
+bool Vocoder::beginAsyncLoad(const juce::File &modelPath)
+{
+  if (loaded)
+  {
+    loadState.store(LoadState::Ready);
+    return false;
+  }
+  if (loadState.load() == LoadState::Loading)
+    return true;
+  if (loadThread.joinable())
+    loadThread.join();
+  loadState.store(LoadState::Loading);
+  loadThread = std::thread([this, modelPath]() {
+    const bool ok = loadModel(modelPath);
+    if (ok)
+      warmUp();
+    loadState.store(ok ? LoadState::Ready : LoadState::Failed);
+  });
+  return true;
+}
+
+bool Vocoder::warmUp()
+{
+#ifdef HAVE_ONNXRUNTIME
+  if (!loaded || !onnxSession)
+    return false;
+  std::lock_guard<std::mutex> lock(inferenceMutex);
+  constexpr size_t kFrames = 32;
+  std::vector<std::vector<float>> mel(kFrames,
+                                      std::vector<float>(static_cast<size_t>(numMels), 0.0f));
+  std::vector<float> f0(kFrames, 100.0f);
+  const auto out = inferChunkLocked(mel, f0, kFrames);
+  log("Vocoder: warm-up frames=" + std::to_string(kFrames) +
+      " samples=" + std::to_string(out.size()));
+  return !out.empty();
+#else
+  return false;
+#endif
+}

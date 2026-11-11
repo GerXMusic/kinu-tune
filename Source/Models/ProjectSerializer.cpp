@@ -188,6 +188,11 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("formantShift", project.getFormantShift());
     obj->setProperty("volume", project.getVolume());
     obj->setProperty("pitchCenter", project.getPitchCenter());
+    // Per-document engine (D-174). Omitted when the document follows the
+    // shared preference, so projects written before the field keep loading.
+    if (const auto engine = project.getSynthesisEngine())
+        obj->setProperty("synthesisEngine",
+                         synthesisEngineTypeToString(*engine));
     obj->setProperty("scaleMode", static_cast<int>(project.getScaleMode()));
     obj->setProperty("preferredScaleMode",
                      static_cast<int>(project.getRegionKeyMode()));
@@ -316,6 +321,21 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     project.setPitchCenter(static_cast<float>(json.getProperty("pitchCenter", 0.0)));
+    {
+        // D-174: only the three concrete engines are document state. Anything
+        // else (absent, empty, unknown) leaves the document following the
+        // shared preference, exactly as before the field existed.
+        const auto engineText =
+            json.getProperty("synthesisEngine", juce::var()).toString();
+        if (engineText == "PSOLA")
+            project.setSynthesisEngine(SynthesisEngineType::Psola);
+        else if (engineText == "Pitchcore")
+            project.setSynthesisEngine(SynthesisEngineType::Pitchcore);
+        else if (engineText == "Vocoder")
+            project.setSynthesisEngine(SynthesisEngineType::Vocoder);
+        else
+            project.clearSynthesisEngine();
+    }
     {
         const int scaleModeValue = static_cast<int>(json.getProperty(
             "scaleMode", static_cast<int>(ScaleMode::Chromatic)));
@@ -831,6 +851,12 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
 
+    // Per-note engine (M2 fase 1, D-125). Optional: Inherit is omitted, so a
+    // project written before this field existed round-trips to the same JSON
+    // and no archive version has to change.
+    if (note.getEngine() != NoteEngine::Inherit)
+        obj->setProperty("noteEngine", noteEngineToString(note.getEngine()));
+
     // Lyric/Phoneme
     if (note.hasLyric())
         obj->setProperty("lyric", note.getLyric());
@@ -897,6 +923,14 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
+
+    // Per-note engine (M2 fase 1, D-125). Absent in every project written
+    // before the field existed: that loads as Inherit, exactly the previous
+    // behaviour. Unknown text also falls back to Inherit.
+    const juce::var engineVar = json.getProperty("noteEngine", juce::var());
+    note.setEngine(engineVar.isVoid()
+                       ? NoteEngine::Inherit
+                       : stringToNoteEngine(engineVar.toString()));
 
     // Lyric/Phoneme
     auto lyric = json.getProperty("lyric", juce::var());

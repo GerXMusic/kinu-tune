@@ -47,6 +47,14 @@ public:
    */
   bool isLoaded() const { return loaded; }
 
+  // D-197: load + one warm-up inference on a worker thread so the caller
+  // (message thread when the engine selector changes) never blocks.
+  enum class LoadState { NotLoaded, Loading, Ready, Failed };
+  LoadState getLoadState() const { return loadState.load(); }
+  bool isReady() const { return getLoadState() == LoadState::Ready; }
+  bool beginAsyncLoad(const juce::File &modelPath);
+  bool warmUp();
+
   /**
    * Check if ONNX Runtime is available.
    */
@@ -129,6 +137,8 @@ private:
 #endif
 
   juce::File modelFile;
+  std::thread loadThread;
+  std::atomic<LoadState> loadState{LoadState::NotLoaded};
 #if __APPLE__
   juce::File coreMLModelFile;
   std::unique_ptr<CoreMLVocoderBackend> coreMLBackend;

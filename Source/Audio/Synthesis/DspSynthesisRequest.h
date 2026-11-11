@@ -55,11 +55,6 @@ struct DspSynthesisRequest
   int numOutputFrames = 0;
 
   int sampleRate = 44100;
-
-  /// Preserve formants rather than letting them ride the pitch shift.
-  /// The phase vocoder counter-shifts its cepstral envelope to honour this;
-  /// PSOLA gets it inherently and ignores the flag.
-  bool preserveFormants = true;
 };
 
 namespace dspSynthesis {

@@ -1,13 +1,21 @@
+#include "Main/DeferredRenderQueue.h"
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
+#include "AraViewFocusPolicy.h"
+#include "CursorFollowPolicy.h"
+#include "../Plugin/AraDiagnostics.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
 #include "../Audio/RealtimePitchProcessor.h"
+#include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/NotePitch.h"
+#include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/Constants.h"
+#include "../Utils/ScaleUtils.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
 #include "../Utils/OnnxRuntime.h"
@@ -24,6 +32,7 @@
 #include <limits>
 #include <optional>
 #include <thread>
+#include <unordered_set>
 
 namespace
 {
@@ -59,6 +68,24 @@ constexpr float updateSubtitleFontSize = 14.0f;
 constexpr float aboutNoticesFontSize = 12.0f;
 const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
 const juce::Colour updateLogScrollbarThumb(0xFF565656u);
+
+juce::File getMcpControlDirectory()
+{
+  auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                 .getChildFile("kinu-tune-mcp");
+  dir.createDirectory();
+  return dir;
+}
+
+bool writeMcpJsonAtomically(const juce::File &file, const juce::var &value)
+{
+  const auto temporary = file.getSiblingFile(file.getFileName() + ".tmp");
+  if (!temporary.replaceWithText(juce::JSON::toString(value)))
+    return false;
+  if (file.existsAsFile())
+    file.deleteFile();
+  return temporary.moveFileTo(file);
+}
 
 struct UpdateInfo
 {
@@ -751,6 +778,40 @@ MainComponent::MainComponent(bool enableAudioDevice)
   variAudioInspector.onParamEditValue = [this](float value)
   { pianoRoll.setInspectorEditValue(value); };
   variAudioInspector.onParamEditEnd = [this] { pianoRoll.endInspectorEdit(); };
+  variAudioInspector.getNoteEngine = [this]
+  { return getSelectionNoteEngine(); };
+  variAudioInspector.getEngineStatus =
+      [this]() -> std::optional<VariAudioInspector::EngineStatus>
+  {
+    auto *project = getProject();
+    if (project == nullptr)
+      return std::nullopt;
+    const auto targets = pianoRoll.getInspectorTargets();
+    if (targets.empty() || targets.front() == nullptr)
+      return std::nullopt;
+    const auto &notes = project->getNotes();
+    int index = -1;
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      if (&notes[static_cast<size_t>(i)] == targets.front())
+      {
+        index = i;
+        break;
+      }
+    if (index < 0)
+      return std::nullopt;
+    const auto globalEngine = editorController
+                                  ? editorController->getSynthesisEngineType()
+                                  : defaultSynthesisEngineType();
+    VariAudioInspector::EngineStatus status;
+    status.effective = engineBlocks::effectiveEngine(
+        notes[static_cast<size_t>(index)], globalEngine);
+    if (const auto it = lastRefusedEngineRequests.find(index);
+        it != lastRefusedEngineRequests.end())
+      status.refusedRequest = it->second;
+    return status;
+  };
+  variAudioInspector.onNoteEngineChanged = [this](NoteEngine engine)
+  { applyNoteEngineToSelection(engine); };
   variAudioInspector.onSnapModeChanged =
       [this](VariAudioInspector::SnapMode mode)
   {
@@ -847,11 +908,19 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     settingsManager->setSynthesisEngineType(type);
     settingsManager->saveConfig();
+    // The preference above is the default for new documents. This document
+    // records its own choice so save/reopen does not hand it the engine of
+    // whichever other audio was modified last (D-174, I-19).
+    if (auto *project = getProject())
+      project->setSynthesisEngine(type);
     if (editorController)
       editorController->setSynthesisEngineType(type);
+    // In plugin mode this controller writes the shared engine preference, so
+    // processor-owned ARA/background controllers observe the same global engine.
     // Otherwise the switch is only a setting: the audio already rendered by
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
+    notifyProjectDataChanged();
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   refreshRenderDeviceOptions();
@@ -882,7 +951,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Setup toolbar callbacks
   toolbar.onPlay = [this]()
-  { play(); };
+  {
+    playAfterFlush = true;
+    flushDirtyBlocks(); // render the dirty blocks first, one per pass
+    if (!flushChainActive)
+    {
+      playAfterFlush = false;
+      play();
+    }
+  };
   toolbar.onPause = [this]()
   { pause(); };
   toolbar.onStop = [this]()
@@ -996,7 +1073,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { afterHistoryChange(requiresResynthesis); };
   pianoRoll.onPitchEditFinished = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
     // Melodyne-style: trigger real-time processor update in plugin mode
     notifyProjectDataChanged();
     if (isPluginMode() && onPitchEditFinished)
@@ -1004,7 +1081,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   pianoRoll.onPitchPreviewRenderRequested = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
   };
   pianoRoll.onPitchEditCommitted = [this]()
   {
@@ -1027,6 +1104,32 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   pianoRoll.onScrollChanged = [this](double x)
   {
+    // D-180-R: measurement and guard. PianoRollComponent::updateScrollBars()
+    // updates the scrollbar range during a host layout; the bar can echo a
+    // transient range back as scroll 0. That is not a user scroll.
+    const double cursor = pianoRoll.getCursorTime();
+    const double previous = std::max(latencyTrace.lastCallbackScrollX,
+                                     latencyTrace.layoutScrollGuardScroll);
+    if (pitchnet::isTransientScrollbarReset(
+            latencyTrace.layoutScrollGuardActive, previous, x,
+            latencyTrace.layoutScrollGuardCursorVisible))
+    {
+      pianoRoll.setScrollX(latencyTrace.layoutScrollGuardScroll);
+      ++latencyTrace.layoutScrollGuardRestoreCount;
+      latencyTrace.lastCallbackScrollX =
+          latencyTrace.layoutScrollGuardScroll;
+      pianoRollView.repaintOverviewViewport();
+      return;
+    }
+    if (latencyTrace.lastCallbackScrollX > 100.0 && x < 1.0 &&
+        std::abs(cursor) > 10.0)
+    {
+      ++latencyTrace.callbackResetCount;
+      latencyTrace.callbackResetFrom = latencyTrace.lastCallbackScrollX;
+      latencyTrace.callbackResetTo = x;
+      latencyTrace.callbackResetAtMs = nowMs();
+    }
+    latencyTrace.lastCallbackScrollX = x;
     juce::ignoreUnused(x);
     pianoRollView.repaintOverviewViewport();
   };
@@ -1057,7 +1160,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   parameterPanel.onParameterEditFinished = [this]()
   {
-    resynthesizeIncremental();
+    markRenderDirty();
     // Melodyne-style: trigger real-time processor update in plugin mode
     notifyProjectDataChanged();
     if (isPluginMode() && onPitchEditFinished)
@@ -1190,6 +1293,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   LOG("MainComponent: starting timer...");
   // Start timer for UI updates
   startTimerHz(60);
+  writeMcpJsonAtomically(
+      getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json"),
+      juce::var(new juce::DynamicObject()));
 
   // The launch update check asks Session Loops' server about PitchNet releases
   // and offers their download page, which does not apply to Kinu Tune.
@@ -1299,6 +1405,7 @@ void MainComponent::bindBackendController(EditorController *controller)
   }
 
   auto *project = getProject();
+  applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
@@ -1349,10 +1456,15 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   if (!isPluginMode() || editorController == nullptr)
     return newProject;
 
+  // D-180: measurement only.
+  const double exchangeStartMs = nowMs();
+  const bool incomingProject = newProject != nullptr;
+
   auto previousProject = editorController->takeProject();
   editorController->setProject(std::move(newProject));
 
   auto *project = getProject();
+  applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
@@ -1362,10 +1474,48 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject() && !regionActivationFromCanvas && !pianoRoll.isTrackViewMode())
+    if (pitchnet::shouldFitPitchRange(!project->getNotes().empty(),
+                                     hasAnalyzedProject()) &&
+        !regionActivationFromCanvas)
       fitAnalyzedPitchRangeToView(*project);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("exchangeProject notes=" +
+             juce::String(static_cast<int>(project->getNotes().size())) +
+             " waveform=" +
+             juce::String(project->getAudioData().waveform.getNumSamples()) +
+             " analyzed=" + (hasAnalyzedProject() ? "1" : "0") +
+             " regionFromCanvas=" + (regionActivationFromCanvas ? "1" : "0") +
+             " trackView=" + (pianoRoll.isTrackViewMode() ? "1" : "0"));
+#endif
+  }
+
+  // D-180-R3: if the cursor was seeded before this bind, reveal it with the
+  // pps/width available now. Do not clear the flag: focus and the first paint
+  // may still run before the final zoom settles.
+  if (incomingProject && pendingOpenCursorReveal)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (!isPlaying && openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
   }
   repaint();
+
+  // D-180: measurement only. The project is bound now; the timer reports the
+  // first paint after this point.
+  if (incomingProject)
+  {
+    latencyTrace.selectionBoundMs = nowMs();
+    latencyTrace.selectionPaintBase = pianoRoll.getPaintCount();
+    latencyTrace.selectionScrollAtBound = pianoRoll.getScrollX();
+  }
+  latencyTrace.lastExchangeMs = nowMs() - exchangeStartMs;
+  latencyTrace.maxExchangeMs =
+      std::max(latencyTrace.maxExchangeMs, latencyTrace.lastExchangeMs);
   return previousProject;
 }
 
@@ -1455,6 +1605,8 @@ MainComponent::~MainComponent()
 #endif
   removeKeyListener(commandManager->getKeyMappings());
   stopTimer();
+  getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json")
+      .deleteFile();
 
   if (auto *audioEngine = editorController
                               ? editorController->getAudioEngine()
@@ -1509,6 +1661,22 @@ void MainComponent::applyUiBrightness(double brightnessPercent)
 
 void MainComponent::resized()
 {
+  // D-180-R: measurement only. Capture the scroll and cursor before the layout
+  // runs; the setters below can clamp it.
+  const bool traceResize =
+      getProject() != nullptr && getWidth() > 0 && getHeight() > 0;
+  const double resizeScrollBefore =
+      traceResize ? pianoRoll.getScrollX() : 0.0;
+  const double resizeCursor = traceResize ? pianoRoll.getCursorTime() : 0.0;
+  const bool resizeCursorVisibleBefore =
+      traceResize && cursorIsVisible(resizeCursor);
+  const double resizePpsBefore =
+      traceResize ? pianoRoll.getPixelsPerSecond() : 0.0;
+  const double resizeDurationBefore =
+      traceResize ? pianoRoll.getTimelineDuration() : 0.0;
+  const int resizeVisibleWidthBefore =
+      traceResize ? pianoRoll.getVisibleContentWidth() : 0;
+
   if (auto *project = getProject(); project && getWidth() > 0 && getHeight() > 0)
   {
     project->uiWidth = getWidth();
@@ -1526,7 +1694,18 @@ void MainComponent::resized()
   toolbar.setBounds(bounds.removeFromTop(60));
 
   // Workspace takes remaining space (includes piano roll, panels, and sidebar)
+  const double layoutScrollBefore = pianoRoll.getScrollX();
+  const double layoutPpsBefore =
+      static_cast<double>(pianoRoll.getPixelsPerSecond());
+  const double layoutDurationBefore = pianoRoll.getTimelineDuration();
+  const int layoutVisibleWidthBefore = pianoRoll.getVisibleContentWidth();
   workspace.setBounds(bounds);
+  latencyTrace.lastLayoutScrollBefore = layoutScrollBefore;
+  latencyTrace.lastLayoutScrollAfter = pianoRoll.getScrollX();
+  latencyTrace.lastLayoutPpsBefore = layoutPpsBefore;
+  latencyTrace.lastLayoutDurationBefore = layoutDurationBefore;
+  latencyTrace.lastLayoutVisibleWidthBefore = layoutVisibleWidthBefore;
+  ++latencyTrace.layoutCount;
 
   if (settingsOverlay)
     settingsOverlay->setBounds(getLocalBounds());
@@ -1536,6 +1715,64 @@ void MainComponent::resized()
 
   if (enableAudioDeviceFlag && settingsManager)
     settingsManager->setWindowSize(getWidth(), getHeight());
+
+  if (hasPendingTimelineFocus)
+  {
+    const double start = pendingTimelineFocusStart;
+    const double end = pendingTimelineFocusEnd;
+    hasPendingTimelineFocus = false;
+    focusTimelineRange(start, end);
+  }
+
+  if (hasPendingPitchFit)
+    if (auto *project = getProject())
+    {
+      hasPendingPitchFit = false;
+      fitAnalyzedPitchRangeToView(*project);
+    }
+
+  // D-180-R3: re-apply with the layout's final pps/width. The flag stays set
+  // until a paint actually shows the cursor.
+  if (pendingOpenCursorReveal && getProject() != nullptr && !isPlaying)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
+  }
+
+
+  if (traceResize)
+  {
+    const bool firstResize = latencyTrace.resizeCount == 0;
+    ++latencyTrace.resizeCount;
+    latencyTrace.lastResizeAtMs = nowMs();
+    latencyTrace.lastResizeScrollBefore = resizeScrollBefore;
+    latencyTrace.lastResizeScrollAfter = pianoRoll.getScrollX();
+    latencyTrace.lastResizeCursor = resizeCursor;
+    latencyTrace.lastResizeCursorVisibleBefore = resizeCursorVisibleBefore;
+    latencyTrace.lastResizeCursorVisibleAfter =
+        cursorIsVisible(resizeCursor);
+    latencyTrace.lastResizeWidth = getWidth();
+    latencyTrace.lastResizeHeight = getHeight();
+    if (firstResize)
+    {
+      latencyTrace.firstResizeScrollBefore = resizeScrollBefore;
+      latencyTrace.firstResizeScrollAfter = pianoRoll.getScrollX();
+      latencyTrace.firstResizeCursorVisibleBefore =
+          resizeCursorVisibleBefore;
+      latencyTrace.firstResizeCursorVisibleAfter =
+          latencyTrace.lastResizeCursorVisibleAfter;
+      latencyTrace.firstResizeWidth = getWidth();
+      latencyTrace.firstResizePps = resizePpsBefore;
+      latencyTrace.firstResizeDuration = resizeDurationBefore;
+      latencyTrace.firstResizeVisibleWidth = resizeVisibleWidthBefore;
+    }
+  }
 }
 
 void MainComponent::mouseDown(const juce::MouseEvent &e)
@@ -1553,8 +1790,719 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent &e)
   juce::ignoreUnused(e);
 }
 
+void MainComponent::pollMcpControl()
+{
+  jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+  const auto now = juce::Time::getMillisecondCounter();
+  if (now - mcpLastPollMs < 100)
+    return;
+  mcpLastPollMs = now;
+
+  auto *project = getProject();
+  if ((mcpRenderPending && now - mcpLastHeartbeatMs >= 100) ||
+      now - mcpLastHeartbeatMs >= 1000)
+  {
+    mcpLastHeartbeatMs = now;
+    auto instance = new juce::DynamicObject();
+    instance->setProperty("instance_id", mcpInstanceId);
+    instance->setProperty("plugin_editor_open", true);
+    instance->setProperty("project_loaded", project != nullptr);
+    instance->setProperty("project_notes", project
+        ? static_cast<int>(project->getNotes().size()) : 0);
+    instance->setProperty("render_pending", mcpRenderPending);
+    instance->setProperty("render_generation", static_cast<int>(mcpRenderGeneration));
+    // D-174: read the engine this instance will render with. The document
+    // value is what survives save/reopen; "none" means it follows the shared
+    // preference (legacy document).
+    instance->setProperty(
+        "synthesis_engine",
+        synthesisEngineTypeToString(editorController
+                                        ? editorController->getSynthesisEngineType()
+                                        : defaultSynthesisEngineType()));
+    const auto documentEngine =
+        project != nullptr ? project->getSynthesisEngine() : std::nullopt;
+    instance->setProperty(
+        "document_synthesis_engine",
+        documentEngine ? synthesisEngineTypeToString(*documentEngine)
+                       : juce::String("none"));
+    writeMcpJsonAtomically(
+        getMcpControlDirectory().getChildFile("instance_" + mcpInstanceId + ".json"),
+        juce::var(instance));
+  }
+
+  const auto dir = getMcpControlDirectory();
+  const auto requests = dir.findChildFiles(juce::File::findFiles, false,
+                                            "request_*.json");
+  for (const auto &requestFile : requests)
+  {
+    const auto request = juce::JSON::parse(requestFile.loadFileAsString());
+    if (!request.isObject() || request.getProperty("target_instance", "").toString() != mcpInstanceId)
+      continue;
+
+    const auto requestId = request.getProperty("request_id", "").toString();
+    if (requestId.isEmpty() || requestId.containsAnyOf("/\\:*?\"<>|"))
+      continue;
+    auto response = new juce::DynamicObject();
+    response->setProperty("request_id", requestId);
+    response->setProperty("instance_id", mcpInstanceId);
+    response->setProperty("ok", false);
+
+    const auto command = request.getProperty("command", "").toString();
+    const bool allowedWithoutProject =
+        command == "ui_state" || command == "paint_history" ||
+        command == "reset_ui_trace";
+    if (project == nullptr && !allowedWithoutProject)
+      response->setProperty("error", "El editor no tiene un proyecto analizado.");
+    else if (command == "list_notes")
+    {
+      juce::Array<juce::var> noteArray;
+      const auto &notes = project->getNotes();
+      const auto currentEngine =
+          editorController ? editorController->getSynthesisEngineType()
+                           : defaultSynthesisEngineType();
+      response->setProperty("sample_rate", project->getAudioData().sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      response->setProperty(
+          "synthesis_engine",
+          synthesisEngineTypeToString(currentEngine));
+      response->setProperty(
+          "document_synthesis_engine",
+          project->getSynthesisEngine()
+              ? synthesisEngineTypeToString(*project->getSynthesisEngine())
+              : juce::String("none"));
+      for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      {
+        const auto &note = notes[static_cast<size_t>(i)];
+        auto noteObject = new juce::DynamicObject();
+        noteObject->setProperty("index", i);
+        noteObject->setProperty("start_frame", note.getStartFrame());
+        noteObject->setProperty("end_frame", note.getEndFrame());
+        noteObject->setProperty("midi", note.getMidiNote());
+        noteObject->setProperty("rest", note.isRest());
+        noteObject->setProperty("engine", noteEngineToString(note.getEngine()));
+        // D-181: what the renderer will actually use. With no hidden fallback
+        // it must equal the stored request (or the instance engine for
+        // Inherit); the MCP check compares both fields for every note.
+        noteObject->setProperty(
+            "effective_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(note, currentEngine)));
+        // D-185: why a request could not take effect (transparency only).
+        const auto refusedIt = lastRefusedEngineRequests.find(i);
+        const bool refused = refusedIt != lastRefusedEngineRequests.end();
+        noteObject->setProperty("refused", refused);
+        if (refused)
+        {
+          noteObject->setProperty("refused_engine",
+                                  noteEngineToString(refusedIt->second));
+          noteObject->setProperty("refusal_reason", "no_silence_before_note");
+          noteObject->setProperty(
+              "refusal_detail",
+              "sin silencio >=20 ms / -55 dBFS antes de la nota");
+        }
+        noteObject->setProperty("selected", note.isSelected());
+        noteArray.add(juce::var(noteObject));
+      }
+      response->setProperty("notes", juce::var(noteArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "list_note_modulators")
+    {
+      // D-208: read-only raw modulator state per note, same order and index
+      // as list_notes. No jlimit / no percentage conversion: the UI formula
+      // (1 - v) * 100 is deliberately not applied here.
+      juce::Array<juce::var> noteArray;
+      const auto &notes = project->getNotes();
+      response->setProperty("sample_rate", project->getAudioData().sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      {
+        const auto &note = notes[static_cast<size_t>(i)];
+        auto noteObject = new juce::DynamicObject();
+        noteObject->setProperty("index", i);
+        const auto share = ScaleUtils::correctionShare(
+            *project, note.getLastNonMacroMidiNote(), note.getMidiNote(),
+            static_cast<int>(FREQ_A4));
+        if (share)
+          noteObject->setProperty("correctionShare",
+                                  static_cast<double>(*share));
+        else
+          noteObject->setProperty("correctionShare", juce::var());
+        noteObject->setProperty("vibrato", note.getVibrato());
+        noteObject->setProperty("pitchDrift", note.getPitchDrift());
+        noteArray.add(juce::var(noteObject));
+      }
+      response->setProperty("notes", juce::var(noteArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "dump_curve")
+    {
+      // D-182 measurement only: the exact target curve the renderer will use,
+      // plus the source curve and the per-frame ratio. No audio change.
+      const int totalFrames =
+          static_cast<int>(project->getAudioData().melSpectrogram.size());
+      int startFrame = static_cast<int>(request.getProperty(
+          "start_frame", 0));
+      int endFrame = static_cast<int>(request.getProperty(
+          "end_frame", totalFrames));
+      startFrame = juce::jlimit(0, totalFrames, startFrame);
+      endFrame = juce::jlimit(startFrame, totalFrames, endFrame);
+
+      const auto target = project->getAdjustedF0ForRange(startFrame, endFrame);
+      const auto &audioData = project->getAudioData();
+      const auto &sourceF0 =
+          audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+      const auto currentEngine =
+          editorController ? editorController->getSynthesisEngineType()
+                           : defaultSynthesisEngineType();
+
+      juce::Array<juce::var> targetArray;
+      juce::Array<juce::var> sourceArray;
+      juce::Array<juce::var> ratioArray;
+      juce::Array<juce::var> baseArray;
+      juce::Array<juce::var> deltaArray;
+      for (int frame = startFrame; frame < endFrame; ++frame)
+      {
+        const int local = frame - startFrame;
+        const float targetHz =
+            local < static_cast<int>(target.size())
+                ? target[static_cast<size_t>(local)]
+                : 0.0f;
+        const float sourceHz =
+            frame < static_cast<int>(sourceF0.size())
+                ? sourceF0[static_cast<size_t>(frame)]
+                : 0.0f;
+        targetArray.add(targetHz);
+        sourceArray.add(sourceHz);
+        ratioArray.add(targetHz > 0.0f && sourceHz > 0.0f
+                           ? targetHz / sourceHz
+                           : 1.0f);
+        baseArray.add(frame < static_cast<int>(audioData.basePitch.size())
+                          ? audioData.basePitch[static_cast<size_t>(frame)]
+                          : 0.0f);
+        deltaArray.add(frame < static_cast<int>(audioData.deltaPitch.size())
+                           ? audioData.deltaPitch[static_cast<size_t>(frame)]
+                           : 0.0f);
+      }
+
+      // Note frontiers exactly as BasePitchCurve places them: midpoint
+      // between the end of one note and the start of the next.
+      juce::Array<juce::var> boundaryArray;
+      std::vector<const Note *> ordered;
+      for (const auto &note : project->getNotes())
+        if (!note.isRest() && note.getEndFrame() > startFrame &&
+            note.getStartFrame() < endFrame)
+          ordered.push_back(&note);
+      std::sort(ordered.begin(), ordered.end(),
+                [](const Note *a, const Note *b) {
+                  return a->getStartFrame() < b->getStartFrame();
+                });
+      for (size_t i = 1; i < ordered.size(); ++i)
+      {
+        const auto *left = ordered[i - 1];
+        const auto *right = ordered[i];
+        auto boundary = new juce::DynamicObject();
+        boundary->setProperty("left_index",
+                              static_cast<int>(left - project->getNotes().data()));
+        boundary->setProperty("right_index",
+                              static_cast<int>(right - project->getNotes().data()));
+        boundary->setProperty("left_end_frame", left->getEndFrame());
+        boundary->setProperty("right_start_frame", right->getStartFrame());
+        boundary->setProperty(
+            "boundary_frame",
+            (left->getEndFrame() + right->getStartFrame()) / 2);
+        boundary->setProperty("left_midi", left->getMidiNote());
+        boundary->setProperty("right_midi", right->getMidiNote());
+        boundary->setProperty(
+            "left_shift_cents",
+            (left->getAdjustedMidiNote() - left->getOriginalMidiNote()) *
+                100.0f);
+        boundary->setProperty(
+            "right_shift_cents",
+            (right->getAdjustedMidiNote() - right->getOriginalMidiNote()) *
+                100.0f);
+        boundary->setProperty(
+            "left_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(*left, currentEngine)));
+        boundary->setProperty(
+            "right_engine",
+            synthesisEngineTypeToString(
+                engineBlocks::effectiveEngine(*right, currentEngine)));
+        boundaryArray.add(juce::var(boundary));
+      }
+
+      response->setProperty("start_frame", startFrame);
+      response->setProperty("end_frame", endFrame);
+      response->setProperty("sample_rate", audioData.sampleRate);
+      response->setProperty("hop_size", HOP_SIZE);
+      response->setProperty("target_hz", juce::var(targetArray));
+      response->setProperty("source_hz", juce::var(sourceArray));
+      response->setProperty("pitch_ratio", juce::var(ratioArray));
+      response->setProperty("base_pitch", juce::var(baseArray));
+      response->setProperty("delta_pitch", juce::var(deltaArray));
+      response->setProperty("boundaries", juce::var(boundaryArray));
+      response->setProperty("ok", true);
+    }
+    else if (command == "set_note_midi")
+    {
+      // D-182 measurement only: apply the same operation as a note drag
+      // (NotePitch::applyEdit + rebuild + dirty range), so an inverted
+      // contour is a real user edit, not a hand-written curve.
+      const auto indicesVar = request.getProperty("indices", juce::var());
+      const auto midiVar = request.getProperty("midi", juce::var());
+      std::vector<int> indices;
+      std::vector<float> midiValues;
+      if (indicesVar.isArray())
+        for (const auto &value : *indicesVar.getArray())
+          indices.push_back(static_cast<int>(value));
+      if (midiVar.isArray())
+        for (const auto &value : *midiVar.getArray())
+          midiValues.push_back(static_cast<float>(value));
+
+      if (indices.empty() || indices.size() != midiValues.size())
+        response->setProperty(
+            "error", "set_note_midi necesita indices y midi del mismo tamano.");
+      else
+      {
+        auto &notes = project->getNotes();
+        int minFrame = std::numeric_limits<int>::max();
+        int maxFrame = std::numeric_limits<int>::min();
+        bool valid = true;
+        juce::Array<juce::var> applied;
+        for (size_t i = 0; i < indices.size(); ++i)
+        {
+          const int index = indices[i];
+          const float newMidi = midiValues[i];
+          if (index < 0 || index >= static_cast<int>(notes.size()) ||
+              notes[static_cast<size_t>(index)].isRest() ||
+              !std::isfinite(newMidi))
+          {
+            valid = false;
+            break;
+          }
+          auto &note = notes[static_cast<size_t>(index)];
+          const float fromMidi = note.getMidiNote();
+          const float sourceBefore = note.getLastNonMacroMidiNote();
+          NotePitch::applyEdit(note, *project, sourceBefore, fromMidi, newMidi);
+          note.setPitchOffset(0.0f);
+          note.markDirty();
+          note.markSynthDirty();
+          minFrame = std::min(minFrame, note.getStartFrame());
+          maxFrame = std::max(maxFrame, note.getEndFrame());
+          auto entry = new juce::DynamicObject();
+          entry->setProperty("index", index);
+          entry->setProperty("from_midi", fromMidi);
+          entry->setProperty("to_midi", newMidi);
+          applied.add(juce::var(entry));
+        }
+
+        if (!valid)
+          response->setProperty(
+              "error", "set_note_midi: indice fuera de rango, nota rest o MIDI no finito; no se aplico nada.");
+        else
+        {
+          PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          project->markNoteEditDirtyRange(minFrame, maxFrame);
+          project->setModified(true);
+          pianoRoll.repaint();
+          onPitchEdited();
+          markRenderDirty();
+          notifyProjectDataChanged();
+          if (isPluginMode() && onPitchEditFinished)
+            onPitchEditFinished();
+          response->setProperty("applied", juce::var(applied));
+          response->setProperty("dirty_start", minFrame);
+          response->setProperty("dirty_end", maxFrame);
+          response->setProperty("ok", true);
+        }
+      }
+    }
+    else if (command == "set_note_engine")
+    {
+      const auto engineText = request.getProperty("engine", "").toString();
+      const auto engine = stringToNoteEngine(engineText);
+      const bool engineValid = engineText.equalsIgnoreCase("Inherit") ||
+          engineText.equalsIgnoreCase("Vocoder") ||
+          engineText.equalsIgnoreCase("PSOLA") ||
+          engineText.equalsIgnoreCase("Pitchcore");
+      const auto indicesVar = request.getProperty("indices", juce::var());
+      std::vector<int> indices;
+      if (indicesVar.isArray())
+        for (const auto &value : *indicesVar.getArray())
+          indices.push_back(static_cast<int>(value));
+      if (!engineValid || indices.empty())
+        response->setProperty("error", "Se requieren índices de nota y un motor válido: Inherit, Vocoder, PSOLA o Pitchcore.");
+      else
+      {
+        const auto &notes = project->getNotes();
+        juce::Array<juce::var> before;
+        for (const int index : indices)
+        {
+          if (index < 0 || index >= static_cast<int>(notes.size()))
+          {
+            response->setProperty("error", "Índice de nota fuera de rango; no se aplicó ningún cambio.");
+            break;
+          }
+          before.add(noteEngineToString(notes[static_cast<size_t>(index)].getEngine()));
+        }
+        if (before.size() == static_cast<int>(indices.size()))
+        {
+          const int refused = applyNoteEngineToIndices(indices, engine);
+          juce::Array<juce::var> applied;
+          juce::Array<juce::var> unchanged;
+          for (size_t i = 0; i < indices.size(); ++i)
+          {
+            const int index = indices[i];
+            const auto previous = before[static_cast<int>(i)].toString();
+            const auto current = noteEngineToString(project->getNotes()[static_cast<size_t>(index)].getEngine());
+            (previous == current ? unchanged : applied).add(index);
+          }
+          response->setProperty("applied_indices", juce::var(applied));
+          response->setProperty("unchanged_indices", juce::var(unchanged));
+          response->setProperty("refused", refused);
+          response->setProperty("engine", engineText);
+          response->setProperty("ok", refused == 0);
+          if (refused > 0)
+            response->setProperty("error", "D-129 rechazó notas sin silencio válido; ver refused y unchanged_indices.");
+        }
+      }
+    }
+    else if (command == "set_synthesis_engine")
+    {
+      const auto engineText = request.getProperty("engine", "").toString();
+      SynthesisEngineType engine = SynthesisEngineType::Psola;
+      bool valid = true;
+      if (engineText == "PSOLA")
+        engine = SynthesisEngineType::Psola;
+      else if (engineText == "Pitchcore")
+        engine = SynthesisEngineType::Pitchcore;
+      else if (engineText == "Vocoder")
+        engine = SynthesisEngineType::Vocoder;
+      else
+        valid = false;
+
+      if (!valid)
+        response->setProperty("error", "engine debe ser PSOLA, Pitchcore o Vocoder.");
+      else
+      {
+        // Same path as the Rendering card, so the document records its own
+        // engine instead of only the shared preference (D-174, I-19).
+        settingsManager->setSynthesisEngineType(engine);
+        settingsManager->saveConfig();
+        project->setSynthesisEngine(engine);
+        if (editorController)
+          editorController->setSynthesisEngineType(engine);
+        rerenderEditedNotes();
+        notifyProjectDataChanged();
+        response->setProperty("synthesis_engine", engineText);
+        response->setProperty("ok", true);
+      }
+    }
+    else if (command == "reset_ui_trace")
+    {
+      latencyTrace.resizeCount = 0;
+      latencyTrace.firstResizeScrollBefore = 0.0;
+      latencyTrace.firstResizeScrollAfter = 0.0;
+      latencyTrace.firstResizeCursorVisibleBefore = false;
+      latencyTrace.firstResizeCursorVisibleAfter = false;
+      latencyTrace.firstResizeWidth = 0;
+      latencyTrace.firstResizePps = 0.0;
+      latencyTrace.firstResizeDuration = 0.0;
+      latencyTrace.firstResizeVisibleWidth = 0;
+      latencyTrace.layoutCount = 0;
+      latencyTrace.lastLayoutScrollBefore = 0.0;
+      latencyTrace.lastLayoutScrollAfter = 0.0;
+      latencyTrace.scrollResetCount = 0;
+      latencyTrace.scrollResetFrom = 0.0;
+      latencyTrace.scrollResetTo = 0.0;
+      latencyTrace.scrollResetAtMs = 0.0;
+      latencyTrace.lastObservedScrollX = pianoRoll.getScrollX();
+      latencyTrace.callbackResetCount = 0;
+      latencyTrace.callbackResetFrom = 0.0;
+      latencyTrace.callbackResetTo = 0.0;
+      latencyTrace.callbackResetAtMs = 0.0;
+      latencyTrace.lastCallbackScrollX = pianoRoll.getScrollX();
+      latencyTrace.layoutScrollGuardActive = false;
+      latencyTrace.layoutScrollGuardScroll = 0.0;
+      latencyTrace.layoutScrollGuardUntilMs = 0.0;
+      latencyTrace.layoutScrollGuardCursorVisible = false;
+      latencyTrace.layoutScrollGuardRestoreCount = 0;
+      latencyTrace.focusRestoreCount = 0;
+      latencyTrace.paintHistoryCount = 0;
+      latencyTrace.paintHistoryNext = 0;
+      latencyTrace.lastSampledPaintCount = pianoRoll.getPaintCount();
+      response->setProperty("ok", true);
+    }
+    else if (command == "paint_history")
+    {
+      juce::Array<juce::var> samples;
+      const int count = latencyTrace.paintHistoryCount;
+      const int start = count < UiLatencyTrace::kPaintHistorySize
+                            ? 0
+                            : latencyTrace.paintHistoryNext;
+      for (int i = 0; i < count; ++i)
+      {
+        const int index = (start + i) % UiLatencyTrace::kPaintHistorySize;
+        const auto &sample =
+            latencyTrace.paintHistory[static_cast<size_t>(index)];
+        auto object = new juce::DynamicObject();
+        object->setProperty("at_ms", sample.atMs);
+        object->setProperty("scroll_x", sample.scrollX);
+        object->setProperty("cursor_time", sample.cursorTime);
+        object->setProperty("visible_width", sample.visibleWidth);
+        object->setProperty("pixels_per_second", sample.pixelsPerSecond);
+        object->setProperty("cursor_visible", sample.cursorVisible);
+        object->setProperty("playback_active", sample.playbackActive);
+        object->setProperty("paint_count",
+                            static_cast<juce::int64>(sample.paintCount));
+        object->setProperty("project_notes", sample.projectNotes);
+        samples.add(juce::var(object));
+      }
+      response->setProperty("paint_count",
+                            static_cast<juce::int64>(pianoRoll.getPaintCount()));
+      response->setProperty("samples", juce::var(samples));
+      response->setProperty("ok", true);
+    }
+    else if (command == "ui_state")
+    {
+      // D-180: measurement only. Internal timestamps let the probe compute the
+      // latency without trusting the file-poll interval.
+      auto span = [](double fromMs, double toMs) {
+        return (fromMs > 0.0 && toMs >= fromMs) ? toMs - fromMs : -1.0;
+      };
+      response->setProperty("now_ms", nowMs());
+      response->setProperty("wall_ms",
+                            static_cast<double>(juce::Time::currentTimeMillis()));
+      response->setProperty("playback_active", isPlaying);
+      response->setProperty("paint_count",
+                            static_cast<juce::int64>(pianoRoll.getPaintCount()));
+      response->setProperty("paint_last_ms", pianoRoll.getLastPaintDurationMs());
+      response->setProperty("paint_max_ms", pianoRoll.getMaxPaintDurationMs());
+      response->setProperty("timer_gap_max_ms", latencyTrace.maxTimerGapMs);
+      response->setProperty("exchange_last_ms", latencyTrace.lastExchangeMs);
+      response->setProperty("exchange_max_ms", latencyTrace.maxExchangeMs);
+      response->setProperty("region_refresh_last_ms",
+                            latencyTrace.lastRegionRefreshMs);
+      response->setProperty("region_refresh_max_ms",
+                            latencyTrace.maxRegionRefreshMs);
+      response->setProperty("archive_restore_last_ms",
+                            latencyTrace.lastArchiveRestoreMs);
+      response->setProperty("archive_restore_max_ms",
+                            latencyTrace.maxArchiveRestoreMs);
+      response->setProperty("activation_last_ms",
+                            latencyTrace.lastActivationMs);
+      response->setProperty("activation_max_ms",
+                            latencyTrace.maxActivationMs);
+      response->setProperty("activation_cancel_ms",
+                            latencyTrace.lastActivationCancelMs);
+      response->setProperty("activation_copy_ms",
+                            latencyTrace.lastActivationCopyMs);
+      response->setProperty("activation_parse_ms",
+                            latencyTrace.lastActivationParseMs);
+      response->setProperty("activation_install_ms",
+                            latencyTrace.lastActivationInstallMs);
+      response->setProperty("activation_focus_ms",
+                            latencyTrace.lastActivationFocusMs);
+      response->setProperty("activation_bind_ms",
+                            latencyTrace.lastActivationBindMs);
+      response->setProperty("activation_total_ms",
+                            latencyTrace.lastActivationTotalMs);
+
+      response->setProperty("selection_start_ms",
+                            latencyTrace.selectionStartedMs);
+      response->setProperty("selection_bound_ms",
+                            latencyTrace.selectionBoundMs);
+      response->setProperty("selection_first_paint_ms",
+                            latencyTrace.selectionFirstPaintMs);
+      response->setProperty("selection_bind_ms",
+                            span(latencyTrace.selectionStartedMs,
+                                 latencyTrace.selectionBoundMs));
+      response->setProperty("selection_paint_ms",
+                            span(latencyTrace.selectionBoundMs,
+                                 latencyTrace.selectionFirstPaintMs));
+      response->setProperty("selection_total_ms",
+                            span(latencyTrace.selectionStartedMs,
+                                 latencyTrace.selectionFirstPaintMs));
+
+      response->setProperty("play_state_ms", latencyTrace.playStateMs);
+      response->setProperty("play_first_paint_ms",
+                            latencyTrace.playFirstPaintMs);
+      response->setProperty("play_state_to_paint_ms",
+                            span(latencyTrace.playStateMs,
+                                 latencyTrace.playFirstPaintMs));
+      response->setProperty("play_cursor_ms", latencyTrace.playCursorMs);
+      response->setProperty("play_cursor_first_paint_ms",
+                            latencyTrace.playCursorFirstPaintMs);
+      response->setProperty("play_cursor_to_paint_ms",
+                            span(latencyTrace.playCursorMs,
+                                 latencyTrace.playCursorFirstPaintMs));
+      response->setProperty("play_cursor_visible",
+                            latencyTrace.playCursorVisible);
+
+      response->setProperty("stopped_seek_ms", latencyTrace.stoppedSeekMs);
+      response->setProperty("stopped_seek_applied_ms",
+                            latencyTrace.stoppedSeekAppliedMs);
+      response->setProperty("stopped_seek_first_paint_ms",
+                            latencyTrace.stoppedSeekFirstPaintMs);
+      response->setProperty("stopped_seek_apply_ms",
+                            span(latencyTrace.stoppedSeekMs,
+                                 latencyTrace.stoppedSeekAppliedMs));
+      response->setProperty("stopped_seek_paint_ms",
+                            span(latencyTrace.stoppedSeekAppliedMs,
+                                 latencyTrace.stoppedSeekFirstPaintMs));
+      response->setProperty("stopped_seek_total_ms",
+                            span(latencyTrace.stoppedSeekMs,
+                                 latencyTrace.stoppedSeekFirstPaintMs));
+      response->setProperty("stopped_seek_cursor_visible",
+                            latencyTrace.stoppedSeekCursorVisible);
+
+      response->setProperty("scroll_x", pianoRoll.getScrollX());
+      response->setProperty("cursor_time", pianoRoll.getCursorTime());
+      response->setProperty("pixels_per_second",
+                            static_cast<double>(pianoRoll.getPixelsPerSecond()));
+      response->setProperty("visible_width",
+                            pianoRoll.getVisibleContentWidth());
+      response->setProperty("cursor_visible",
+                            cursorIsVisible(pianoRoll.getCursorTime()));
+      response->setProperty("window_width", getWidth());
+      response->setProperty("window_height", getHeight());
+      response->setProperty("piano_roll_width", pianoRoll.getWidth());
+      response->setProperty("piano_roll_height", pianoRoll.getHeight());
+      response->setProperty("resize_count", latencyTrace.resizeCount);
+      response->setProperty("resize_at_ms", latencyTrace.lastResizeAtMs);
+      response->setProperty("resize_scroll_before",
+                            latencyTrace.lastResizeScrollBefore);
+      response->setProperty("resize_scroll_after",
+                            latencyTrace.lastResizeScrollAfter);
+      response->setProperty("resize_cursor", latencyTrace.lastResizeCursor);
+      response->setProperty("resize_cursor_visible_before",
+                            latencyTrace.lastResizeCursorVisibleBefore);
+      response->setProperty("resize_cursor_visible_after",
+                            latencyTrace.lastResizeCursorVisibleAfter);
+      response->setProperty("resize_width", latencyTrace.lastResizeWidth);
+      response->setProperty("resize_height", latencyTrace.lastResizeHeight);
+      response->setProperty("first_resize_scroll_before",
+                            latencyTrace.firstResizeScrollBefore);
+      response->setProperty("first_resize_scroll_after",
+                            latencyTrace.firstResizeScrollAfter);
+      response->setProperty("first_resize_cursor_visible_before",
+                            latencyTrace.firstResizeCursorVisibleBefore);
+      response->setProperty("first_resize_cursor_visible_after",
+                            latencyTrace.firstResizeCursorVisibleAfter);
+      response->setProperty("first_resize_width",
+                            latencyTrace.firstResizeWidth);
+      response->setProperty("first_resize_pps",
+                            latencyTrace.firstResizePps);
+      response->setProperty("first_resize_duration",
+                            latencyTrace.firstResizeDuration);
+      response->setProperty("first_resize_visible_width",
+                            latencyTrace.firstResizeVisibleWidth);
+      response->setProperty("layout_count", latencyTrace.layoutCount);
+      response->setProperty("layout_scroll_before",
+                            latencyTrace.lastLayoutScrollBefore);
+      response->setProperty("layout_scroll_after",
+                            latencyTrace.lastLayoutScrollAfter);
+      response->setProperty("layout_pps_before",
+                            latencyTrace.lastLayoutPpsBefore);
+      response->setProperty("layout_duration_before",
+                            latencyTrace.lastLayoutDurationBefore);
+      response->setProperty("layout_visible_width_before",
+                            latencyTrace.lastLayoutVisibleWidthBefore);
+      response->setProperty("scroll_reset_count",
+                            latencyTrace.scrollResetCount);
+      response->setProperty("scroll_reset_from",
+                            latencyTrace.scrollResetFrom);
+      response->setProperty("scroll_reset_to",
+                            latencyTrace.scrollResetTo);
+      response->setProperty("scroll_reset_at_ms",
+                            latencyTrace.scrollResetAtMs);
+      response->setProperty("callback_reset_count",
+                            latencyTrace.callbackResetCount);
+      response->setProperty("callback_reset_from",
+                            latencyTrace.callbackResetFrom);
+      response->setProperty("callback_reset_to",
+                            latencyTrace.callbackResetTo);
+      response->setProperty("callback_reset_at_ms",
+                            latencyTrace.callbackResetAtMs);
+      response->setProperty("focus_at_ms", latencyTrace.lastFocusAtMs);
+      response->setProperty("focus_span_start",
+                            latencyTrace.lastFocusSpanStart);
+      response->setProperty("focus_scroll_x", latencyTrace.lastFocusScrollX);
+      response->setProperty("focus_cursor_time",
+                            latencyTrace.lastFocusCursorTime);
+      response->setProperty("focus_cursor_was_visible",
+                            latencyTrace.lastFocusCursorWasVisible);
+      response->setProperty("focus_cursor_visible_after",
+                            latencyTrace.lastFocusCursorVisibleAfter);
+      response->setProperty("focus_cursor_restored",
+                            latencyTrace.lastFocusCursorRestored);
+      response->setProperty("focus_restore_count",
+                            latencyTrace.focusRestoreCount);
+      response->setProperty("layout_guard_active",
+                            latencyTrace.layoutScrollGuardActive);
+      response->setProperty("layout_guard_scroll",
+                            latencyTrace.layoutScrollGuardScroll);
+      response->setProperty("layout_guard_restore_count",
+                            latencyTrace.layoutScrollGuardRestoreCount);
+      response->setProperty("selection_scroll_at_bound",
+                            latencyTrace.selectionScrollAtBound);
+      response->setProperty("selection_scroll_at_paint",
+                            latencyTrace.selectionScrollAtPaint);
+      response->setProperty("selection_cursor_visible_at_paint",
+                            latencyTrace.selectionCursorVisibleAtPaint);
+      response->setProperty("timeline_start", pianoRoll.getTimelineStart());
+      response->setProperty("timeline_duration",
+                            pianoRoll.getTimelineDuration());
+      response->setProperty("project_notes",
+                            project != nullptr
+                                ? static_cast<int>(project->getNotes().size())
+                                : 0);
+      response->setProperty("ok", true);
+    }
+    else
+      response->setProperty("error", "Comando MCP desconocido.");
+
+    const auto responseFile = dir.getChildFile("response_" + requestId + ".json");
+    writeMcpJsonAtomically(responseFile, juce::var(response));
+    requestFile.deleteFile();
+  }
+}
+
 void MainComponent::timerCallback()
 {
+  // D-180: measurement only. A 60 Hz tick that arrives late means the message
+  // thread was blocked, which is different from a late state change.
+  {
+    const double timerNowMs = nowMs();
+    if (latencyTrace.lastTimerMs > 0.0)
+      latencyTrace.maxTimerGapMs =
+          std::max(latencyTrace.maxTimerGapMs,
+                   timerNowMs - latencyTrace.lastTimerMs);
+    latencyTrace.lastTimerMs = timerNowMs;
+  }
+
+  // D-180-R: measurement only. Detect a scroll that collapses to the start
+  // between ticks, independently of who caused it.
+  {
+    const double observedScroll = pianoRoll.getScrollX();
+    if (latencyTrace.lastObservedScrollX > 100.0 &&
+        observedScroll < 1.0 &&
+        std::abs(pianoRoll.getCursorTime()) > 10.0)
+    {
+      ++latencyTrace.scrollResetCount;
+      latencyTrace.scrollResetFrom = latencyTrace.lastObservedScrollX;
+      latencyTrace.scrollResetTo = observedScroll;
+      latencyTrace.scrollResetAtMs = nowMs();
+    }
+    latencyTrace.lastObservedScrollX = observedScroll;
+  }
+
+  if (latencyTrace.layoutScrollGuardActive &&
+      nowMs() > latencyTrace.layoutScrollGuardUntilMs)
+    latencyTrace.layoutScrollGuardActive = false;
+
+  pollMcpControl();
   dispatchPendingDragAudition();
 
   // Handle throttled cursor updates (30Hz max)
@@ -1587,25 +2535,38 @@ void MainComponent::timerCallback()
       pianoRoll.setCursorTime(position);
       toolbar.setCurrentTime(position);
 
-      // Follow playback: scroll to keep cursor visible
+      // D-180: follow a stopped host seek as well as playback. The old rule
+      // only moved the view while the transport was running, so a cursor
+      // outside the window left the notes at the project start until play.
+      const bool stoppedSeekMoved = pendingStoppedHostSeek;
       const bool suppressPlaybackFollow =
           juce::Time::getMillisecondCounterHiRes() <
           suppressPlaybackFollowUntilMs;
-      if (isPlaying && toolbar.isFollowPlayback() && !suppressPlaybackFollow)
+      if (pitchnet::shouldFollowCursor(isPlaying, stoppedSeekMoved) &&
+          toolbar.isFollowPlayback() &&
+          (!isPlaying || !suppressPlaybackFollow))
       {
-        float cursorX =
-            static_cast<float>(position * pianoRoll.getPixelsPerSecond());
-        float viewWidth =
-            static_cast<float>(pianoRoll.getVisibleContentWidth());
-        float scrollX = static_cast<float>(pianoRoll.getScrollX());
-
-        // If cursor is outside visible area, scroll to center it
-        if (cursorX < scrollX || cursorX > scrollX + viewWidth)
-        {
-          double newScrollX =
-              std::max(0.0, static_cast<double>(cursorX - viewWidth * 0.3f));
+        const double newScrollX = pitchnet::scrollXToRevealCursor(
+            position, pianoRoll.getScrollX(),
+            static_cast<double>(pianoRoll.getPixelsPerSecond()),
+            pianoRoll.getVisibleContentWidth(),
+            pianoRoll.getTimelineStart(),
+            pianoRoll.getTimelineDuration());
+        if (std::abs(newScrollX - pianoRoll.getScrollX()) > 0.01)
           pianoRoll.setScrollX(newScrollX);
+      }
+
+      // D-180: measurement only. The stopped-seek event is applied here; the
+      // first paint after this point is reported by the timer.
+      if (pendingStoppedHostSeek)
+      {
+        if (latencyTrace.stoppedSeekAppliedMs == 0.0)
+        {
+          latencyTrace.stoppedSeekAppliedMs = nowMs();
+          latencyTrace.stoppedSeekPaintBase = pianoRoll.getPaintCount();
+          latencyTrace.stoppedSeekCursorVisible = cursorIsVisible(position);
         }
+        pendingStoppedHostSeek = false;
       }
     }
   }
@@ -1656,6 +2617,60 @@ void MainComponent::timerCallback()
     hideAnalysisProgress();
     lastLoadingMessage.clear();
   }
+
+  updateUiLatencyPaintTrace();
+
+  // D-180-R3/R4: one sample per observed paint. The 60 Hz timer is enough for
+  // the ~500 ms intermediate frame this round is about.
+  {
+    const auto paintCount = pianoRoll.getPaintCount();
+    if (paintCount != latencyTrace.lastSampledPaintCount)
+    {
+      auto &sample =
+          latencyTrace.paintHistory[static_cast<size_t>(
+              latencyTrace.paintHistoryNext)];
+      sample.atMs = nowMs();
+      sample.scrollX = pianoRoll.getScrollX();
+      sample.cursorTime = pianoRoll.getCursorTime();
+      sample.visibleWidth = pianoRoll.getVisibleContentWidth();
+      sample.pixelsPerSecond =
+          static_cast<double>(pianoRoll.getPixelsPerSecond());
+      sample.cursorVisible =
+          cursorIsVisible(sample.cursorTime);
+      sample.playbackActive = isPlaying;
+      sample.paintCount = paintCount;
+      sample.projectNotes = getProject() != nullptr
+                                ? static_cast<int>(getProject()->getNotes().size())
+                                : 0;
+      latencyTrace.paintHistoryNext =
+          (latencyTrace.paintHistoryNext + 1) %
+          UiLatencyTrace::kPaintHistorySize;
+      latencyTrace.paintHistoryCount = std::min(
+          latencyTrace.paintHistoryCount + 1,
+          UiLatencyTrace::kPaintHistorySize);
+      latencyTrace.lastSampledPaintCount = paintCount;
+      if (pendingOpenCursorReveal && sample.cursorVisible)
+        pendingOpenCursorReveal = false;
+    }
+  }
+
+  // D-180-R3 fallback: if setup did not call focusTimelineRange, reveal the
+  // seeded cursor once the canvas has a real width.
+  if (pendingOpenCursorReveal && getProject() != nullptr && !isPlaying)
+  {
+    const double openCursor = pianoRoll.getCursorTime();
+    const int openWidth = pianoRoll.getVisibleContentWidth();
+    const double openPps =
+        static_cast<double>(pianoRoll.getPixelsPerSecond());
+    if (openCursor > 0.01 && openWidth > 0 && openPps > 0.0)
+    {
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          openCursor, pianoRoll.getScrollX(), openPps, openWidth,
+          pianoRoll.getTimelineStart(), pianoRoll.getTimelineDuration()));
+      if (cursorIsVisible(openCursor))
+        pendingOpenCursorReveal = false;
+    }
+  }
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress &key,
@@ -1682,6 +2697,24 @@ void MainComponent::saveProject(bool saveAs)
   auto *project = getProject();
   if (!project)
     return;
+
+  // P1b fase 4: no se persiste ningun bloque sucio. El flush corre antes de
+  // escribir el fichero; si sigue en vuelo, el guardado se reanuda cuando la
+  // cadena de flush termina (resynthesizeIncremental -> resumeSaveAfterFlush).
+  if (!resumeSaveAfterFlush &&
+      (project->hasDirtyNotes() || project->hasF0DirtyRange()))
+  {
+    resumeSaveAfterFlush = true;
+    saveAsAfterFlush = saveAs;
+    deferredRenderPending = true;
+    playAfterFlush = false;
+    toolbar.showProgress(TR("progress.synthesizing"));
+    toolbar.setProgress(-1.0f);
+    flushDirtyBlocks();
+    if (flushChainActive)
+      return; // the save resumes when the last block is clean
+    resumeSaveAfterFlush = false;
+  }
 
   project->uiWidth = getWidth();
   project->uiHeight = getHeight();
@@ -1970,6 +3003,26 @@ void MainComponent::zoomToFull()
 
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
+  if (pianoRoll.getVisibleContentHeight() <= 0)
+  {
+    // D-176: the initial ARA selection can attach the project before the
+    // canvas is sized; retry after layout instead of leaving the previous
+    // track's pitch range on screen.
+    hasPendingPitchFit = true;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("fitPitchRange deferred notes=" +
+             juce::String(static_cast<int>(project.getNotes().size())) +
+             " height=0");
+#endif
+    return;
+  }
+  hasPendingPitchFit = false;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("fitPitchRange run notes=" +
+           juce::String(static_cast<int>(project.getNotes().size())) +
+           " height=" + juce::String(pianoRoll.getVisibleContentHeight()));
+#endif
+
   float minMidi = std::numeric_limits<float>::max();
   float maxMidi = std::numeric_limits<float>::lowest();
 
@@ -2007,7 +3060,15 @@ void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
   {
     maxMidi = std::min(maxMidi + 1.0f, static_cast<float>(MAX_MIDI_NOTE));
     pianoRoll.fitPitchRangeToView(minMidi, maxMidi);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+    ARA_DIAG("fitPitchRange applied min=" + juce::String(minMidi, 2) +
+             " max=" + juce::String(maxMidi, 2));
+#endif
   }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  else
+    ARA_DIAG("fitPitchRange noData");
+#endif
 }
 
 void MainComponent::exportFile()
@@ -2852,6 +3913,9 @@ void MainComponent::resynthesizeIncremental()
     return;
   }
 
+  mcpRenderPending = true;
+  ++mcpRenderGeneration;
+
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
   setToolGroupEnabled(false);
@@ -2871,11 +3935,16 @@ void MainComponent::resynthesizeIncremental()
         if (safeThis == nullptr)
           return;
         safeThis->toolbar.showProgress(message);
+        // P1b fase 6: el barrido avanza con los repintados; el progreso del
+        // render no toca el piano roll por su cuenta.
+        safeThis->pianoRoll.repaint();
       },
       [safeThis](bool success)
       {
         if (safeThis == nullptr)
           return;
+
+        safeThis->mcpRenderPending = false;
 
         safeThis->setToolGroupEnabled(true);
         safeThis->toolbar.hideProgress();
@@ -2887,6 +3956,36 @@ void MainComponent::resynthesizeIncremental()
           return;
         }
 
+        // P1b: the flush continues block by block. The project renders one
+        // silence-bounded block per pass (D-197), so the transport waits until
+        // none is left dirty.
+        if (safeThis->flushChainActive)
+        {
+          auto *chainProject = safeThis->getProject();
+          if (chainProject != nullptr &&
+              (chainProject->hasDirtyNotes() || chainProject->hasF0DirtyRange()))
+          {
+            safeThis->resynthesizeIncremental();
+            return;
+          }
+
+          safeThis->deferredRenders.clear();
+          safeThis->pushSweepState();
+          safeThis->flushChainActive = false;
+          if (safeThis->playAfterFlush)
+          {
+            safeThis->playAfterFlush = false;
+            safeThis->play();
+          }
+          // P1b fase 4: el guardado que esperaba al flush se reanuda aqui,
+          // con los bloques ya limpios.
+          if (safeThis->resumeSaveAfterFlush)
+          {
+            safeThis->resumeSaveAfterFlush = false;
+            safeThis->saveProject(safeThis->saveAsAfterFlush);
+          }
+        }
+
         safeThis->pianoRoll.invalidateWaveformCache();
         safeThis->pianoRoll.repaint();
         if (safeThis->isPluginMode())
@@ -2894,6 +3993,88 @@ void MainComponent::resynthesizeIncremental()
       },
       pendingIncrementalResynth,
       isPluginMode());
+}
+
+// P1b: an edit, an undo, an engine change, an MCP command or DAW automation
+// only marks. The audio is not touched here; the blocks wait for Play.
+
+void MainComponent::markRenderDirty()
+{
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return;
+
+  const auto range = project->getDirtyFrameRange();
+  if (range.first >= 0 && range.second > range.first)
+    deferredRenders.markBlock(range.first, range.second);
+
+  deferredRenderPending = true;
+  pushSweepState();
+  pianoRoll.repaint();
+}
+
+// P1b fase 6: el barrido se alimenta de la cola, no del proyecto.
+void MainComponent::pushSweepState()
+{
+  const auto state = sweep::fromQueue(deferredRenders);
+  pianoRoll.setSweepState(state.active, state.blockStart, state.blockEnd,
+                          state.remaining);
+}
+
+// P1b: Play from the UI. Renders the dirty blocks first and only then starts
+// the transport; the cursor does not advance until the last block is done.
+void MainComponent::flushDirtyBlocks()
+{
+  if (!deferredRenderPending || flushChainActive)
+    return;
+
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+  {
+    deferredRenderPending = false;
+    return;
+  }
+
+  deferredRenderPending = false;
+  flushChainActive = true;
+  resynthesizeIncremental();
+}
+
+// P1b fase 3: the host started playback. With dirty blocks the transport is
+// held back: stop, render, restart. Without them this returns false and the
+// play edge goes through untouched (no stop/start).
+bool MainComponent::flushDirtyBlocksForHostPlay()
+{
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return false;
+
+  const bool hasDirtyBlocks =
+      project->hasDirtyNotes() || project->hasF0DirtyRange();
+  // Sin bloques en la cola ni rango F0 sucio no hay flush que hacer.
+  if (deferredRenders.dirtyBlockCount() == 0 && !project->hasF0DirtyRange())
+    return false;
+  if (!hasDirtyBlocks || flushChainActive)
+    return false;
+
+  // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
+  // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
+  flushResumePosition = lastHostPlaybackSeconds;
+  // P1b: un arrastre pendiente no debe sobrevivir al stop del flush.
+  pianoRoll.dropTransientNotePointers();
+  if (onRequestHostPlayState)
+    onRequestHostPlayState(false);
+
+  deferredRenderPending = true;
+  playAfterFlush = true;
+  flushDirtyBlocks();
+  if (!flushChainActive)
+  {
+    playAfterFlush = false;
+    if (onRequestHostPlayState)
+      onRequestHostPlayState(true);
+  }
+  return true;
 }
 
 void MainComponent::rerenderEditedNotes()
@@ -2907,7 +4088,7 @@ void MainComponent::rerenderEditedNotes()
   if (project->markEditedNotesDirty() == 0)
     return;
 
-  resynthesizeIncremental();
+  markRenderDirty();
 }
 
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
@@ -2929,6 +4110,113 @@ void MainComponent::onPitchEdited()
   parameterPanel.updateFromNote();
 }
 
+std::optional<NoteEngine> MainComponent::getSelectionNoteEngine() const
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return std::nullopt;
+  const auto targets = pianoRoll.getInspectorTargets();
+  if (targets.empty() || targets.front() == nullptr)
+    return std::nullopt;
+  return targets.front()->getEngine();
+}
+
+int MainComponent::applyNoteEngineToSelection(NoteEngine engine)
+{
+  std::vector<int> selection;
+  const auto targets = pianoRoll.getInspectorTargets();
+  selection.reserve(targets.size());
+  auto *project = getProject();
+  if (project == nullptr)
+    return 0;
+  auto &notes = project->getNotes();
+  for (auto *note : targets)
+  {
+    // Identity, not pointer arithmetic: the targets must be notes of this
+    // project, and anything else is simply not part of the edit.
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+      if (&notes[static_cast<size_t>(i)] == note)
+      {
+        selection.push_back(i);
+        break;
+      }
+  }
+  if (selection.empty())
+    return 0;
+
+  return applyNoteEngineToIndices(selection, engine);
+}
+
+int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
+                                            NoteEngine engine)
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return 0;
+  auto &notes = project->getNotes();
+  if (notes.empty() || indices.empty())
+    return 0;
+
+  std::vector<int> selection;
+  selection.reserve(indices.size());
+  std::unordered_set<int> seen;
+  for (const int index : indices)
+    if (index >= 0 && index < static_cast<int>(notes.size()) &&
+        seen.insert(index).second && !notes[static_cast<size_t>(index)].isRest())
+      selection.push_back(index);
+  if (selection.empty())
+    return 0;
+
+  // D-185: a new gesture replaces the previous explanation.
+  lastRefusedEngineRequests.clear();
+
+  const auto &audio = project->getAudioData();
+  const auto &source = audio.originalWaveform.getNumSamples() > 0
+                           ? audio.originalWaveform
+                           : audio.waveform;
+  const auto globalEngine = editorController
+                                ? editorController->getSynthesisEngineType()
+                                : defaultSynthesisEngineType();
+
+  // The rule lives in one place so the menu and the renderer cannot disagree:
+  // a note only takes another engine when a usable silence separates it from
+  // the previous one (D-129).
+  const auto plan = engineBlocks::planEngineEdits(
+      notes, selection, engine, globalEngine, source, audio.sampleRate,
+      HOP_SIZE);
+
+  if (plan.refused > 0)
+    LOG("engine: refused " + juce::String(plan.refused) + " of " +
+        juce::String(static_cast<int>(selection.size())) +
+        " note(s): no silence between blocks");
+  for (const auto &refusal : plan.refusals)
+    lastRefusedEngineRequests[refusal.noteIndex] = refusal.requested;
+
+  if (!plan.edits.empty())
+  {
+    std::vector<NoteEngineAction::Change> changes;
+    changes.reserve(plan.edits.size());
+    for (const auto &edit : plan.edits)
+      changes.push_back(
+          {&notes[static_cast<size_t>(edit.noteIndex)], edit.previous,
+           edit.next});
+
+    auto action = std::make_unique<NoteEngineAction>(
+        std::move(changes), [this] { pianoRoll.repaint(); });
+    action->redo();
+    if (undoManager)
+      undoManager->addAction(std::move(action));
+
+    // The engine decides how the audio is produced, so the affected notes have
+    // to be rendered again; the action left them dirty and synth-dirty.
+    markRenderDirty();
+    notifyProjectDataChanged();
+  }
+
+  variAudioInspector.refresh();
+  return plan.refused;
+}
+
 void MainComponent::onZoomChanged(float pixelsPerSecond)
 {
   if (isSyncingZoom)
@@ -2948,6 +4236,21 @@ void MainComponent::notifyProjectDataChanged()
 {
   if (onProjectDataChanged)
     onProjectDataChanged();
+}
+
+void MainComponent::applyProjectSynthesisEngine()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+  const auto preference = settingsManager != nullptr
+                              ? settingsManager->getSynthesisEngineType()
+                              : defaultSynthesisEngineType();
+  const auto engine = pitchnet::displayedSynthesisEngine(
+      project->getSynthesisEngine(), preference);
+  if (editorController)
+    editorController->setSynthesisEngineType(engine);
+  parameterPanel.setSynthesisEngine(engine);
 }
 
 void MainComponent::undo()
@@ -2992,7 +4295,7 @@ void MainComponent::afterHistoryChange(bool requiresResynthesis)
   {
     // Don't mark all notes as dirty - the action marked the notes it changed
     // and set any F0 dirty range. This avoids synthesizing the entire project.
-    resynthesizeIncremental();
+    markRenderDirty();
   }
 
   // Update command states (undo/redo availability changed)
@@ -3080,10 +4383,32 @@ void MainComponent::hideAnalysisProgress()
 
 void MainComponent::finishBackendRender(bool success)
 {
+  mcpRenderPending = false;
   setToolGroupEnabled(true);
   toolbar.hideProgress();
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
                            : ParameterPanel::RenderStatus::Failed);
+
+  // P1b: el flush de Play acabo; se limpian los bloques renderizados (misma
+  // operacion que la ruta standalone), se baja la cadena y se arranca.
+  if (success && flushChainActive)
+  {
+    // La ruta standalone limpia estos estados en el proyecto del render
+    // (IncrementalSynthesizer::clearAllDirty); en plugin el editor conserva su
+    // copia, asi que se limpia aqui antes de arrancar.
+    if (auto *doneProject = getProject())
+      doneProject->clearAllDirty();
+    deferredRenders.clear();
+    flushChainActive = false;
+    // Solo se reanuda si este flush fue quien paro el transporte.
+    if (playAfterFlush)
+    {
+      playAfterFlush = false;
+      if (onRequestHostSeek)
+        onRequestHostSeek(flushResumePosition);
+      play();
+    }
+  }
 
   if (!success)
     return;
@@ -3570,34 +4895,123 @@ void MainComponent::clearHostAudio()
 
 void MainComponent::focusTimelineRange(double startSeconds, double endSeconds)
 {
-  const double start = std::max(pianoRoll.getTimelineStart(), startSeconds);
-  const double end = std::max(start, endSeconds);
   const double pixelsPerSecond = pianoRoll.getPixelsPerSecond();
   const int visibleWidth = pianoRoll.getVisibleContentWidth();
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("focusTimelineRange start=" + juce::String(startSeconds, 3) +
+           " end=" + juce::String(endSeconds, 3) +
+           " timelineStart=" + juce::String(pianoRoll.getTimelineStart(), 3) +
+           " duration=" + juce::String(pianoRoll.getTimelineDuration(), 3) +
+           " pps=" + juce::String(pixelsPerSecond, 3) +
+           " width=" + juce::String(visibleWidth) +
+           " scrollBefore=" + juce::String(pianoRoll.getScrollX(), 1));
+#endif
   if (pixelsPerSecond <= 0.0 || visibleWidth <= 0)
+  {
+    // D-176: setupARAMode applies the initial host selection before the editor
+    // is sized. Keep the span and retry after the layout has run.
+    hasPendingTimelineFocus = true;
+    pendingTimelineFocusStart = startSeconds;
+    pendingTimelineFocusEnd = endSeconds;
+    if (!pendingViewRetryScheduled && pendingViewRetries < 10)
+    {
+      pendingViewRetryScheduled = true;
+      juce::Component::SafePointer<MainComponent> safeThis(this);
+      juce::Timer::callAfterDelay(200, [safeThis]() {
+        if (safeThis == nullptr)
+          return;
+        safeThis->pendingViewRetryScheduled = false;
+        ++safeThis->pendingViewRetries;
+        if (safeThis->hasPendingPitchFit)
+          if (auto *pendingProject = safeThis->getProject())
+          {
+            safeThis->hasPendingPitchFit = false;
+            safeThis->fitAnalyzedPitchRangeToView(*pendingProject);
+          }
+        if (safeThis->hasPendingTimelineFocus)
+        {
+          const double pendingStart = safeThis->pendingTimelineFocusStart;
+          const double pendingEnd = safeThis->pendingTimelineFocusEnd;
+          safeThis->hasPendingTimelineFocus = false;
+          safeThis->focusTimelineRange(pendingStart, pendingEnd);
+        }
+      });
+    }
     return;
+  }
 
-  const double rangeWidth = (end - start) * pixelsPerSecond;
-  double newScrollX = start * pixelsPerSecond;
+  hasPendingTimelineFocus = false;
+  pendingViewRetries = 0;
+  const bool fromOpen = pendingOpenCursorReveal;
 
-  if (rangeWidth > 0.0 && rangeWidth < static_cast<double>(visibleWidth) * 0.75)
-    newScrollX += rangeWidth * 0.5 - static_cast<double>(visibleWidth) * 0.5;
-  else
-    newScrollX -= static_cast<double>(visibleWidth) * 0.12;
+  const double timelineStart = pianoRoll.getTimelineStart();
+  const double timelineDuration = pianoRoll.getTimelineDuration();
+  const auto focus = pitchnet::computeAraViewFocus(
+      startSeconds, endSeconds, timelineStart, timelineDuration,
+      pixelsPerSecond, visibleWidth);
 
-  pianoRoll.setScrollX(newScrollX); // clamps to the timeline start/end
+  // D-176: cover the selected region before clamping the scroll. Otherwise a
+  // region beyond the current project window is unreachable until playback
+  // extends the timeline.
+  if (focus.timelineEnd > timelineStart + timelineDuration)
+    pianoRoll.extendTimelineTo(focus.timelineEnd);
+
+  // D-180-R: a selection focus must not hide an edit cursor that was already
+  // on screen while the transport is stopped (R2).
+  const double focusCursorTime = pianoRoll.getCursorTime();
+  const bool focusCursorWasVisible = cursorIsVisible(focusCursorTime);
+
+  bool focusCursorRestored = false;
+  if (pitchnet::shouldApplyFocusScroll(isPlaying))
+  {
+    pianoRoll.setScrollX(focus.scrollX); // clamps to the timeline start/end
+    if ((fromOpen && !isPlaying && focusCursorTime > 0.01) ||
+        pitchnet::shouldRestoreCursorAfterFocus(
+            isPlaying, focusCursorWasVisible,
+            cursorIsVisible(focusCursorTime)))
+    {
+      pianoRoll.setScrollX(pitchnet::scrollXToRevealCursor(
+          focusCursorTime, pianoRoll.getScrollX(),
+          static_cast<double>(pianoRoll.getPixelsPerSecond()),
+          pianoRoll.getVisibleContentWidth(), pianoRoll.getTimelineStart(),
+          pianoRoll.getTimelineDuration()));
+      focusCursorRestored = true;
+      ++latencyTrace.focusRestoreCount;
+    }
+  }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  ARA_DIAG("focusTimelineRange applied timelineEnd=" +
+           juce::String(focus.timelineEnd, 3) +
+           " scrollAfter=" + juce::String(pianoRoll.getScrollX(), 1) +
+           " cursorRestored=" + (focusCursorRestored ? "1" : "0"));
+#endif
   pianoRollView.repaintOverviewViewport();
 
-  // Let a host selection visually win over the playback follow cursor for a
-  // short moment, even if the transport is running elsewhere.
-  suppressPlaybackFollowUntilMs =
-      juce::Time::getMillisecondCounterHiRes() + 1200.0;
+  // D-180-R: measurement only. What the selection focus actually left on screen.
+  latencyTrace.lastFocusAtMs = nowMs();
+  latencyTrace.lastFocusSpanStart = startSeconds;
+  latencyTrace.lastFocusScrollX = pianoRoll.getScrollX();
+  latencyTrace.lastFocusCursorTime = focusCursorTime;
+  latencyTrace.lastFocusCursorWasVisible = focusCursorWasVisible;
+  latencyTrace.lastFocusCursorVisibleAfter = cursorIsVisible(focusCursorTime);
+  latencyTrace.lastFocusCursorRestored = focusCursorRestored;
+
+  // D-180-R5: while playing, a track switch must not suppress follow; the
+  // current view stays until the next position update keeps the playhead
+  // visible. Stopped selections still get the 1.2 s selection priority.
+  if (pitchnet::shouldApplyFocusScroll(isPlaying))
+    suppressPlaybackFollowUntilMs =
+        juce::Time::getMillisecondCounterHiRes() + 1200.0;
+  else
+    suppressPlaybackFollowUntilMs = 0.0;
 }
 
 void MainComponent::updatePlaybackPosition(double timeSeconds)
 {
   if (!isPluginMode())
     return;
+
+  lastHostPlaybackSeconds = timeSeconds;
 
   // The host reports transport position on ITS timeline; everything below is
   // in project time. Convert here, at the boundary. Do not clamp before the
@@ -3614,6 +5028,37 @@ void MainComponent::updatePlaybackPosition(double timeSeconds)
   if (pianoRoll.extendTimelineTo(displayTime))
     pianoRollView.refreshOverview();
 
+  // D-180: measurement only. Split a stopped seek from playback so the first
+  // paint after each can be timed separately. pendingStoppedHostSeek is the
+  // behaviour flag: the view follows a host seek even with the transport
+  // stopped.
+  if (!isPlaying)
+  {
+    const bool newSeek =
+        latencyTrace.stoppedSeekMs == 0.0 ||
+        std::abs(displayTime - latencyTrace.stoppedSeekTarget) > 0.05;
+    if (newSeek)
+    {
+      if (latencyTrace.stoppedSeekAppliedMs != 0.0 ||
+          latencyTrace.stoppedSeekMs == 0.0)
+      {
+        latencyTrace.stoppedSeekMs = nowMs();
+        latencyTrace.stoppedSeekAppliedMs = 0.0;
+        latencyTrace.stoppedSeekFirstPaintMs = 0.0;
+        latencyTrace.stoppedSeekCursorVisible = false;
+        latencyTrace.stoppedSeekPaintBase = pianoRoll.getPaintCount();
+      }
+      latencyTrace.stoppedSeekTarget = displayTime;
+      pendingStoppedHostSeek = true;
+    }
+  }
+  else if (latencyTrace.playStateMs > 0.0 &&
+           latencyTrace.playCursorMs == 0.0)
+  {
+    latencyTrace.playCursorMs = nowMs();
+    latencyTrace.playCursorPaintBase = pianoRoll.getPaintCount();
+  }
+
   // Update cursor position using the same mechanism as AudioEngine
   pendingCursorTime.store(displayTime);
   hasPendingCursorUpdate.store(true);
@@ -3623,6 +5068,23 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
 {
   if (!isPluginMode())
     return;
+
+  // D-180: measurement only. A stopped -> playing transition starts the clock
+  // for the first frame with playback.
+  if (!isPlaying && hostIsPlaying)
+  {
+    // D-180: a selection near the play start must not hide the playhead for
+    // the 1.2 s suppression window. Starting the transport is an explicit
+    // request to see where it is playing.
+    if (pitchnet::shouldClearFollowSuppression(isPlaying, hostIsPlaying))
+      suppressPlaybackFollowUntilMs = 0.0;
+    latencyTrace.playStateMs = nowMs();
+    latencyTrace.playFirstPaintMs = 0.0;
+    latencyTrace.playPaintBase = pianoRoll.getPaintCount();
+    latencyTrace.playCursorMs = 0.0;
+    latencyTrace.playCursorFirstPaintMs = 0.0;
+    latencyTrace.playCursorVisible = false;
+  }
 
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
@@ -3732,6 +5194,7 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
       if (!ProjectSerializer::fromJson(*project, json))
         return false;
 
+      applyProjectSynthesisEngine();
       pianoRoll.setProject(project);
       pianoRollView.setProject(project);
       restoreProjectPresentation();
@@ -3760,6 +5223,7 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
     *project = snapshot;
     if (macroParameters)
       project->setMacroParameters(macroParameters);
+    applyProjectSynthesisEngine();
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
     restoreProjectPresentation();
@@ -3788,6 +5252,145 @@ void MainComponent::notifyHostStopped()
   updateHostPlaybackState(false);
 }
 
+double MainComponent::nowMs() const
+{
+  return juce::Time::getMillisecondCounterHiRes();
+}
+
+bool MainComponent::cursorIsVisible(double timeSeconds) const
+{
+  if (pianoRoll.getVisibleContentWidth() <= 0)
+    return false;
+  const double x = timeSeconds * pianoRoll.getPixelsPerSecond();
+  const double left = pianoRoll.getScrollX();
+  return x >= left &&
+         x <= left + static_cast<double>(pianoRoll.getVisibleContentWidth());
+}
+
+void MainComponent::noteAraSelectionStarted()
+{
+  latencyTrace.selectionStartedMs = nowMs();
+  latencyTrace.selectionBoundMs = 0.0;
+  latencyTrace.selectionFirstPaintMs = 0.0;
+  latencyTrace.selectionPaintBase = pianoRoll.getPaintCount();
+}
+
+void MainComponent::noteAraRegionRefreshDuration(double durationMs)
+{
+  latencyTrace.lastRegionRefreshMs = durationMs;
+  latencyTrace.maxRegionRefreshMs =
+      std::max(latencyTrace.maxRegionRefreshMs, durationMs);
+}
+
+void MainComponent::noteAraArchiveRestoreDuration(double durationMs)
+{
+  latencyTrace.lastArchiveRestoreMs = durationMs;
+  latencyTrace.maxArchiveRestoreMs =
+      std::max(latencyTrace.maxArchiveRestoreMs, durationMs);
+}
+
+void MainComponent::noteAraActivationDuration(double durationMs)
+{
+  latencyTrace.lastActivationMs = durationMs;
+  latencyTrace.maxActivationMs =
+      std::max(latencyTrace.maxActivationMs, durationMs);
+}
+
+void MainComponent::noteAraActivationBreakdown(
+    double cancelMs, double copyMs, double parseMs, double installMs,
+    double focusMs, double bindMs, double totalMs)
+{
+  latencyTrace.lastActivationCancelMs = cancelMs;
+  latencyTrace.lastActivationCopyMs = copyMs;
+  latencyTrace.lastActivationParseMs = parseMs;
+  latencyTrace.lastActivationInstallMs = installMs;
+  latencyTrace.lastActivationFocusMs = focusMs;
+  latencyTrace.lastActivationBindMs = bindMs;
+  latencyTrace.lastActivationTotalMs = totalMs;
+}
+
+void MainComponent::noteAraLayoutStarted()
+{
+  if (getProject() == nullptr)
+    return;
+  const double cursor = pianoRoll.getCursorTime();
+  const double scroll = pianoRoll.getScrollX();
+  if (scroll > 100.0 && cursorIsVisible(cursor))
+  {
+    latencyTrace.layoutScrollGuardActive = true;
+    latencyTrace.layoutScrollGuardScroll = scroll;
+    latencyTrace.layoutScrollGuardCursorVisible = true;
+    latencyTrace.layoutScrollGuardUntilMs = nowMs() + 500.0;
+  }
+}
+
+void MainComponent::noteAraLayoutFinished()
+{
+  if (!latencyTrace.layoutScrollGuardActive)
+    return;
+  if (pianoRoll.getScrollX() < 1.0 &&
+      latencyTrace.layoutScrollGuardScroll > 100.0)
+  {
+    pianoRoll.setScrollX(latencyTrace.layoutScrollGuardScroll);
+    ++latencyTrace.layoutScrollGuardRestoreCount;
+  }
+}
+
+void MainComponent::noteAraEditorOpened(double hostCursorSeconds)
+{
+#if defined(PITCHNET_D180_R34_LEGACY)
+  // D-180-R3/R4 measurement only: pre-fix behaviour (no open reveal).
+  (void)hostCursorSeconds;
+#else
+  pendingOpenCursorReveal = true;
+  if (pitchnet::shouldSeedCursorOnOpen(isPlaying, hostCursorSeconds > 0.01))
+  {
+    // The editor can open before the transport callback delivers a stopped
+    // seek; seed the cursor now so the first bound paint is not at zero.
+    updatePlaybackPosition(hostCursorSeconds);
+    const double displayTime = pendingCursorTime.load();
+    pianoRoll.setCursorTime(displayTime);
+    toolbar.setCurrentTime(displayTime);
+    hasPendingCursorUpdate.store(false);
+  }
+#endif
+}
+
+void MainComponent::updateUiLatencyPaintTrace()
+{
+  const auto paintCount = pianoRoll.getPaintCount();
+  const double stamp = nowMs();
+
+  if (latencyTrace.selectionBoundMs > 0.0 &&
+      latencyTrace.selectionFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.selectionPaintBase)
+  {
+    latencyTrace.selectionFirstPaintMs = stamp;
+    latencyTrace.selectionScrollAtPaint = pianoRoll.getScrollX();
+    latencyTrace.selectionCursorVisibleAtPaint =
+        cursorIsVisible(pianoRoll.getCursorTime());
+  }
+
+  if (latencyTrace.playStateMs > 0.0 &&
+      latencyTrace.playFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.playPaintBase)
+    latencyTrace.playFirstPaintMs = stamp;
+
+  if (latencyTrace.playCursorMs > 0.0 &&
+      latencyTrace.playCursorFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.playCursorPaintBase)
+  {
+    latencyTrace.playCursorFirstPaintMs = stamp;
+    latencyTrace.playCursorVisible =
+        cursorIsVisible(pianoRoll.getCursorTime());
+  }
+
+  if (latencyTrace.stoppedSeekAppliedMs > 0.0 &&
+      latencyTrace.stoppedSeekFirstPaintMs == 0.0 &&
+      paintCount > latencyTrace.stoppedSeekPaintBase)
+    latencyTrace.stoppedSeekFirstPaintMs = stamp;
+}
+
 void MainComponent::triggerResynthesis()
 {
   if (!isPluginMode())
@@ -3796,6 +5399,7 @@ void MainComponent::triggerResynthesis()
   // Triggered by DAW parameter automation (pitch offset, formant shift).
   // These parameters affect the complete render and do not dirty a particular
   // note, so explicitly request a full-range incremental pass.
+  parameterPanel.updateGlobalSliders();
   if (auto *project = getProject())
   {
     const int totalFrames = static_cast<int>(
@@ -3803,7 +5407,7 @@ void MainComponent::triggerResynthesis()
     if (totalFrames > 0)
       project->setF0DirtyRange(0, totalFrames);
   }
-  resynthesizeIncremental();
+  markRenderDirty();
   notifyProjectDataChanged();
   if (onPitchEditFinished)
     onPitchEditFinished();

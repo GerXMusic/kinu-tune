@@ -26,8 +26,8 @@ std::vector<double> BasePitchCurve::createCosineKernel() {
 
   for (int i = 0; i < KERNEL_SIZE; ++i) {
     const double time = 0.001 * (i - KERNEL_SIZE / 2); // Time offset in seconds
-    kernel[i] = std::cos(M_PI * time / SMOOTH_WINDOW);
-    sum += kernel[i];
+    kernel[static_cast<size_t>(i)] = std::cos(M_PI * time / SMOOTH_WINDOW);
+    sum += kernel[static_cast<size_t>(i)];
   }
 
   // Normalize
@@ -45,12 +45,18 @@ const std::vector<double>& BasePitchCurve::getCosineKernel() {
 std::vector<float> BasePitchCurve::generateForNote(int startFrame, int endFrame,
                                                    float midiNote,
                                                    int totalFrames) {
-  std::vector<NoteSegment> notes = {{startFrame, endFrame, midiNote}};
+  std::vector<NoteSegment> notes = {{startFrame, endFrame, midiNote, 0.0f}};
   return generateForNotes(notes, totalFrames);
 }
 
 std::vector<float>
 BasePitchCurve::generateForNotes(const std::vector<NoteSegment> &notes,
+                                 int totalFrames) {
+  return generateSmoothed(notes, totalFrames);
+}
+
+std::vector<float>
+BasePitchCurve::generateSmoothed(const std::vector<NoteSegment> &notes,
                                  int totalFrames) {
   if (notes.empty() || totalFrames <= 0)
     return {};
@@ -121,7 +127,7 @@ BasePitchCurve::generateForNotes(const std::vector<NoteSegment> &notes,
   for (int i = 0; i < totalMs; ++i) {
     for (int j = 0; j < KERNEL_SIZE; ++j) {
       int srcIdx = std::max(0, std::min(i - KERNEL_SIZE / 2 + j, totalMs - 1));
-      smoothedMs[i] += initValues[srcIdx] * kernel[j];
+      smoothedMs[i] += initValues[srcIdx] * kernel[static_cast<size_t>(j)];
     }
   }
 

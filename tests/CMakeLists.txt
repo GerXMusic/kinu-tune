@@ -1,4 +1,4 @@
-# Unit tests.
+﻿# Unit tests.
 #
 # Each test is a standalone executable with its own main(), matching the style
 # the files were already written in. They link pitchnet_core, which exposes the
@@ -15,12 +15,31 @@
 set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
     AraRegionSliceTests.cpp
+    AraSelectionPolicyTests.cpp
+    AraViewFocusTests.cpp
+    AraEnginePolicyTests.cpp
+    AraRestoreAnalysisRaceTests.cpp
+    CursorFollowPolicyTests.cpp
+    MelSpectrogramTests.cpp
+    SingleWindowPolicyTests.cpp
+    DocumentEngineTests.cpp
+    EngineBlocksTests.cpp
+    D197BlockDirtyTests.cpp
+    FormantRetirementTests.cpp
     FormantShiftTests.cpp
     HarmonyIntervalTests.cpp
     HostSyncTempoTests.cpp
+    NoteEngineTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
+    PitchCurveRoundTripTests.cpp
+    PitchCurveHandleTests.cpp
+    PitchCurveTransitionTests.cpp
+    D205StraightenContinuityTests.cpp
+    # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
+    # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
+    # aplanado audible en D-214; el criterio de 1 c/ms queda descartado.
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
@@ -51,6 +70,49 @@ endforeach()
 # The capture state machine belongs to the plug-in rather than pitchnet_core.
 target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
+
+# P1b (render al Play): deferred dirty blocks and the mark-only triggers.
+# P1b fase 3: el borde de Play del host.
+add_executable(P1bHostPlayTests P1bHostPlayTests.cpp)
+target_link_libraries(P1bHostPlayTests PRIVATE pitchnet_core)
+target_compile_features(P1bHostPlayTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bHostPlayTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_hostplay COMMAND P1bHostPlayTests)
+
+# P1b fase 4: flush forzado antes de guardar.
+add_executable(P1bSaveTests P1bSaveTests.cpp)
+target_link_libraries(P1bSaveTests PRIVATE pitchnet_core)
+target_compile_features(P1bSaveTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bSaveTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_save COMMAND P1bSaveTests)
+
+# P1b fase 5: al abrir se usa el render guardado, sin resintetizar.
+add_executable(P1bOpenTests P1bOpenTests.cpp)
+target_link_libraries(P1bOpenTests PRIVATE pitchnet_core)
+target_compile_features(P1bOpenTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bOpenTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_open COMMAND P1bOpenTests)
+
+# P1b fase 6: barrido de render desde la cola de bloques pendientes.
+add_executable(P1bSweepTests P1bSweepTests.cpp)
+target_link_libraries(P1bSweepTests PRIVATE pitchnet_core)
+target_compile_features(P1bSweepTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bSweepTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_sweep COMMAND P1bSweepTests)
+
+# Two groups, same executable: "deferred" is the bare queue behaviour, "wiring"
+# is the invariant over MainComponent.cpp and the undo history size.
+add_executable(P1bRenderAtPlayTests P1bRenderAtPlayTests.cpp)
+target_link_libraries(P1bRenderAtPlayTests PRIVATE pitchnet_core)
+target_compile_features(P1bRenderAtPlayTests PRIVATE cxx_std_17)
+target_compile_definitions(P1bRenderAtPlayTests PRIVATE
+    P1B_SOURCE_DIR="${CMAKE_SOURCE_DIR}/Source")
+add_test(NAME P1b_deferred COMMAND P1bRenderAtPlayTests deferred)
+add_test(NAME P1b_wiring COMMAND P1bRenderAtPlayTests wiring)
 
 add_executable(PitchMacroScopeTests PitchMacroScopeTests.cpp)
 target_link_libraries(PitchMacroScopeTests PRIVATE pitchnet_core)
@@ -114,3 +176,39 @@ foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
                      -DRULE=${guard_rule}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceGuard.cmake)
 endforeach()
+
+# D-152 characterization: describes the pre-implementation behaviour. It needs
+# the ARA diagnostics definitions, because the hydration flag is diagnostic-only.
+if(ARA_AVAILABLE AND PITCHNET_ARA_DIAGNOSTICS)
+    add_executable(D152CharacterizationTests D152CharacterizationTests.cpp)
+    target_link_libraries(D152CharacterizationTests PRIVATE
+        PitchNetPlugin
+        pitchnet_ui
+        pitchnet_core
+        juce::juce_audio_processors
+        juce::juce_audio_plugin_client
+        juce::juce_audio_utils
+        juce::juce_gui_extra
+        juce::juce_recommended_config_flags)
+    target_compile_definitions(D152CharacterizationTests PRIVATE
+        JucePlugin_Enable_ARA=1
+        PITCHNET_ARA_DIAGNOSTICS=1)
+    target_include_directories(D152CharacterizationTests PRIVATE
+        ${ARA_SDK_PATH})
+    # The plug-in's VST3 wrapper normally supplies the ARA library from
+    # juce_audio_plugin_client_ARA.cpp. This test is not a plug-in wrapper, so
+    # compile the same library sources into the test executable.
+    target_sources(D152CharacterizationTests PRIVATE
+        ${ARA_SDK_PATH}/ARA_Library/PlugIn/ARAPlug.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Dispatch/ARAPlugInDispatch.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAPitchInterpretation.cpp
+        ${ARA_SDK_PATH}/ARA_Library/Utilities/ARAChannelFormat.cpp)
+    target_compile_features(D152CharacterizationTests PRIVATE cxx_std_17)
+
+    foreach(D152_GROUP IN ITEMS bypass saved-state processed-audio
+                              concurrent-generations hydration)
+        add_test(NAME D152_${D152_GROUP}
+                 COMMAND D152CharacterizationTests ${D152_GROUP})
+    endforeach()
+endif()
+

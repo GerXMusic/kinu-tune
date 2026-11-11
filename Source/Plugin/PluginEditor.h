@@ -66,7 +66,8 @@ private:
     void activateAraRegion(juce::ARAPlaybackRegion* target, bool focusView);
     // Switch the canvas to a track the user clicked in the left side panel:
     // the region last edited on that track, else its first region in time.
-    void activateAraTrackByKey(const juce::String& trackKey);
+    // Returns false when the track has no usable region.
+    bool activateAraTrackByKey(const juce::String& trackKey);
     // Push a preview of every region on the active region's track to the
     // canvas and thumbnail, rebuilding only regions whose content changed.
     void publishAraRegionPreviews(
@@ -119,6 +120,10 @@ private:
     int regionListRefreshCountdown = 0;
 #endif
     bool lunaSoftwareRendererApplied = false;
+    // D-178: ignore the host's initial selection for a short grace period, so
+    // the editor-renderer track binding wins over a stale selection left on
+    // another track. User selections after the grace period follow normally.
+    double editorReadyTimeMs = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchNetAudioProcessorEditor)
 };

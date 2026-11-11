@@ -589,22 +589,49 @@ void EditorController::resynthesizeIncrementalAsync(
       onComplete(false);
     return;
   }
-  if (!vocoder->isLoaded())
+  if (!vocoder->isReady())
   {
-    if (onProgress)
-      onProgress(TR("progress.loading_vocoder"));
-
     auto modelPath = PlatformPaths::getVocoderModelFile();
-    if (!modelPath.exists() || !vocoder->loadModel(modelPath))
+    if (!modelPath.exists())
     {
       if (onComplete)
         onComplete(false);
       return;
     }
+    // D-197: never load the model (or pay the first Ort::Run) on the calling
+    // thread. Poll the worker from the message thread and continue once ready.
+    if (vocoder->getLoadState() == Vocoder::LoadState::NotLoaded)
+    {
+      if (onProgress)
+        onProgress(TR("progress.loading_vocoder"));
+      vocoder->beginAsyncLoad(modelPath);
+    }
+    if (vocoder->getLoadState() == Vocoder::LoadState::Failed)
+    {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+    if (vocoder->getLoadState() == Vocoder::LoadState::Loading)
+    {
+      juce::Timer::callAfterDelay(
+          50, [this, projectPtr = &project, onProgress, onComplete,
+               pending = &pendingRerun, isPluginMode]() {
+            resynthesizeIncrementalAsync(*projectPtr, onProgress, onComplete,
+                                         *pending, isPluginMode);
+          });
+      return;
+    }
   }
 
-  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())
+  if (project.hasEditedBlockPlan() && !synth->hasRenderRangeOverrideValue())
   {
+    int blockStart = -1, blockEnd = -1;
+    if (project.nextEditedBlockRange(blockStart, blockEnd))
+      synth->setRenderRangeOverride(blockStart, blockEnd);
+  }
+
+  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())  {
     if (onComplete)
       onComplete(false);
     return;
@@ -639,6 +666,22 @@ void EditorController::resynthesizeIncrementalAsync(
       [this, projectPtr = &project, pending = &pendingRerun, onComplete,
        audioEnginePtr, isPluginMode](bool success)
       {
+        // D-197: one render per silence-bounded edited block. The project keeps
+        // every edited note dirty; the block walk only chooses the window.
+        if (success && projectPtr->hasEditedBlockPlan())
+        {
+          int blockStart = -1, blockEnd = -1;
+          auto *s = incrementalSynth.get();
+          if (s && projectPtr->nextEditedBlockRange(blockStart, blockEnd))
+          {
+            s->setRenderRangeOverride(blockStart, blockEnd);
+            resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
+                                         *pending, isPluginMode);
+            return;
+          }
+          if (s)
+            s->clearRenderRangeOverride();
+        }
         if (!success)
         {
           if (pending->exchange(false))

@@ -236,54 +236,9 @@ void MainComponent::openProjectFile(const juce::File &file) {
                   }
                 }
 
-                // Skip full re-analysis; run vocoder from loaded edits.
-                const int totalFrames = std::max(
-                    static_cast<int>(activeAudioData.melSpectrogram.size()),
-                    std::max(static_cast<int>(activeAudioData.f0.size()),
-                             static_cast<int>(activeAudioData.basePitch.size())));
-                if (totalFrames > 0) {
-                  project->setF0DirtyRange(0, totalFrames);
 
-                  safeThis->toolbar.showProgress(TR("progress.synthesizing"));
-                  safeThis->toolbar.setProgress(-1.0f);
-                  safeThis->setToolGroupEnabled(false);
-                  safeThis->showRenderStatus(ParameterPanel::RenderStatus::Rendering);
-
-                  safeThis->editorController->resynthesizeIncrementalAsync(
-                      *project,
-                      [safeThis](const juce::String &message) {
-                        if (safeThis == nullptr)
-                          return;
-                        safeThis->toolbar.showProgress(message);
-                      },
-                      [safeThis](bool success) {
-                        if (safeThis == nullptr)
-                          return;
-
-                        safeThis->setToolGroupEnabled(true);
-                        safeThis->toolbar.hideProgress();
-                        safeThis->showRenderStatus(
-                            success ? ParameterPanel::RenderStatus::Done
-                                    : ParameterPanel::RenderStatus::Failed);
-                        safeThis->isLoadingAudio = false;
-                        safeThis->repaint();
-
-                        if (!success) {
-                          StyledMessageBox::show(
-                              safeThis.getComponent(), TR("dialog.open_warning"),
-                              TR("dialog.pitch_edits_failed"),
-                              StyledMessageBox::WarningIcon);
-                          return;
-                        }
-
-                        if (safeThis->isPluginMode())
-                          safeThis->notifyProjectDataChanged();
-                      },
-                      safeThis->pendingIncrementalResynth,
-                      safeThis->isPluginMode());
-                  return;
-                }
-
+                // P1b fase 5: se usa el render guardado; no se resintetiza al abrir.
+                safeThis->showRenderStatus(ParameterPanel::RenderStatus::Done);
                 safeThis->repaint();
                 safeThis->isLoadingAudio = false;
                 if (safeThis->isPluginMode())

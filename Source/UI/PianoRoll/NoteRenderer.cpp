@@ -1,3 +1,4 @@
+#include "../Main/DeferredRenderQueue.h"
 #include "NoteRenderer.h"
 #include "PitchToolController.h"
 #include "PitchToolHandles.h"
@@ -103,6 +104,37 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 {
   if (!project || !coordMapper)
     return;
+
+  // P1b fase 6: barrido del bloque en render. Un borde brillante recorre el
+  // bloque pendiente, en Overlay para quedar por encima de los blobs.
+  if (pass == Pass::Overlay && sweepActive)
+  {
+    const double sampleRate = project->getAudioData().sampleRate;
+    if (sampleRate > 0.0)
+    {
+      const double startSeconds =
+          static_cast<double>(sweepStartFrame) * HOP_SIZE / sampleRate;
+      const double endSeconds =
+          static_cast<double>(sweepEndFrame) * HOP_SIZE / sampleRate;
+      const float pps = coordMapper->getPixelsPerSecond();
+      const double viewStart = coordMapper->getViewStartSeconds();
+      const double scroll = coordMapper->getScrollX();
+      const float x0 =
+          static_cast<float>((startSeconds - viewStart) * pps - scroll);
+      const float x1 =
+          static_cast<float>((endSeconds - viewStart) * pps - scroll);
+      const float width = x1 > x0 ? x1 - x0 : 0.0f;
+      const float height = static_cast<float>(g.getClipBounds().getHeight());
+      const double elapsed =
+          (juce::Time::getMillisecondCounterHiRes() - sweepStartMs) * 0.001;
+      const float barX = x0 + width * sweep::phaseAt(elapsed);
+
+      g.setColour(juce::Colours::white.withAlpha(0.10f));
+      g.fillRect(x0, 0.0f, width, height);
+      g.setColour(juce::Colours::white.withAlpha(0.55f));
+      g.fillRect(barX, 0.0f, 2.0f, height);
+    }
+  }
 
   const bool drawBodies = pass == Pass::Body || pass == Pass::HoveredBody;
   const bool drawOverlays = pass == Pass::Overlay;

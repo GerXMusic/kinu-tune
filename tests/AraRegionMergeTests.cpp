@@ -1,5 +1,6 @@
 #include "../Source/Models/ProjectRegionMerge.h"
 #include "../Source/Models/ProjectSerializer.h"
+#include "TestAssert.h"
 #include <cassert>
 #include <iostream>
 
@@ -46,14 +47,14 @@ int main() {
   assert(a.melSpectrogram[25][0] == 2);
   assert(a.playbackRegionRanges.size() == 1 && a.playbackRegionRanges[0].second == end);
   assert(second.getNoteAtFrame(25)->getPitchOffset() == 3);
-  assert(!mergeProjectPlaybackParts({{&first, start, cut}, {&second, cut + 1, end}}, start, end));
-  assert(!mergeProjectPlaybackParts({{&first, start, cut}, {&second, cut - 0.1, end}}, start, end));
-  assert(!mergeProjectPlaybackParts({{&first, start, end}}, start, end));
+  CHECK(!mergeProjectPlaybackParts({{&first, start, cut}, {&second, cut + 1, end}}, start, end));
+  CHECK(!mergeProjectPlaybackParts({{&first, start, cut}, {&second, cut - 0.1, end}}, start, end));
+  CHECK(!mergeProjectPlaybackParts({{&first, start, end}}, start, end));
   juce::MemoryBlock archive;
-  assert(ProjectSerializer::toBinaryArchive(*merged, archive,
+  CHECK(ProjectSerializer::toBinaryArchive(*merged, archive,
       ProjectSerializer::BinaryArchiveMode::hostBackedARA));
   Project restored;
-  assert(ProjectSerializer::fromBinaryArchive(restored, archive.getData(), archive.getSize()));
+  CHECK(ProjectSerializer::fromBinaryArchive(restored, archive.getData(), archive.getSize()));
   assert(restored.getNotes().size() == 2);
   assert(restored.getNoteAtFrame(25)->getLyric() == "right");
   assert(restored.getNoteAtFrame(25)->getPitchOffset() == 5);

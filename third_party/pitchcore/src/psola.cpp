@@ -104,6 +104,193 @@ void applyLocalGainMatch (std::vector<float>& out, const RenderRequest& req,
     }
 }
 
+// ---------------------------------------------------------------------------
+// D-165: PRESERVACION DE FORMANTES EN EL CLASICO (TD-PSOLA).
+//
+// Tecnica: descomposicion fuente-filtro LPC. El PSOLA no se toca: en vez de
+// desplazar la onda original (y con ella su envolvente), se desplaza el
+// RESIDUO de un filtro LPC de orden 40 (pre-enfasis 0.97). Ese residuo es la
+// excitacion glotal y ya no lleva los formantes; despues de los granos se
+// vuelve a filtrar con 1/A(z) usando los coeficientes de la FUENTE en el
+// tiempo de salida, y se deshace el pre-enfasis. Asi la altura cambia y la
+// envolvente se queda donde estaba.
+//
+// Por que asi y no un post-filtro de magnitud: el post-filtro por STFT depende
+// de la fase del PSOLA (medido en el prototipo: dejaba 311 c de 535); el
+// residuo se filtra antes y la sintesis reconstruye la envolvente por
+// construccion. No cambia el contrato de render ni el grano.
+//
+// Orden 40: a 48 kHz el orden 16 no blanquea la vocal sintetica (los polos se
+// pegan a los armonicos y el residuo conserva formantes); con 40 el residuo
+// deja 73/9/86/26 c en el prototipo de laboratorio. El ridge 1e-8 regulariza
+// la autocorrelacion de una senal casi periodica (sin el, Levinson puede dar
+// polos fuera del circulo unitario).
+// ---------------------------------------------------------------------------
+constexpr int    kFormantLpcOrder = 40;
+constexpr double kFormantPreEmph = 0.97;
+constexpr double kFormantWinSec = 0.025;
+constexpr double kFormantHopSec = 0.010;
+constexpr double kFormantRidge = 1e-8;
+
+struct FormantLpcTrack
+{
+    const RenderRequest* req = nullptr;
+    int order = 0;
+    long hop = 1;
+    int nWin = 0;
+    int firstFrame = 0;
+    long anchor = 0;              // muestra absoluta de la que cuelga el frame 0
+    std::vector<std::vector<double>> coef;
+
+    const std::vector<double>& at (long posRelativa) const
+    {
+        static const std::vector<double> neutro { 1.0 };
+        if (coef.empty()) return neutro;
+        int f = (int) std::llround ((double) posRelativa / (double) hop);
+        f = std::max (firstFrame, std::min (firstFrame + (int) coef.size() - 1, f));
+        return coef[(size_t) (f - firstFrame)];
+    }
+};
+
+// Levinson-Durbin sobre la autocorrelacion. `a[0] = 1`; el filtro de analisis
+// es A(z) = 1 + a[1] z^-1 + ... y el de sintesis 1/A(z). Se acotan los
+// coeficientes de reflexion para no salir del circulo unitario.
+void lpcLevinson (const std::vector<double>& w, int order, double ridge,
+                  std::vector<double>& a)
+{
+    a.assign ((size_t) order + 1, 0.0);
+    a[0] = 1.0;
+    const int n = (int) w.size();
+    if (order <= 0 || n <= order) return;
+
+    std::vector<double> r ((size_t) order + 1, 0.0);
+    for (int k = 0; k <= order; ++k)
+    {
+        double s = 0.0;
+        for (int i = k; i < n; ++i) s += w[(size_t) i] * w[(size_t) (i - k)];
+        r[(size_t) k] = s;
+    }
+    if (r[0] <= 1e-20) return;
+    r[0] *= (1.0 + ridge);
+
+    double e = r[0];
+    std::vector<double> tmp ((size_t) order + 1, 0.0);
+    for (int i = 1; i <= order; ++i)
+    {
+        double acc = r[(size_t) i];
+        for (int j = 1; j < i; ++j) acc += a[(size_t) j] * r[(size_t) (i - j)];
+        double k = -acc / e;
+        k = std::max (-0.999999, std::min (0.999999, k));
+        for (int j = 1; j < i; ++j)
+            tmp[(size_t) j] = a[(size_t) j] + k * a[(size_t) (i - j)];
+        a[(size_t) i] = k;
+        for (int j = 1; j < i; ++j) a[(size_t) j] = tmp[(size_t) j];
+        e *= (1.0 - k * k);
+        if (e <= 1e-20) break;
+    }
+}
+
+FormantLpcTrack construirLpcFormantes (const RenderRequest& req, int order)
+{
+    FormantLpcTrack t;
+    t.req = &req;
+    t.order = order;
+    t.hop = std::max (1L, (long) std::lround (kFormantHopSec * req.sampleRate));
+    t.nWin = (int) std::lround (kFormantWinSec * req.sampleRate);
+    if (t.nWin < 2 * order + 2) t.nWin = 2 * order + 2;
+    if (! req.original) return t;
+
+    // La rejilla LPC se ancla al INICIO DE LA PETICION (sourceStartSample), no
+    // a la posicion absoluta del proyecto. Asi la salida solo depende del
+    // contenido que se renderiza: una peticion desplazada con el mismo audio
+    // relativo da los mismos coeficientes (invariante I-13/D-111). El contexto
+    // anterior al inicio de la peticion no se usa para el filtro.
+    t.anchor = req.sourceStartSample;
+    const long relFirst = -(long) t.nWin;
+    const long relLast = (long) req.numSamples + t.nWin;
+    t.firstFrame = (int) std::floor ((double) relFirst / (double) t.hop) - 1;
+    const int lastFrame = (int) std::ceil ((double) relLast / (double) t.hop) + 1;
+    t.coef.resize ((size_t) (lastFrame - t.firstFrame + 1));
+
+    std::vector<double> w ((size_t) t.nWin, 0.0);
+    for (int f = t.firstFrame; f <= lastFrame; ++f)
+    {
+        const long center = t.anchor + (long) f * t.hop;
+        double prev = 0.0;
+        readOriginal (req, center - t.nWin / 2 - 1, prev);
+        for (int i = 0; i < t.nWin; ++i)
+        {
+            double v = 0.0;
+            readOriginal (req, center - t.nWin / 2 + i, v);
+            const double pe = v - kFormantPreEmph * prev;
+            prev = v;
+            const double h = 0.5 * (1.0 - std::cos (2.0 * kPi * i / (t.nWin - 1)));
+            w[(size_t) i] = pe * h;
+        }
+        lpcLevinson (w, order, kFormantRidge, t.coef[(size_t) (f - t.firstFrame)]);
+    }
+    return t;
+}
+
+void construirResiduoLpc (const RenderRequest& req, const FormantLpcTrack& track,
+                          std::vector<float>& residuo)
+{
+    residuo.clear();
+    if (! req.original) return;
+    const long n = (long) req.original->size();
+    const long startLocal = std::max (0L, (long) req.sourceStartSample - (long) req.originalStartSample);
+    const int pad = track.order + 2;
+    std::vector<double> xp ((size_t) (n + 2 * pad), 0.0);
+    for (long i = 0; i < n; ++i)
+    {
+        if (i < startLocal) { xp[(size_t) (i + pad)] = 0.0; continue; }
+        const long pos = (long) req.originalStartSample + i;
+        double v = 0.0, pv = 0.0;
+        readOriginal (req, pos, v);
+        readOriginal (req, pos - 1, pv);
+        xp[(size_t) (i + pad)] = v - kFormantPreEmph * pv;
+    }
+    residuo.assign ((size_t) n, 0.f);
+    const long baseRel = (long) req.originalStartSample - track.anchor;
+    for (long i = startLocal; i < n; ++i)
+    {
+        const long rel = baseRel + i;
+        const auto& a = track.at (rel);
+        double acc = xp[(size_t) (i + pad)];
+        for (int k = 1; k <= track.order; ++k)
+            acc += a[(size_t) k] * xp[(size_t) (i + pad - k)];
+        residuo[(size_t) i] = (float) acc;
+    }
+}
+
+void aplicarSintesisLpc (const RenderRequest& req, const FormantLpcTrack& track,
+                         std::vector<double>& premix, int nOut)
+{
+    const int pad = track.order + 2;
+    std::vector<double> yp ((size_t) (nOut + 2 * pad), 0.0);
+    std::vector<double> out ((size_t) nOut, 0.0);
+    double prev = 0.0;
+    for (int i = 0; i < nOut; ++i)
+    {
+        const auto& a = track.at ((long) i);
+        double acc = premix[(size_t) i];
+        for (int k = 1; k <= track.order; ++k)
+            acc -= a[(size_t) k] * yp[(size_t) (i + pad - k)];
+        yp[(size_t) (i + pad)] = acc;
+        const double de = acc + kFormantPreEmph * prev;
+        out[(size_t) i] = de;
+        prev = de;
+    }
+    for (int i = 0; i < nOut; ++i) premix[(size_t) i] = out[(size_t) i];
+}
+
+bool hayDesplazamientoDeAltura (const RenderRequest& req)
+{
+    for (float r : req.pitchRatio)
+        if (std::fabs ((double) r - 1.0) > 1e-6) return true;
+    return false;
+}
+
 // La mascara de voz de la fuente en una posicion (en samples del original).
 inline bool vozEn (const RenderRequest& req, long posOriginal)
 {
@@ -288,6 +475,23 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
     const double sr = req.sampleRate;
     const long src0 = req.sourceStartSample;
 
+    // D-165: sin correccion de altura no hay nada que resintetizar. El
+    // contrato del motor dice que con ratio 1,0 la salida es una COPIA
+    // (psola.h); devolver el original tambien garantiza que
+    // preserveFormants=1 no pueda alterar el caso neutro.
+    if (! hayDesplazamientoDeAltura (req))
+    {
+        out.assign ((size_t) nOut, 0.f);
+        for (int i = 0; i < nOut; ++i)
+        {
+            const long o = src0 + i;
+            double v = 0.0;
+            if (readOriginal (req, o, v))
+                out[(size_t) i] = (float) v;
+        }
+        return true;
+    }
+
     // --- los tramos CON voz (en samples locales) ---
     std::vector<std::pair<long, long>> tramos;
     {
@@ -315,6 +519,21 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
                 out[(size_t) i] = (float) v;
         }
         return true;
+    }
+
+    // D-165: si se pide preservar formantes y hay correccion, el PSOLA lee el
+    // RESIDUO LPC de la fuente (sin formantes) y despues se re-filtra. Con
+    // todas las razones a 1,0 no se toca nada: la copia exacta sigue siendo
+    // exacta (condicion de no-regresion).
+    std::vector<float> residuo;
+    const std::vector<float>* fuenteGranos = req.original;
+    FormantLpcTrack lpcFormantes;
+    const bool preservar = req.preserveFormants && hayDesplazamientoDeAltura (req);
+    if (preservar)
+    {
+        lpcFormantes = construirLpcFormantes (req, kFormantLpcOrder);
+        construirResiduoLpc (req, lpcFormantes, residuo);
+        fuenteGranos = &residuo;
     }
 
     std::vector<double> syn ((size_t) nOut, 0.0);
@@ -456,7 +675,7 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
                     const long s0 = (long) std::floor (sp);
                     const double fs = sp - (double) s0;
                     const long base = (long) req.originalStartSample;
-                    const long last = (long) req.original->size() - 1;
+                    const long last = (long) fuenteGranos->size() - 1;
                     const long s0r = s0 - base;
                     if (s0r < 0 || s0r + 1 > last) continue;
                     // Interpolacion CUBICA (Catmull-Rom), no lineal: la lineal
@@ -469,7 +688,7 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
                         long r = idx - base;
                         if (r < 0) r = 0;
                         if (r > last) r = last;
-                        return (double) (*req.original)[(size_t) r];
+                        return (double) (*fuenteGranos)[(size_t) r];
                     };
                     const double p0 = at (s0 - 1), p1 = at (s0);
                     const double p2 = at (s0 + 1), p3 = at (s0 + 2);
@@ -586,6 +805,15 @@ bool ClassicEngine::render (const RenderRequest& req, std::vector<float>& out, s
         const double w = std::max ((double) wsum[(size_t) i], kSuelo);
         premix[(size_t) i] = syn[(size_t) i] / w;
         out[(size_t) i] = (float) premix[(size_t) i];
+    }
+
+    // D-165: el PSOLA ha movido el residuo; se reconstruye la envolvente de
+    // la fuente con 1/A(z) y se deshace el pre-enfasis. El original de las
+    // zonas sin voz no pasa por aqui (se mezcla despues).
+    if (preservar)
+    {
+        aplicarSintesisLpc (req, lpcFormantes, premix, nOut);
+        for (int i = 0; i < nOut; ++i) out[(size_t) i] = (float) premix[(size_t) i];
     }
 
     // mezclar con el original

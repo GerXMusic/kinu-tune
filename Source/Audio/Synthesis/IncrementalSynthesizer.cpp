@@ -1,4 +1,5 @@
 #include "IncrementalSynthesizer.h"
+#include "EngineBlocks.h"
 #include "FormantShifter.h"
 #include "OriginalWaveformRestore.h"
 #include "../../Utils/NoteGainCurve.h"
@@ -14,6 +15,87 @@
 namespace {
 constexpr int kAdjacentFrameTolerance = 1;
 constexpr int kTimingClearFadeSamples = 128;
+
+/**
+ * Multi-block render (M2 paso 2, D-125 + D-129).
+ *
+ * Renders one engine block at a time and concatenates the results. Only used
+ * when the plan has more than one block; a single-block render still goes
+ * straight to its engine, so nothing about the existing path changes.
+ *
+ * A block that fails or returns fewer samples than it asked for leaves the
+ * original audio in its slice (the buffer starts as the original), never
+ * silence: the same degradation as the short-render guard in the single-block
+ * path.
+ *
+ * Sequential on purpose: engine renders are already threaded, and running one
+ * block at a time keeps peak memory at one block instead of all of them.
+ */
+struct BlockRenderChain : std::enable_shared_from_this<BlockRenderChain> {
+  struct Block {
+    SynthesisEngineType engine = SynthesisEngineType::Psola;
+    DspSynthesisRequest request;
+    std::vector<std::vector<float>> mel;
+    std::vector<float> f0;
+    int sampleOffset = 0;
+    int numSamples = 0;
+  };
+
+  std::vector<Block> blocks;
+  std::vector<float> combined;      // prefilled with the original segment
+  std::function<void(std::vector<float>)> finalize;
+  std::function<bool()> isCancelled;
+  PsolaSynthesizer *psola = nullptr;
+  PitchcoreSynthesizer *pitchcore = nullptr;
+  Vocoder *vocoder = nullptr;
+  std::shared_ptr<std::atomic<bool>> cancelFlag;
+  size_t next = 0;
+
+  void start() { step(); }
+
+  void step() {
+    if (isCancelled && isCancelled()) {
+      finish({});
+      return;
+    }
+    if (next >= blocks.size()) {
+      finish(std::move(combined));
+      return;
+    }
+
+    auto &block = blocks[next++];
+    const int offset = block.sampleOffset;
+    const int count = block.numSamples;
+    auto self = shared_from_this();
+    auto done = [self, offset, count](std::vector<float> audio) {
+      const int rendered =
+          std::min(static_cast<int>(audio.size()), count);
+      if (rendered > 0 && offset >= 0 &&
+          offset + rendered <= static_cast<int>(self->combined.size()))
+        std::copy(audio.begin(), audio.begin() + rendered,
+                  self->combined.begin() + offset);
+      self->step();
+    };
+
+    if (block.engine == SynthesisEngineType::Pitchcore) {
+      pitchcore->renderAsync(std::move(block.request), std::move(done),
+                             cancelFlag);
+    } else if (block.engine == SynthesisEngineType::Psola) {
+      psola->renderAsync(std::move(block.request), std::move(done),
+                         cancelFlag);
+    } else {
+      vocoder->inferAsync(std::move(block.mel), std::move(block.f0),
+                          std::move(done));
+    }
+  }
+
+  void finish(std::vector<float> audio) {
+    auto callback = std::move(finalize);
+    finalize = nullptr;
+    if (callback)
+      callback(std::move(audio));
+  }
+};
 
 struct EditedClusterSelection {
   std::vector<uint8_t> members;
@@ -777,7 +859,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // Los dos motores DSP transforman la onda original: no quieren modelo, ni
   // mel, ni vocoder cargado (D-089 paso 1).
   const bool useDsp = usePsola || usePitchcore;
-
   if (!project || (!useDsp && !vocoder)) {
     if (onComplete)
       onComplete(false);
@@ -797,11 +878,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     vocoder->applySharedDevicePreference();
   }
 
-  if (!useDsp && !vocoder->isLoaded()) {
-    if (onComplete)
-      onComplete(false);
-    return;
-  }
+  // Whether the vocoder is loaded is checked once the per-block plan exists
+  // (D-125): a project whose global engine is the vocoder may still render
+  // only DSP blocks, and a global DSP install can still be asked for one
+  // vocoder note. The plan decides, not the global setting.
 
   if (useDsp && audioData.originalWaveform.getNumSamples() == 0 &&
       audioData.waveform.getNumSamples() == 0) {
@@ -810,13 +890,33 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange()) {
+  if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
+      !project->hasF0DirtyRange()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
+  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
+  const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
+  auto editedClusters = selectConnectedEditedNotes(
+      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  std::vector<CommitFrameRange> commitFrameRanges;
+  if (hasRenderRangeOverride) {
+    // D-197: this pass covers one edited block. All notes stay dirty; only
+    // this window is committed, so the gap between distant edits is untouched.
+    dirtyStart = renderRangeOverrideStart;
+    dirtyEnd = renderRangeOverrideEnd;
+    commitFrameRanges.push_back({dirtyStart, dirtyEnd});
+  } else {
+    if (editedClusters.startFrame >= 0)
+      dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
+    if (editedClusters.endFrame >= 0)
+      dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
+    commitFrameRanges = collectCommitFrameRanges(
+        *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
+  }
   const int rawDirtyStart = dirtyStart;
   const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
@@ -824,21 +924,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       onComplete(false);
     return;
   }
-  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
-  const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
-  auto commitFrameRanges = collectCommitFrameRanges(
-      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   if (commitFrameRanges.empty()) {
     if (onComplete)
       onComplete(false);
     return;
   }
-  auto editedClusters = selectConnectedEditedNotes(
-      *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
-  if (editedClusters.startFrame >= 0)
-    dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
-  if (editedClusters.endFrame >= 0)
-    dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
 
   // Compute synthesis range after expanding to complete connected edited-note
   // clusters, then add voiced-segment context and padding.
@@ -859,6 +949,42 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int hopSize = (vocoder != nullptr && vocoder->isLoaded())
                           ? vocoder->getHopSize()
                           : HOP_SIZE;
+
+  // Engine blocks (D-125 + D-129). Which engine renders each part of the
+  // render range: contiguous notes with the same effective engine share a
+  // block, and a note only starts a new block when the gap with the previous
+  // one holds a usable silence (-55 dBFS / >= 20 ms, measured on the source).
+  // Two notes with no silence between them keep one engine; that is the
+  // product rule, not an optimisation.
+  const auto &silenceSource = audioData.originalWaveform.getNumSamples() > 0
+                                  ? audioData.originalWaveform
+                                  : audioData.waveform;
+  const auto enginePlan =
+      engineBlocks::buildPlan(project->getNotes(), startFrame, endFrame,
+                              synthesisEngine, silenceSource,
+                              audioData.sampleRate, hopSize);
+  const bool needsVocoder =
+      std::any_of(enginePlan.begin(), enginePlan.end(),
+                  [](const engineBlocks::Block &block) {
+                    return block.engine == SynthesisEngineType::Vocoder;
+                  });
+  const bool needsDsp = std::any_of(
+      enginePlan.begin(), enginePlan.end(),
+      [](const engineBlocks::Block &block) {
+        return block.engine != SynthesisEngineType::Vocoder;
+      });
+
+  if (needsVocoder && (vocoder == nullptr || !vocoder->isLoaded())) {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+  if (needsDsp && audioData.originalWaveform.getNumSamples() == 0 &&
+      audioData.waveform.getNumSamples() == 0) {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
   // Kept deliberately, not leftover debugging. Four lines and roughly 250
   // bytes per pass, against a log already dominated by model loading and
   // detection - cheap enough to leave on, and it turns "editing one note
@@ -908,6 +1034,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     LOG(juce::String("  commit=") + commitText + " " +
         juce::String(static_cast<double>(committedFrames) * framesToSeconds,
                      2) + "s");
+    if (enginePlan.size() > 1) {
+      juce::String planText;
+      for (const auto &block : enginePlan)
+        planText << "[" << block.startFrame << "," << block.endFrame
+                 << ")" << synthesisEngineTypeToString(block.engine) << " ";
+      LOG(juce::String("  enginePlan=") +
+          juce::String(static_cast<int>(enginePlan.size())) + " blocks: " +
+          planText);
+    }
 #if PITCHNET_LOGGING_ENABLED
     // Wall clock of the whole render, including vocoder inference. The "s"
     // values above are AUDIO durations, not times.
@@ -995,6 +1130,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       std::copy(origPtr + startSample, origPtr + startSample + copyLen,
                 originalSegment.begin());
   }
+
+  // A render with several engine blocks (D-125) concatenates one render per
+  // block. It starts from the original so a block that fails or comes back
+  // short degrades to unedited audio instead of a hole, the same rule the
+  // short-render guard below applies to a single engine.
+  std::vector<float> multiBlockCombined;
+  if (enginePlan.size() > 1)
+    multiBlockCombined = originalSegment;
 
   // Preserve the audio attached outside a region's first/last pitched note as
   // immutable waveform patches. They are captured before the async render so
@@ -1232,10 +1375,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int formantSampleRate = audioData.sampleRate;
   const bool hasGlobalFormant = std::abs(project->getFormantShift()) > 0.001f;
 
-  // Mel is the neural vocoder's input and is not cheap to copy, so the PSOLA
-  // path skips building it entirely.
+  // Mel is the neural vocoder's input and is not cheap to copy, so a render
+  // with no vocoder block skips building it entirely.
   std::vector<std::vector<float>> melRange;
-  if (!useDsp) {
+  if (needsVocoder) {
     melRange.assign(audioData.melSpectrogram.begin() + startFrame,
                     audioData.melSpectrogram.begin() + endFrame);
     applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
@@ -1251,7 +1394,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // original audio, and how far its pitch has to move once it gets there.
   // Built here on the message thread while the project is stable.
   DspSynthesisRequest dspRequest;
-  if (useDsp) {
+  if (needsDsp) {
     const auto sourceFrameMap = buildSourceFrameMap(startFrame, endFrame);
     auto pitchRatio =
         buildPitchRatioCurve(startFrame, endFrame, sourceFrameMap, adjustedF0Range);
@@ -1310,7 +1453,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
 #if PITCHNET_LOGGING_ENABLED
-  if (useDsp) {
+  if (needsDsp) {
     // I-9 (D-101): el objetivo que recibe el motor. Los cents de la nota y los
     // del ratio en su frame medio dicen donde se pierde el tono: si difieren,
     // el fallo esta en la curva objetivo, no en el motor.
@@ -1561,8 +1704,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // sort before looking for contiguity.
             std::vector<std::pair<int, int>> neutralFrameRanges;
             for (const auto &note : capturedProject->getNotes()) {
-              if (note.isRest() || !note.isDirty() ||
-                  !note.isNeutralForOriginalWaveform())
+              if (!capturedProject->shouldResetNeutralNoteToOriginal(note))
                 continue;
               neutralFrameRanges.emplace_back(note.getStartFrame(),
                                               note.getEndFrame());
@@ -2059,14 +2201,95 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         }).detach();
       };
 
-  if (usePitchcore) {
-    pitchcore.renderAsync(std::move(dspRequest), std::move(onRendered),
-                          capturedCancelFlag);
-  } else if (usePsola) {
-    psola.renderAsync(std::move(dspRequest), std::move(onRendered),
-                      capturedCancelFlag);
-  } else {
-    vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
-                        std::move(onRendered));
+  // One block is the existing path, untouched: same engine, same request,
+  // same callback. This is what keeps a project with one engine rendering bit
+  // for bit what it rendered before the per-note field existed (D-125 b).
+  if (enginePlan.size() <= 1) {
+    const auto engine =
+        enginePlan.empty() ? synthesisEngine : enginePlan.front().engine;
+    if (engine == SynthesisEngineType::Pitchcore) {
+      pitchcore.renderAsync(std::move(dspRequest), std::move(onRendered),
+                            capturedCancelFlag);
+    } else if (engine == SynthesisEngineType::Psola) {
+      psola.renderAsync(std::move(dspRequest), std::move(onRendered),
+                        capturedCancelFlag);
+    } else {
+      vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
+                          std::move(onRendered));
+    }
+    return;
   }
+
+  // Several blocks: each one renders only its own frames, in order. The
+  // splice sits in the middle of the silence that allowed the change (D-129),
+  // so no sounding material crosses it.
+  auto chain = std::make_shared<BlockRenderChain>();
+  chain->psola = &psola;
+  chain->pitchcore = &pitchcore;
+  chain->vocoder = vocoder;
+  chain->cancelFlag = capturedCancelFlag;
+  chain->combined = std::move(multiBlockCombined);
+  chain->finalize = std::move(onRendered);
+  chain->isCancelled = [this, capturedCancelFlag, currentJobId]() {
+    return currentJobId != jobId.load() || capturedCancelFlag->load();
+  };
+  chain->blocks.reserve(enginePlan.size());
+  for (const auto &block : enginePlan) {
+    BlockRenderChain::Block entry;
+    entry.engine = block.engine;
+    entry.sampleOffset = (block.startFrame - startFrame) * hopSize;
+    entry.numSamples = block.getNumFrames() * hopSize;
+
+    const int offset = block.startFrame - startFrame;
+    const int frames = block.getNumFrames();
+    if (block.engine == SynthesisEngineType::Vocoder) {
+      entry.mel.assign(melRange.begin() + offset,
+                       melRange.begin() + offset + frames);
+      entry.f0.assign(adjustedF0Range.begin() + offset,
+                      adjustedF0Range.begin() + offset + frames);
+    } else {
+      entry.request.sourceFrame.assign(
+          dspRequest.sourceFrame.begin() + offset,
+          dspRequest.sourceFrame.begin() + offset + frames);
+      entry.request.pitchRatio.assign(
+          dspRequest.pitchRatio.begin() + offset,
+          dspRequest.pitchRatio.begin() + offset + frames);
+      entry.request.numOutputFrames = frames;
+      entry.request.sourceF0 = dspRequest.sourceF0;
+      entry.request.sourceVoiced = dspRequest.sourceVoiced;
+      entry.request.hopSize = dspRequest.hopSize;
+      entry.request.sampleRate = dspRequest.sampleRate;
+
+      // Narrow the source slice to what this block's curve reaches. The
+      // positions in sourceFrame are absolute, so the slice only has to cover
+      // them; that keeps one block from carrying the whole render's audio.
+      constexpr int kBlockContextSamples = 4096;
+      double minFrame = entry.request.sourceFrame.front();
+      double maxFrame = entry.request.sourceFrame.front();
+      for (double frame : entry.request.sourceFrame) {
+        minFrame = std::min(minFrame, frame);
+        maxFrame = std::max(maxFrame, frame);
+      }
+      const int baseStart = dspRequest.sourceStartSample;
+      const int baseEnd =
+          baseStart + static_cast<int>(dspRequest.source.size());
+      int from = std::clamp(
+          static_cast<int>(std::floor(minFrame)) * hopSize -
+              kBlockContextSamples,
+          baseStart, baseEnd);
+      int to = std::clamp(
+          (static_cast<int>(std::ceil(maxFrame)) + 1) * hopSize +
+              kBlockContextSamples,
+          baseStart, baseEnd);
+      if (to <= from) {
+        from = baseStart;
+        to = baseEnd;
+      }
+      entry.request.source.assign(dspRequest.source.begin() + (from - baseStart),
+                                  dspRequest.source.begin() + (to - baseStart));
+      entry.request.sourceStartSample = from;
+    }
+    chain->blocks.push_back(std::move(entry));
+  }
+  chain->start();
 }

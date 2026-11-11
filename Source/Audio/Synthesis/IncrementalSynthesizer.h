@@ -36,6 +36,17 @@ public:
   void setSynthesisEngine(SynthesisEngineType type) { synthesisEngine = type; }
   SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
 
+  // D-197: render only this window (a silence-bounded edited block). The
+  // project keeps all its dirty notes; the window only narrows the commit.
+  void setRenderRangeOverride(int startFrame, int endFrame)
+  {
+    renderRangeOverrideStart = startFrame;
+    renderRangeOverrideEnd = endFrame;
+    hasRenderRangeOverride = true;
+  }
+  void clearRenderRangeOverride() { hasRenderRangeOverride = false; }
+  bool hasRenderRangeOverrideValue() const { return hasRenderRangeOverride; }
+
   void synthesizeRegion(ProgressCallback onProgress,
                         CompleteCallback onComplete);
 
@@ -74,6 +85,10 @@ private:
   std::atomic<bool> isBusy{false};
 
   std::thread applyThread;
+
+  bool hasRenderRangeOverride = false;
+  int renderRangeOverrideStart = 0;
+  int renderRangeOverrideEnd = 0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IncrementalSynthesizer)
 };

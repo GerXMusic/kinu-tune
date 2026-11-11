@@ -135,6 +135,16 @@ public:
 
   // Project
   void setProject(Project *proj);
+  // P1b fase 6: estado del barrido por primitivas, para no arrastrar la cola
+  // hasta el renderer. Se reenvia a los dos renderers de notas.
+  void setSweepState(bool active, int startFrame, int endFrame, int remaining)
+  {
+    if (noteRenderer)
+      noteRenderer->setSweepState(active, startFrame, endFrame, remaining);
+    if (previewNoteRenderer)
+      previewNoteRenderer->setSweepState(active, startFrame, endFrame,
+                                         remaining);
+  }
   void beginLiveRecordingWaveform(double sampleRate,
                                   double timelineOffsetSeconds);
   void appendLiveRecordingWaveform(const juce::AudioBuffer<float> &buffer);
@@ -192,6 +202,13 @@ public:
   // Scroll
   void setScrollX(double x);
   double getScrollX() const { return scrollX; }
+
+  // D-180: measurement only. Counts completed paints and reports how long the
+  // last one took, so a blocked message thread can be told apart from a late
+  // state change. No behaviour depends on these values.
+  juce::int64 getPaintCount() const { return paintCount; }
+  double getLastPaintDurationMs() const { return lastPaintDurationMs; }
+  double getMaxPaintDurationMs() const { return maxPaintDurationMs; }
   void setScrollY(double y);
   double getScrollY() const { return scrollY; }
   // End of the scrollable timeline, in the canvas's (project) time.
@@ -592,6 +609,11 @@ public:
   void beginInactiveMacroPreview(const std::vector<TrackPitchMacroTarget>& targets);
 
 private:
+  // D-180: measurement only (message thread).
+  juce::int64 paintCount = 0;
+  double lastPaintDurationMs = 0.0;
+  double maxPaintDurationMs = 0.0;
+
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
   bool modifierZoomDragActive = false;

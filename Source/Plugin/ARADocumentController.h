@@ -146,7 +146,12 @@ public:
   // closed).
   PitchNetDocumentController *getDocController() const;
 
+  // D-153: per-track bypass is the host's responsibility. The plugin does not
+  // read a bypass flag in the playback renderer; disabling the FX in the host
+  // removes this renderer from the chain instead.
+
 private:
+
   struct HostUiSyncState {
     std::atomic<bool> latestPlaying{false};
     std::atomic<double> latestLoopStartSeconds{0.0};
@@ -203,6 +208,20 @@ private:
   std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
       processedResamplingStates;
   std::unique_ptr<juce::AudioBuffer<float>> tempBuffer;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: scratch buffers for the per-block reference renders (raw source and
+  // processed audio of the SAME window), used only to measure the block output.
+  // They never feed the output path. The resampler states below MIRROR the
+  // ones the real paths use, so a reference render produces the very same
+  // samples the real path would have produced in that block.
+  std::unique_ptr<juce::AudioBuffer<float>> diagRawBuffer;
+  std::unique_ptr<juce::AudioBuffer<float>> diagProcessedBuffer;
+  std::unique_ptr<juce::AudioBuffer<float>> diagTempBuffer;
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      diagRawResamplingStates;
+  std::unordered_map<juce::ARAPlaybackRegion *, AraResamplingState>
+      diagProcessedResamplingStates;
+#endif
   std::shared_ptr<HostUiSyncState> hostUiSyncState =
       std::make_shared<HostUiSyncState>();
   HostLoopState previousLoopState;
@@ -406,6 +425,25 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-137: the bypass parameter as the project has it (the INTENT of the
+  // render), written by the processor before it renders a block and read by
+  // the playback renderer, so the trace can compare the intent with the
+  // static flag the renderer actually read.
+  void setBypassIntentForDiagnostics(float value) noexcept {
+    bypassIntentForDiagnostics.store(value, std::memory_order_relaxed);
+    bypassIntentWriterThread.store(
+        static_cast<juce::int64>(reinterpret_cast<juce::pointer_sized_int>(
+            juce::Thread::getCurrentThreadId())),
+        std::memory_order_relaxed);
+  }
+  float getBypassIntentForDiagnostics() const noexcept {
+    return bypassIntentForDiagnostics.load(std::memory_order_relaxed);
+  }
+  juce::int64 getBypassIntentWriterThread() const noexcept {
+    return bypassIntentWriterThread.load(std::memory_order_relaxed);
+  }
+#endif
   void setPersistenceCallbacks(
       std::function<bool(juce::MemoryBlock &)> serializeProjectState,
       std::function<bool(const void *, size_t)> restoreProjectState);
@@ -420,11 +458,46 @@ public:
   // headless/playback owner so canvas work cannot be dispatched to a processor
   // with no UI.
   void setEditorProcessor(PitchNetAudioProcessor *processor);
+  PitchNetAudioProcessor *getEditorProcessor() const { return editorProcessor; }
   void releaseEditorProcessor(PitchNetAudioProcessor *processor);
   void ensureHeadlessPlaybackBinding();
   void prepareDocumentPlayback(double sampleRate, int maxBlockSize);
   void setDocumentProjectSnapshot(const Project &project,
                                   bool notifyHost = true);
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  // D-136: the project the document controller restored from the archive.
+  // Used only to count the analysis frames whose pitch ratio differs from 1
+  // when the editor has no project (headless playback).
+  const Project *getDocumentProjectSnapshot() const {
+    return documentProjectSnapshot.get();
+  }
+  // D-139 pre-test: the processor this document controller is bound to.
+  PitchNetAudioProcessor *getOwningProcessorForDiagnostics() const {
+    return owningProcessor;
+  }
+  // D-141: the editor processor, if any, as another association key.
+  PitchNetAudioProcessor *getEditorProcessorForDiagnostics() const {
+    return editorProcessor;
+  }
+  // D-152: hydration of the document for the trace. Counts every modification
+  // created in the document and every one that has received restored state.
+  void diagNoteModificationCreated() noexcept {
+    documentModificationCount.fetch_add(1, std::memory_order_relaxed);
+  }
+  void diagNoteModificationDestroyed(bool wasRestored) noexcept {
+    if (wasRestored)
+      restoredModificationCount.fetch_sub(1, std::memory_order_relaxed);
+    documentModificationCount.fetch_sub(1, std::memory_order_relaxed);
+  }
+  void diagNoteModificationRestored() noexcept {
+    restoredModificationCount.fetch_add(1, std::memory_order_relaxed);
+  }
+  bool diagDocumentHydrated() const noexcept {
+    const int total = documentModificationCount.load(std::memory_order_relaxed);
+    return total <= 0 ||
+           restoredModificationCount.load(std::memory_order_relaxed) >= total;
+  }
+#endif
   bool processExistingAudioSources(juce::ARADocument *document);
   bool processPlaybackRegions(
       const std::vector<juce::ARAPlaybackRegion *> &playbackRegions,
@@ -511,6 +584,12 @@ private:
   double analysisTimelineSampleRate = 0.0;
   RealtimePitchProcessor *realtimeProcessor = nullptr;
   std::unique_ptr<Project> documentProjectSnapshot;
+#if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
+  static std::atomic<float> bypassIntentForDiagnostics;
+  static std::atomic<juce::int64> bypassIntentWriterThread;
+  std::atomic<int> documentModificationCount{0};
+  std::atomic<int> restoredModificationCount{0};
+#endif
   RealtimePitchProcessor documentRealtimeProcessor;
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;

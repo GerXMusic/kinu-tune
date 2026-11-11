@@ -161,10 +161,33 @@ public:
   virtual void clearHostAudio() = 0;
   virtual void focusTimelineRange(double startSeconds, double endSeconds) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
+  // D-180: measurement only. The editor reports when an ARA selection starts and
+  // how long its region-list refresh took, so the visual latency can be split
+  // between host event, project binding and paint. No view behaviour depends on
+  // these calls.
+  virtual void noteAraSelectionStarted() {}
+  virtual void noteAraRegionRefreshDuration(double) {}
+  virtual void noteAraArchiveRestoreDuration(double) {}
+  virtual void noteAraActivationDuration(double) {}
+  virtual void noteAraActivationBreakdown(double, double, double, double,
+                                          double, double, double) {}
+  // D-180-R: guard the scrollbar echo produced by a host-driven layout.
+  virtual void noteAraLayoutStarted() {}
+  virtual void noteAraLayoutFinished() {}
+  // D-180-R3: the editor is opening; the first bound project should reveal the
+  // host edit cursor instead of parking the canvas at the region start.
+  virtual void noteAraEditorOpened(double) {}
   // Where the drawn project content sits on the host timeline, in seconds.
   // Display only; may be negative. See CoordinateMapper for the full contract.
   virtual void setTimelineDisplayOffset(double seconds) = 0;
   virtual void updateHostPlaybackState(bool isPlaying) = 0;
+  // P1b: the host started playback. Returns true when the view is holding the
+  // transport back: it stops the host, renders the dirty blocks and restarts
+  // playback when they are done. False means there was nothing to do.
+  virtual bool flushDirtyBlocksForHostPlay() { return false; }
+  // P1b: dice si la cadena de flush sigue en curso, para que el callback del
+  // transporte ignore los playState que provocan nuestro propio stop/start.
+  virtual bool isFlushChainActive() const { return false; }
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,

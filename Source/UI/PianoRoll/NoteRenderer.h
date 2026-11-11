@@ -62,6 +62,19 @@ public:
     previewCurrentTime = currentTime;
   }
 
+  // P1b fase 6: barrido del bloque que se esta renderizando. Sin barrido
+  // (active == false) no se dibuja nada.
+  void setSweepState(bool active, int startFrame, int endFrame, int remaining)
+  {
+    sweepActive = active;
+    sweepStartFrame = startFrame;
+    sweepEndFrame = endFrame;
+    sweepRemaining = remaining;
+    if (active && !wasSweepActive)
+      sweepStartMs = juce::Time::getMillisecondCounterHiRes();
+    wasSweepActive = active;
+  }
+
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
 
@@ -83,6 +96,12 @@ private:
   int previewStartFrame = 0;
   int previewEndFrame = 0;
   double previewCurrentTime = 0.0;
+  bool sweepActive = false;
+  bool wasSweepActive = false;
+  int sweepStartFrame = 0;
+  int sweepEndFrame = 0;
+  int sweepRemaining = 0;
+  double sweepStartMs = 0.0;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoteRenderer)
 };

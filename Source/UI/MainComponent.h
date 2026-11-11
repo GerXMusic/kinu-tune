@@ -1,4 +1,7 @@
+#include "Main/DeferredRenderQueue.h"
 #pragma once
+
+#include <unordered_map>
 
 #include "../Audio/EditorController.h"
 #include "../Audio/ResampledLoopAudition.h"
@@ -24,6 +27,7 @@
 #include "Workspace/WorkspaceComponent.h"
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <cmath>
 #include <thread>
@@ -284,6 +288,19 @@ public:
   void notifyHostStopped() override; // Called when host stops playback
   void triggerResynthesis() override; // Triggered by DAW parameter automation
 
+  // D-180: measurement only (see plan/m2/d180-criterio.md).
+  void noteAraSelectionStarted() override;
+  void noteAraRegionRefreshDuration(double durationMs) override;
+  void noteAraArchiveRestoreDuration(double durationMs) override;
+  void noteAraActivationDuration(double durationMs) override;
+  void noteAraActivationBreakdown(double cancelMs, double copyMs,
+                                  double parseMs, double installMs,
+                                  double focusMs, double bindMs,
+                                  double totalMs) override;
+  void noteAraLayoutStarted() override;
+  void noteAraLayoutFinished() override;
+  void noteAraEditorOpened(double hostCursorSeconds) override;
+
 private:
   // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
   friend struct MainComponentTestAccess;
@@ -313,6 +330,27 @@ private:
   void finishPianoKeyAudition();
   void jumpTransport(bool forward);
   void resynthesizeIncremental(); // Incremental synthesis on edit
+  // P1b (render al Play): an edit, an undo/redo, an engine change, an MCP
+  // command or DAW automation only marks. Nothing renders until Play.
+  void markRenderDirty();
+  // P1b: renders the dirty blocks, one per pass, and only then starts the
+  // transport. The cursor waits for the last block.
+  void flushDirtyBlocks();
+  // P1b fase 3: borde de arranque del Play del host. Devuelve true si el
+  // transporte se retiene para renderizar y se reanuda al terminar la cadena.
+  bool flushDirtyBlocksForHostPlay() override;
+  bool isFlushChainActive() const override { return flushChainActive; }
+  // P1b fase 6: cola de bloques pendientes. El barrido se dibuja desde aqui.
+  DeferredRenderQueue deferredRenders;
+  void pushSweepState();
+  bool deferredRenderPending = false;
+  bool flushChainActive = false;
+  bool playAfterFlush = false;
+  double lastHostPlaybackSeconds = 0.0;
+  double flushResumePosition = 0.0;
+  // P1b fase 4: el guardado espera al flush y se reanuda cuando este termina.
+  bool resumeSaveAfterFlush = false;
+  bool saveAsAfterFlush = false;
   // Engine change: the audio was rendered by the previous engine, so every
   // edited note is rendered again by the new one (Project::markEditedNotesDirty).
   void rerenderEditedNotes();
@@ -326,14 +364,29 @@ private:
 
   void onNoteSelected(Note *note);
   void onPitchEdited();
+  // Per-note engine (M2 paso 2, D-125). Applies the requested engine to the
+  // inspector's targets through the silence rule, as one undo step, and
+  // re-renders. Returns how many selected notes the rule refused.
+  int applyNoteEngineToSelection(NoteEngine engine);
+  int applyNoteEngineToIndices(const std::vector<int> &indices,
+                               NoteEngine engine);
+  std::optional<NoteEngine> getSelectionNoteEngine() const;
+  // D-185: note index -> engine that the last gesture asked for and D-129
+  // refused. Session state only; the stored engine is already the block's.
+  std::unordered_map<int, NoteEngine> lastRefusedEngineRequests;
   void onZoomChanged(float pixelsPerSecond);
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
+  // D-174: a restored document carries its own engine; apply it to the panel
+  // and to the controllers after the project lands in the canvas.
+  void applyProjectSynthesisEngine();
   void fitAnalyzedPitchRangeToView(Project &project);
   // Whole timeline horizontally, the sung range vertically (Shift+F).
   void zoomToFull();
   void applyUiBrightness(double brightnessPercent);
+  // Local MCP commands are polled on the message thread, never the audio thread.
+  void pollMcpControl();
 
   void reloadInferenceModels(bool async = false);
   bool isInferenceBusy() const;
@@ -371,6 +424,11 @@ private:
 
   std::unique_ptr<EditorController> ownedEditorController;
   EditorController *editorController = nullptr;
+  juce::String mcpInstanceId { juce::Uuid().toString() };
+  juce::uint32 mcpLastPollMs = 0;
+  juce::uint32 mcpLastHeartbeatMs = 0;
+  juce::uint32 mcpRenderGeneration = 0;
+  bool mcpRenderPending = false;
   std::unique_ptr<PitchUndoManager> ownedUndoManager;
   PitchUndoManager *undoManager = nullptr;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
@@ -469,6 +527,131 @@ private:
   std::atomic<double> pendingCursorTime{0.0};
   std::atomic<bool> hasPendingCursorUpdate{false};
 
+  // D-180: measurement only. All fields are written and read on the message
+  // thread; the MCP poll and the 60 Hz timer live there. No value changes what
+  // the view or the renderer does.
+  struct UiLatencyTrace {
+    double selectionStartedMs = 0.0;
+    double selectionBoundMs = 0.0;
+    double selectionFirstPaintMs = 0.0;
+    juce::int64 selectionPaintBase = 0;
+
+    double playStateMs = 0.0;
+    double playFirstPaintMs = 0.0;
+    juce::int64 playPaintBase = 0;
+    double playCursorMs = 0.0;
+    double playCursorFirstPaintMs = 0.0;
+    juce::int64 playCursorPaintBase = 0;
+    bool playCursorVisible = false;
+
+    double stoppedSeekMs = 0.0;
+    double stoppedSeekTarget = 0.0;
+    double stoppedSeekAppliedMs = 0.0;
+    double stoppedSeekFirstPaintMs = 0.0;
+    juce::int64 stoppedSeekPaintBase = 0;
+    bool stoppedSeekCursorVisible = false;
+
+    double lastTimerMs = 0.0;
+    double maxTimerGapMs = 0.0;
+    double lastExchangeMs = 0.0;
+    double maxExchangeMs = 0.0;
+    double lastRegionRefreshMs = 0.0;
+    double maxRegionRefreshMs = 0.0;
+    double lastArchiveRestoreMs = 0.0;
+    double maxArchiveRestoreMs = 0.0;
+    double lastActivationMs = 0.0;
+    double maxActivationMs = 0.0;
+    double lastActivationCancelMs = 0.0;
+    double lastActivationCopyMs = 0.0;
+    double lastActivationParseMs = 0.0;
+    double lastActivationInstallMs = 0.0;
+    double lastActivationFocusMs = 0.0;
+    double lastActivationBindMs = 0.0;
+    double lastActivationTotalMs = 0.0;
+
+    int resizeCount = 0;
+    double lastResizeAtMs = 0.0;
+    double lastResizeScrollBefore = 0.0;
+    double lastResizeScrollAfter = 0.0;
+    double lastResizeCursor = 0.0;
+    bool lastResizeCursorVisibleBefore = false;
+    bool lastResizeCursorVisibleAfter = false;
+    int lastResizeWidth = 0;
+    int lastResizeHeight = 0;
+    double firstResizeScrollBefore = 0.0;
+    double firstResizeScrollAfter = 0.0;
+    bool firstResizeCursorVisibleBefore = false;
+    bool firstResizeCursorVisibleAfter = false;
+    int firstResizeWidth = 0;
+    double firstResizePps = 0.0;
+    double firstResizeDuration = 0.0;
+    int firstResizeVisibleWidth = 0;
+    double lastLayoutScrollBefore = 0.0;
+    double lastLayoutScrollAfter = 0.0;
+    double lastLayoutPpsBefore = 0.0;
+    double lastLayoutDurationBefore = 0.0;
+    int lastLayoutVisibleWidthBefore = 0;
+    int layoutCount = 0;
+    bool layoutScrollGuardActive = false;
+    double layoutScrollGuardScroll = 0.0;
+    double layoutScrollGuardUntilMs = 0.0;
+    bool layoutScrollGuardCursorVisible = false;
+    int layoutScrollGuardRestoreCount = 0;
+    double lastObservedScrollX = 0.0;
+    int scrollResetCount = 0;
+    double scrollResetFrom = 0.0;
+    double scrollResetTo = 0.0;
+    double scrollResetAtMs = 0.0;
+    double lastCallbackScrollX = 0.0;
+    int callbackResetCount = 0;
+    double callbackResetFrom = 0.0;
+    double callbackResetTo = 0.0;
+    double callbackResetAtMs = 0.0;
+
+    // D-180-R3/R4: one sample per paint observed by the 60 Hz timer. The
+    // intermediate frame of a track switch lasts ~500 ms, so this records it.
+    struct PaintSample {
+      double atMs = 0.0;
+      double scrollX = 0.0;
+      double cursorTime = 0.0;
+      int visibleWidth = 0;
+      double pixelsPerSecond = 0.0;
+      bool cursorVisible = false;
+      bool playbackActive = false;
+      juce::int64 paintCount = 0;
+      int projectNotes = 0;
+    };
+    static constexpr int kPaintHistorySize = 96;
+    std::array<PaintSample, kPaintHistorySize> paintHistory{};
+    int paintHistoryCount = 0;
+    int paintHistoryNext = 0;
+    juce::int64 lastSampledPaintCount = 0;
+
+    double lastFocusAtMs = 0.0;
+    double lastFocusSpanStart = 0.0;
+    double lastFocusScrollX = 0.0;
+    double lastFocusCursorTime = 0.0;
+    bool lastFocusCursorWasVisible = false;
+    bool lastFocusCursorVisibleAfter = false;
+    bool lastFocusCursorRestored = false;
+    int focusRestoreCount = 0;
+
+    double selectionScrollAtBound = 0.0;
+    double selectionScrollAtPaint = 0.0;
+    bool selectionCursorVisibleAtPaint = false;
+  };
+  UiLatencyTrace latencyTrace;
+  // A host seek arrived while the transport is stopped: the view must follow
+  // it without waiting for playback (D-180 A).
+  bool pendingStoppedHostSeek = false;
+  // D-180-R3: the next incoming project (editor open) should reveal the cursor
+  // before its first paint.
+  bool pendingOpenCursorReveal = false;
+
+  double nowMs() const;
+  bool cursorIsVisible(double timeSeconds) const;
+  void updateUiLatencyPaintTrace();
+
   bool hasCachedHostTimelineState = false;
   double cachedHostTempoBpm = 120.0;
   int cachedHostBeatNumerator = 4;
@@ -480,6 +663,14 @@ private:
   bool cachedHostLoopEnabled = false;
   bool cachedHostLoopHasRange = false;
   double suppressPlaybackFollowUntilMs = 0.0;
+  // D-176: the initial ARA selection arrives before the editor is sized. Keep
+  // the span and apply it once the canvas has a visible width.
+  bool hasPendingTimelineFocus = false;
+  bool hasPendingPitchFit = false;
+  bool pendingViewRetryScheduled = false;
+  int pendingViewRetries = 0;
+  double pendingTimelineFocusStart = 0.0;
+  double pendingTimelineFocusEnd = 0.0;
   juce::int64 lastCursorUpdateTime = 0;
 
 #if JUCE_MAC

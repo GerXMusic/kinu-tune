@@ -1,3 +1,5 @@
+#include "../Audio/Synthesis/EngineBlocks.h"
+#include "../Utils/Constants.h"
 #include "Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -134,6 +136,51 @@ std::vector<Note *> Project::getDirtyNotes()
     return result;
 }
 
+void Project::applyRenderedNoteState(const Project &rendered)
+{
+    auto &targetNotes = notes;
+    const auto &renderedNotes = rendered.getNotes();
+    if (targetNotes.size() != renderedNotes.size())
+        return;
+    for (size_t i = 0; i < targetNotes.size(); ++i)
+    {
+        targetNotes[i].setRenderedEdit(renderedNotes[i].hasRenderedEdit());
+        targetNotes[i].setSynthDirty(renderedNotes[i].isSynthDirty());
+        targetNotes[i].clearDirty();
+    }
+}
+
+bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
+{
+    constexpr float kGlobalEditEpsilon = 1.0e-6f;
+    if (note.isRest() || !note.isDirty())
+        return false;
+    if (note.getEngine() != NoteEngine::Inherit)
+        return false;
+    if (std::abs(globalPitchOffset) > kGlobalEditEpsilon ||
+        std::abs(formantShift) > kGlobalEditEpsilon)
+        return false;
+    return note.isNeutralForOriginalWaveform();
+}
+
+bool Project::hasRegionEdits() const
+{
+    if (globalPitchOffset != 0.0f || formantShift != 0.0f)
+        return true;
+
+    for (const auto &note : notes)
+    {
+        if (note.isRest())
+            continue;
+        if (note.getEngine() != NoteEngine::Inherit)
+            return true;
+        if (!note.isNeutralForOriginalWaveform())
+            return true;
+    }
+
+    return false;
+}
+
 void Project::clearAllDirty()
 {
     for (auto &note : notes)
@@ -145,30 +192,115 @@ void Project::clearAllDirty()
 
 int Project::markEditedNotesDirty()
 {
+    editedBlockRanges.clear();
+    editedBlockCursor = -1;
+
     const bool wholeProjectEdited =
         globalPitchOffset != 0.0f || formantShift != 0.0f;
 
+    // Contract kept (SynthesisEngineShareTests): mark every edited note and
+    // set the F0 dirty range over their whole span, exactly as before.
     int marked = 0;
     int start = -1;
     int end = -1;
-    for (auto &note : notes)
+    std::vector<int> selected;
+    for (int i = 0; i < static_cast<int>(notes.size()); ++i)
     {
+        auto &note = notes[static_cast<size_t>(i)];
         if (note.isRest())
             continue;
         if (!wholeProjectEdited && note.isNeutralForOriginalWaveform())
             continue;
-
         note.markDirty();
         ++marked;
+        selected.push_back(i);
         start = start < 0 ? note.getStartFrame() : std::min(start, note.getStartFrame());
         end = end < 0 ? note.getEndFrame() : std::max(end, note.getEndFrame());
     }
-
     if (marked > 0)
         markNoteEditDirtyRange(start, end);
+    if (selected.empty())
+        return 0;
+
+    std::stable_sort(selected.begin(), selected.end(), [&](int a, int b) {
+        return notes[static_cast<size_t>(a)].getStartFrame() <
+               notes[static_cast<size_t>(b)].getStartFrame();
+    });
+
+    // D-197: independent walk over the same edited notes, grouped into blocks
+    // separated by a D-129 silence. It does not touch dirty flags; the
+    // controller pulls one padded range per render.
+    const auto &source = audioData.originalWaveform.getNumSamples() > 0
+                             ? audioData.originalWaveform
+                             : audioData.waveform;
+    constexpr int kHop = HOP_SIZE;
+    const int frameCount = static_cast<int>(audioData.f0.size());
+
+    std::vector<int> blockNotes;
+    int blockStart = -1;
+    int blockEnd = -1;
+    int previousEnd = -1;
+
+    auto flushBlock = [&]() {
+        if (blockNotes.empty())
+            return;
+        const int rangedStart = std::max(0, blockStart - 60);
+        const int rangedEnd = frameCount > 0 ? std::min(frameCount, blockEnd + 60)
+                                             : blockEnd + 60;
+        if (rangedEnd > rangedStart)
+            editedBlockRanges.emplace_back(rangedStart, rangedEnd);
+        blockNotes.clear();
+    };
+
+    for (int index : selected)
+    {
+        const auto &note = notes[static_cast<size_t>(index)];
+        bool sameBlock = blockNotes.empty();
+        if (!sameBlock && !wholeProjectEdited && previousEnd >= 0)
+        {
+            const bool silence = engineBlocks::findSilenceRun(
+                source, audioData.sampleRate, previousEnd * kHop,
+                note.getStartFrame() * kHop).has_value();
+            sameBlock = !silence;
+        }
+        if (!sameBlock)
+            flushBlock();
+        if (blockNotes.empty())
+        {
+            blockStart = note.getStartFrame();
+            blockEnd = note.getEndFrame();
+        }
+        else
+        {
+            blockStart = std::min(blockStart, note.getStartFrame());
+            blockEnd = std::max(blockEnd, note.getEndFrame());
+        }
+        blockNotes.push_back(index);
+        previousEnd = note.getEndFrame();
+    }
+    flushBlock();
+
     return marked;
 }
 
+bool Project::hasEditedBlockPlan() const
+{
+    return !editedBlockRanges.empty();
+}
+
+bool Project::nextEditedBlockRange(int &startFrame, int &endFrame)
+{
+    if (editedBlockCursor + 1 >= static_cast<int>(editedBlockRanges.size()))
+    {
+        editedBlockRanges.clear();
+        editedBlockCursor = -1;
+        return false;
+    }
+    ++editedBlockCursor;
+    startFrame = editedBlockRanges[static_cast<size_t>(editedBlockCursor)].first;
+    endFrame = editedBlockRanges[static_cast<size_t>(editedBlockCursor)].second;
+    return true;
+}
 bool Project::hasDirtyNotes() const
 {
     for (const auto &note : notes)
