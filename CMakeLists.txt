@@ -256,6 +256,24 @@ add_subdirectory(third_party/pitchcore)
 # distribuye con el plugin. Compila solo con el nucleo y la traduccion
 # (PitchcoreRequest.h), sin JUCE, para que mida exactamente lo que mide el
 # adaptador y nada mas.
+# P2 (plan/m2/p2-hop-256-vs-512-criterio.md, v2): coste de motor por hop.
+# Mide solo el render (PSOLA y Pitchcore) con el mismo audio; no entra en el plugin.
+add_executable(hop_bench EXCLUDE_FROM_ALL
+    tools/hop_bench.cpp
+    Source/Audio/Synthesis/PsolaSynthesizer.cpp)
+target_include_directories(hop_bench PRIVATE Source tools)
+target_link_libraries(hop_bench PRIVATE pitchcore
+    juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_processors
+    juce::juce_audio_utils juce::juce_core juce::juce_data_structures
+    juce::juce_events juce::juce_graphics juce::juce_gui_basics
+    juce::juce_gui_extra juce::juce_dsp)
+target_compile_features(hop_bench PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(hop_bench PRIVATE /fp:precise)
+else()
+    target_compile_options(hop_bench PRIVATE -fno-fast-math)
+endif()
+
 add_executable(pitchcore_adapter_check EXCLUDE_FROM_ALL
     tools/pitchcore_adapter_check.cpp)
 target_include_directories(pitchcore_adapter_check PRIVATE
