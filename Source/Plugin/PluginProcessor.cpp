@@ -1521,8 +1521,12 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       *backendProject,
       [safeMain](const juce::String &message) {
         juce::MessageManager::callAsync([safeMain, message]() {
-          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent()))
+          if (auto *view = dynamic_cast<IMainView *>(safeMain.getComponent())) {
             view->setStatusMessage(message);
+            // P1b: el barrido del piano roll avanza tambien en modo plugin,
+            // donde la lambda de progreso de MainComponent no llega a crearse.
+            safeMain->repaint();
+          }
         });
       },
       [this, controller, renderActiveAraRegion, renderRegionKey, renderRegionRevision,
