@@ -135,6 +135,16 @@ public:
 
   // Project
   void setProject(Project *proj);
+  // P1b fase 6: estado del barrido por primitivas, para no arrastrar la cola
+  // hasta el renderer. Se reenvia a los dos renderers de notas.
+  void setSweepState(bool active, int startFrame, int endFrame, int remaining)
+  {
+    if (noteRenderer)
+      noteRenderer->setSweepState(active, startFrame, endFrame, remaining);
+    if (previewNoteRenderer)
+      previewNoteRenderer->setSweepState(active, startFrame, endFrame,
+                                         remaining);
+  }
   void beginLiveRecordingWaveform(double sampleRate,
                                   double timelineOffsetSeconds);
   void appendLiveRecordingWaveform(const juce::AudioBuffer<float> &buffer);

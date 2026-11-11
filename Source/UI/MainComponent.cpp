@@ -1,3 +1,4 @@
+#include "Main/DeferredRenderQueue.h"
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
 #include "AraViewFocusPolicy.h"
@@ -3965,6 +3966,8 @@ void MainComponent::resynthesizeIncremental()
             return;
           }
 
+          safeThis->deferredRenders.clear();
+          safeThis->pushSweepState();
           safeThis->flushChainActive = false;
           if (safeThis->playAfterFlush)
           {
@@ -3993,10 +3996,25 @@ void MainComponent::resynthesizeIncremental()
 // only marks. The audio is not touched here; the blocks wait for Play.
 void MainComponent::markRenderDirty()
 {
-  if (getProject() == nullptr || editorController == nullptr)
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
     return;
 
+  const auto range = project->getDirtyFrameRange();
+  if (range.first >= 0 && range.second > range.first)
+    deferredRenders.markBlock(range.first, range.second);
+
   deferredRenderPending = true;
+  pushSweepState();
+  pianoRoll.repaint();
+}
+
+// P1b fase 6: el barrido se alimenta de la cola, no del proyecto.
+void MainComponent::pushSweepState()
+{
+  const auto state = sweep::fromQueue(deferredRenders);
+  pianoRoll.setSweepState(state.active, state.blockStart, state.blockEnd,
+                          state.remaining);
 }
 
 // P1b: Play from the UI. Renders the dirty blocks first and only then starts

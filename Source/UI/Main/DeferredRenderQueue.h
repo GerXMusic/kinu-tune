@@ -1,7 +1,8 @@
 #pragma once
 
 #include <algorithm>
-#include <functional>
+#include <cmath>
+#include <cstddef>
 #include <utility>
 #include <vector>
 
@@ -77,3 +78,41 @@ private:
 
   std::vector<std::pair<int, int>> blocks;
 };
+
+// P1b fase 6: barrido de render. El estado del indicador sale de esta cola
+// (que bloque se esta renderizando y cuantos quedan), nunca del recorrido de
+// bloques sucios del proyecto.
+namespace sweep {
+
+struct State {
+  bool active = false;
+  int blockStart = 0;
+  int blockEnd = 0;
+  int remaining = 0;
+};
+
+// Sin bloques pendientes no hay barrido: el indicador no se dibuja.
+inline State fromQueue(const DeferredRenderQueue &queue) {
+  State state;
+  state.remaining = queue.dirtyBlockCount();
+  if (state.remaining == 0)
+    return state;
+
+  const auto &blocks = queue.pendingBlocks();
+  state.active = true;
+  state.blockStart = blocks.front().first;
+  state.blockEnd = blocks.front().second;
+  return state;
+}
+
+// Posicion del borde brillante dentro del bloque, 0..1, en ciclos.
+inline float phaseAt(double elapsedSeconds, double periodSeconds = 0.9) {
+  if (periodSeconds <= 0.0)
+    return 0.0f;
+  double phase = std::fmod(elapsedSeconds / periodSeconds, 1.0);
+  if (phase < 0.0)
+    phase += 1.0;
+  return static_cast<float>(phase);
+}
+
+} // namespace sweep
