@@ -1,3 +1,6 @@
+#ifndef DBG_P1B
+#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
+#endif
 #include "SelectHandler.h"
 #include "../../PianoRollComponent.h"
 #include "../../../Utils/PitchCurveProcessor.h"
@@ -30,6 +33,7 @@ void rebuildProjectForNotes(Project *project,
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
 
+  DBG_P1B("markNote caller=SelectHandler.cpp:33");
   project->markNoteEditDirtyRange(minFrame, maxFrame);
 }
 }
@@ -501,6 +505,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
           dirtyStart = std::min(dirtyStart, note->getStartFrame());
           dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
         }
+        DBG_P1B("markNote caller=SelectHandler.cpp:504");
         project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
       }
 
@@ -589,6 +594,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
           dirtyStart = std::min(dirtyStart, note->getStartFrame());
           dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
         }
+        DBG_P1B("markNote caller=SelectHandler.cpp:592");
         project->markNoteEditDirtyRange(dirtyStart, dirtyEnd);
       }
 
@@ -674,6 +680,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       owner_.invalidateBasePitchCache();
 
       // Mark dirty range for synthesis
+      DBG_P1B("markNote caller=SelectHandler.cpp:677");
       project->markNoteEditDirtyRange(startFrame, endFrame);
 
       // Create undo action
@@ -707,6 +714,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
               {
                 PitchCurveProcessor::rebuildBaseFromNotes(
                     *projectPtr);
+                DBG_P1B("markNote caller=SelectHandler.cpp:710");
                 projectPtr->markNoteEditDirtyRange(capturedStart,
                                                    capturedEnd);
                 if (n)
@@ -868,6 +876,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
                   std::max(maxFrame, note->getEndFrame());
             }
           }
+          DBG_P1B("markNote caller=SelectHandler.cpp:871");
           project->markNoteEditDirtyRange(minFrame, maxFrame);
 
           owner_.updatePitchToolHandlesFromSelection();

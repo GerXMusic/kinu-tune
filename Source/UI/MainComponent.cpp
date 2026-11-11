@@ -1,3 +1,6 @@
+#ifndef DBG_P1B
+#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
+#endif
 #include "Main/DeferredRenderQueue.h"
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
@@ -2103,6 +2106,7 @@ void MainComponent::pollMcpControl()
         else
         {
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          DBG_P1B("markNote caller=MainComponent.cpp:2106");
           project->markNoteEditDirtyRange(minFrame, maxFrame);
           project->setModified(true);
           pianoRoll.repaint();
@@ -3997,18 +4001,6 @@ void MainComponent::resynthesizeIncremental()
 
 // P1b: an edit, an undo, an engine change, an MCP command or DAW automation
 // only marks. The audio is not touched here; the blocks wait for Play.
-#define DBG_P1B(msg)                                                          \
-  do {                                                                        \
-    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
-        .getChildFile("pitchcore_p1b_trace.log")                              \
-        .appendText("[" +                                                      \
-                    juce::Time::getCurrentTime().toString(true, true, true,    \
-                                                           true) +            \
-                    "][tid=" +                                                 \
-                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
-                                                  juce::Thread::getCurrentThreadId()) + \
-                    "] " + juce::String(msg) + "\n");                          \
-  } while (0)
 
 void MainComponent::markRenderDirty()
 {
@@ -4257,6 +4249,7 @@ void MainComponent::onZoomChanged(float pixelsPerSecond)
 
 void MainComponent::notifyProjectDataChanged()
 {
+  DBG_P1B("projectDataChanged reapply=0");
   if (onProjectDataChanged)
     onProjectDataChanged();
 }

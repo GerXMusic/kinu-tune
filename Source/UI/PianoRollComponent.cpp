@@ -1,3 +1,6 @@
+#ifndef DBG_P1B
+#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
+#endif
 #include "PianoRollComponent.h"
 #include <map>
 #include "../Utils/PitchMacroScope.h"
@@ -237,6 +240,7 @@ namespace
       project.setModified(true);
       PitchCurveProcessor::rebuildBaseFromNotes(project);
       // Same range the edit and its undo mark (Project::markNoteEditDirtyRange).
+      DBG_P1B("markNote caller=PianoRollComponent.cpp:240");
       project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
     }
 
@@ -1875,6 +1879,7 @@ void PianoRollComponent::finishTrackGesture()
       }
       if (last < first) continue;
       PitchCurveProcessor::rebuildBaseFromNotes(*target.project);
+      DBG_P1B("markNote caller=PianoRollComponent.cpp:1878");
       target.project->markNoteEditDirtyRange(first, last);
       target.project->setModified(true);
       if (target.project == safe->project) {
@@ -3292,6 +3297,7 @@ void PianoRollComponent::setInspectorEditValue(float value)
   if (inspectorEditParam != InspectorParam::Volume)
   {
     PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
+    DBG_P1B("markNote caller=PianoRollComponent.cpp:3295");
     project->markNoteEditDirtyRange(minFrame, maxFrame);
     invalidateBasePitchCache();
     if (onPitchEdited)
@@ -3364,6 +3370,7 @@ void PianoRollComponent::endInspectorEdit()
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
+  DBG_P1B("markNote caller=PianoRollComponent.cpp:3367");
   project->markNoteEditDirtyRange(minFrame, maxFrame);
   invalidateBasePitchCache();
 
@@ -3705,6 +3712,7 @@ bool PianoRollComponent::shiftNotesBySemitones(
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
     invalidateBasePitchCache();
 
+    DBG_P1B("markNote caller=PianoRollComponent.cpp:3708");
     project->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
 
     if (onPitchEdited)
@@ -3729,6 +3737,7 @@ bool PianoRollComponent::shiftNotesBySemitones(
           for (auto *note : notes)
             if (note)
               note->markSynthDirty();
+          DBG_P1B("markNote caller=PianoRollComponent.cpp:3732");
           projectPtr->markNoteEditDirtyRange(dirtyStartFrame, dirtyEndFrame);
         },
         oldSources, newSources);
@@ -4892,6 +4901,7 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note)
 
   // Always set F0 dirty range for synthesis (needed for undo/redo to trigger
   // resynthesis)
+  DBG_P1B("markNote caller=PianoRollComponent.cpp:4895");
   project->markNoteEditDirtyRange(startFrame, endFrame);
 
   // Trigger repaint

@@ -1,3 +1,6 @@
+#ifndef DBG_P1B
+#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
+#endif
 #include "PitchToolController.h"
 #include "../../Undo/AmplitudeAction.h"
 #include "../../Utils/PitchCurveProcessor.h"
@@ -361,6 +364,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       minFrame = std::min(minFrame, note->getStartFrame());
       maxFrame = std::max(maxFrame, note->getEndFrame());
     }
+    DBG_P1B("markNote caller=PitchToolController.cpp:364");
     project->markNoteEditDirtyRange(minFrame, maxFrame);
   }
 
