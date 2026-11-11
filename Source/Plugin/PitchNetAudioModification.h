@@ -115,6 +115,11 @@ public:
   // MUST NEVER be written to any archive. It is meaningless across runs.
   const juce::String &getLiveKey() const noexcept { return liveKey; }
 
+  // P1b: bloque pendiente de render. Lo marca el editor al editar y lo baja la
+  // publicacion del render; el playback renderer lo usa para no sonar el audio
+  // anterior en el primer Play tras la edicion.
+  std::atomic<bool> renderPending{false};
+
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-152: restored state received for this modification. Diagnostic only;
   // the flag never feeds the audio path.

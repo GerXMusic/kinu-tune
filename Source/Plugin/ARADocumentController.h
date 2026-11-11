@@ -133,6 +133,10 @@ class PitchNetPlaybackRenderer : public juce::ARAPlaybackRenderer {
 public:
   using ARAPlaybackRenderer::ARAPlaybackRenderer;
 
+  // P1b: pestillo de silencio por transicion stop->play con render pendiente.
+  bool previousIsPlaying = false;
+  bool renderMuteLatched = false;
+
   void prepareToPlay(double sampleRateIn, int maxBlockSize, int numChannelsIn,
                      juce::AudioProcessor::ProcessingPrecision,
                      AlwaysNonRealtime alwaysNonRealtime) override;

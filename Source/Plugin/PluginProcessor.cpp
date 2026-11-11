@@ -1660,6 +1660,11 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
           }
         }
 
+        // P1b: el render termino (bien o mal): se levanta el silencio. Si fallo,
+        // vuelve a oirse el audio anterior en lugar de quedar mudo.
+        if (renderModification != nullptr)
+          renderModification->renderPending.store(false,
+                                                  std::memory_order_release);
         if (target != nullptr) {
           if (auto it = araRegions.find(renderRegionKey); it != araRegions.end())
             ++it->second.revision;
@@ -1734,6 +1739,13 @@ void PitchNetAudioProcessor::applySharedDocumentEngine(Project &project) {
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
   applyDocumentSynthesisEngine(project);
+#if JucePlugin_Enable_ARA
+  // P1b: una edicion con bloques sucios deja la region pendiente de render; el
+  // pestillo del playback renderer la silencia en el siguiente Play.
+  if (activeModification != nullptr &&
+      (project.hasDirtyNotes() || project.hasF0DirtyRange()))
+    activeModification->renderPending.store(true, std::memory_order_release);
+#endif
 #if JucePlugin_Enable_ARA
   // D-179: publish the engine to the shared modification so another window
   // switching to this region sees it even if its cached Project is older.
@@ -2161,6 +2173,11 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     trackAnalysisCancelled = false;
     trackAnalysisAttempted.clear();
   }
+#endif
+#if JucePlugin_Enable_ARA
+  // P1b: al cerrar el editor no debe quedar una region muda para siempre.
+  if (mc == nullptr && activeModification != nullptr)
+    activeModification->renderPending.store(false, std::memory_order_release);
 #endif
   if (mainComponent != nullptr && mainComponent != mc) {
     if (auto *project = mainComponent->getProject())
@@ -3109,6 +3126,9 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
         ? getTrackUndoManager(activeUndoTrackKey) : undoManager.get());
   }
 
+  // P1b: al desactivar la region no debe quedar muda para siempre.
+  if (activeModification != nullptr)
+    activeModification->renderPending.store(false, std::memory_order_release);
   activeModification = nullptr;
   activeRegionKey.clear();
   activeRegionSelector.clear();

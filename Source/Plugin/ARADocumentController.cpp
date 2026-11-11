@@ -993,6 +993,32 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
+  // P1b: silencio desde el primer Play tras una edicion, no al editar. El
+  // pestillo se engancha en el borde stop->play y solo en tiempo real.
+  const bool realtimeNow =
+      (realtime == juce::AudioProcessor::Realtime::yes);
+  const bool isPlayingNow = posInfo.getIsPlaying();
+  bool anyPending = false;
+  for (auto *region : getPlaybackRegions())
+    if (auto *mod = region->getAudioModification<PitchNetAudioModification>();
+        mod != nullptr && mod->renderPending.load(std::memory_order_acquire)) {
+      anyPending = true;
+      break;
+    }
+  if (!isPlayingNow) {
+    previousIsPlaying = false;
+    renderMuteLatched = false;
+  } else if (realtimeNow && !previousIsPlaying && anyPending) {
+    renderMuteLatched = true;
+  }
+  if (!anyPending)
+    renderMuteLatched = false;
+  previousIsPlaying = isPlayingNow;
+  if (realtimeNow && renderMuteLatched && anyPending) {
+    buffer.clear();
+    return true;
+  }
+
   auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   bool isPlaying = posInfo.getIsPlaying();
   int numSamples = buffer.getNumSamples();
