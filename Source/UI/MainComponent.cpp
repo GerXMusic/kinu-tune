@@ -1,6 +1,3 @@
-#ifndef DBG_P1B
-#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
-#endif
 #include "Main/DeferredRenderQueue.h"
 #include "MainComponent.h"
 #include "GpuDeviceList.h"
@@ -2106,7 +2103,7 @@ void MainComponent::pollMcpControl()
         else
         {
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
-          DBG_P1B("markNote caller=MainComponent.cpp:2106");
+          
           project->markNoteEditDirtyRange(minFrame, maxFrame);
           project->setModified(true);
           pianoRoll.repaint();
@@ -4009,9 +4006,7 @@ void MainComponent::markRenderDirty()
     return;
 
   const auto range = project->getDirtyFrameRange();
-  DBG_P1B("markRenderDirty this=" +
-          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)project) +
-          " r=" + juce::String(range.first) + "," + juce::String(range.second));
+  
   if (range.first >= 0 && range.second > range.first)
     deferredRenders.markBlock(range.first, range.second);
 
@@ -4053,7 +4048,7 @@ void MainComponent::flushDirtyBlocks()
 bool MainComponent::flushDirtyBlocksForHostPlay()
 {
   auto *project = getProject();
-  DBG_P1B("flushDirty entrance");
+  
   if (project == nullptr || editorController == nullptr)
     return false;
 
@@ -4068,7 +4063,7 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
   // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
   flushResumePosition = lastHostPlaybackSeconds;
-  DBG_P1B("resume pos=" + juce::String(flushResumePosition));
+  
   // P1b: un arrastre pendiente no debe sobrevivir al stop del flush.
   pianoRoll.dropTransientNotePointers();
   if (onRequestHostPlayState)
@@ -4076,9 +4071,7 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
 
   deferredRenderPending = true;
   playAfterFlush = true;
-  DBG_P1B("flush launch id=" +
-          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)this) +
-          " dirty=" + juce::String(deferredRenders.dirtyBlockCount()));
+  
   flushDirtyBlocks();
   if (!flushChainActive)
   {
@@ -4086,10 +4079,7 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
     if (onRequestHostPlayState)
       onRequestHostPlayState(true);
   }
-  DBG_P1B("flush read project=" +
-          juce::String::toHexString((juce::int64)(juce::pointer_sized_int)project) +
-          " dirtyNotes=" + juce::String(project->hasDirtyNotes() ? 1 : 0) +
-          " f0Dirty=" + juce::String(project->hasF0DirtyRange() ? 1 : 0));
+  
   return true;
 }
 
@@ -4250,7 +4240,7 @@ void MainComponent::onZoomChanged(float pixelsPerSecond)
 
 void MainComponent::notifyProjectDataChanged()
 {
-  DBG_P1B("projectDataChanged reapply=0");
+  
   if (onProjectDataChanged)
     onProjectDataChanged();
 }
@@ -4406,8 +4396,7 @@ void MainComponent::finishBackendRender(bool success)
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
                            : ParameterPanel::RenderStatus::Failed);
 
-  DBG_P1B("finishBackendRender success=" + juce::String(success ? 1 : 0) +
-          " chain=" + juce::String(flushChainActive ? 1 : 0));
+  
   // P1b: el flush de Play acabo; se limpian los bloques renderizados (misma
   // operacion que la ruta standalone), se baja la cadena y se arranca.
   if (success && flushChainActive)

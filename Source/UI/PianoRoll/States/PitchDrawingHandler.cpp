@@ -1,6 +1,3 @@
-#ifndef DBG_P1B
-#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
-#endif
 #include "PitchDrawingHandler.h"
 #include "../../../Undo/PitchDrawingAction.h"
 #include "../../../Utils/Constants.h"
@@ -528,7 +525,7 @@ void PitchDrawingHandler::applyPreviewToProject()
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(project);
-  DBG_P1B("markNote caller=PitchDrawingHandler.cpp:528");
+  
   project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
   previewDirtyStart = previewDirtyStart < 0
                           ? dirtyStart
@@ -568,7 +565,7 @@ void PitchDrawingHandler::restoreOriginalNoteStates(bool requestRender)
 
   PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
   if (previewDirtyStart >= 0 && previewDirtyEnd > previewDirtyStart)
-    DBG_P1B("markNote caller=PitchDrawingHandler.cpp:567");
+    
     owner_.project->markNoteEditDirtyRange(previewDirtyStart, previewDirtyEnd);
   owner_.invalidateBasePitchCache();
   if (owner_.onPitchEdited)

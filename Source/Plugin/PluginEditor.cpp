@@ -1783,18 +1783,6 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
   auto safeMain =
       juce::Component::SafePointer<juce::Component>(mainView->getComponent());
 
-#define DBG_P1B(msg)                                                          \
-  do {                                                                        \
-    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
-        .getChildFile("pitchcore_p1b_trace.log")                              \
-        .appendText("[" +                                                      \
-                    juce::Time::getCurrentTime().toString(true, true, true,    \
-                                                           true) +            \
-                    "][tid=" +                                                 \
-                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
-                                                  juce::Thread::getCurrentThreadId()) + \
-                    "] " + juce::String(msg) + "\n");                          \
-  } while (0)
 
   if (includePlayState) {
     audioProcessor.getTransportController().setPlayStateCallback(
@@ -1803,8 +1791,7 @@ void PitchNetAudioProcessorEditor::setupHostTransportUiSync(
           if (!view)
             return;
 
-          DBG_P1B("transport playState=" +
-                  juce::String(isPlaying ? 1 : 0));
+          
           // P1b: los playState que provocan nuestro propio stop/start durante
           // el flush no deben reabrir la cadena.
           if (view->isFlushChainActive())

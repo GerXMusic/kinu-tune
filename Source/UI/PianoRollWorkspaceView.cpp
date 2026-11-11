@@ -1,6 +1,3 @@
-#ifndef DBG_P1B
-#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
-#endif
 #include "PianoRollWorkspaceView.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Constants.h"
@@ -381,7 +378,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
         last = std::max(last, center.note->getEndFrame());
       }
       if (last < first) continue;
-      DBG_P1B("markNote caller=PianoRollWorkspaceView.cpp:381");
+      
       state.target.project->markNoteEditDirtyRange(first, last);
       if (state.target.project == safeThis->pianoRoll.getProject()) {
         if (safeThis->pianoRoll.onPitchEdited) safeThis->pianoRoll.onPitchEdited();
@@ -412,7 +409,7 @@ void PianoRollWorkspaceView::showPitchCenterPopup()
       project->setModified(true);
       if (last >= first) {
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        DBG_P1B("markNote caller=PianoRollWorkspaceView.cpp:411");
+        
         project->markNoteEditDirtyRange(first, last);
       }
       if (project == safeThis->pianoRoll.getProject()) activeChanged = true;

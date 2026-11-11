@@ -1004,15 +1004,6 @@ bool PitchNetPlaybackRenderer::processBlock(
       anyPending = true;
       break;
     }
-  static thread_local bool lastTracedPending = false;
-  if (anyPending != lastTracedPending) {
-    lastTracedPending = anyPending;
-    juce::File::getSpecialLocation(juce::File::tempDirectory)
-        .getChildFile("pitchcore_p1b_trace.log")
-        .appendText(juce::String("[renderer] anyPending=") +
-                    (anyPending ? "1" : "0") + " realtime=" +
-                    (realtimeNow ? "1" : "0") + "\n");
-  }
   if (realtimeNow && anyPending) {
     buffer.clear();
     return true;

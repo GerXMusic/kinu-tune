@@ -1663,7 +1663,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
         // P1b: el render termino (bien o mal): se levanta el silencio. Si fallo,
         // vuelve a oirse el audio anterior en lugar de quedar mudo.
         if (renderModification != nullptr)
-          renderModification->setRenderPending(false, "publish_or_fail");
+          renderModification->renderPending.store(false, std::memory_order_release);
         if (target != nullptr) {
           if (auto it = araRegions.find(renderRegionKey); it != araRegions.end())
             ++it->second.revision;
@@ -1689,20 +1689,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                                             : araAnalysisTimelineOffsetSeconds);
                   view->bindRealtimeProcessor(realtimeProcessor);
                 }
-#define DBG_P1B(msg)                                                          \
-  do {                                                                        \
-    juce::File::getSpecialLocation(juce::File::tempDirectory)                 \
-        .getChildFile("pitchcore_p1b_trace.log")                              \
-        .appendText("[" +                                                      \
-                    juce::Time::getCurrentTime().toString(true, true, true,    \
-                                                           true) +            \
-                    "][tid=" +                                                 \
-                    juce::String::toHexString((juce::int64)(juce::pointer_sized_int) \
-                                                  juce::Thread::getCurrentThreadId()) + \
-                    "] " + juce::String(msg) + "\n");                          \
-  } while (0)
-                DBG_P1B("plugin finishBackendRender success=" +
-                        juce::String(success ? 1 : 0));
+                
                 view->finishBackendRender(success);
                 view->setStatusMessage({});
               } else if (success && !renderActiveAraRegion &&
@@ -1743,7 +1730,7 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
   // pestillo del playback renderer la silencia en el siguiente Play.
   if (activeModification != nullptr &&
       (project.hasDirtyNotes() || project.hasF0DirtyRange()))
-    activeModification->setRenderPending(true, "updateProjectState");
+    activeModification->renderPending.store(true, std::memory_order_release);
 #endif
 #if JucePlugin_Enable_ARA
   // D-179: publish the engine to the shared modification so another window
@@ -2176,7 +2163,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
 #if JucePlugin_Enable_ARA
   // P1b: al cerrar el editor no debe quedar una region muda para siempre.
   if (mc == nullptr && activeModification != nullptr)
-    activeModification->setRenderPending(false, "lifecycle");
+    activeModification->renderPending.store(false, std::memory_order_release);
 #endif
   if (mainComponent != nullptr && mainComponent != mc) {
     if (auto *project = mainComponent->getProject())
@@ -3127,7 +3114,7 @@ void PitchNetAudioProcessor::releaseAraModificationCanvas(
 
   // P1b: al desactivar la region no debe quedar muda para siempre.
   if (activeModification != nullptr)
-    activeModification->setRenderPending(false, "lifecycle");
+    activeModification->renderPending.store(false, std::memory_order_release);
   activeModification = nullptr;
   activeRegionKey.clear();
   activeRegionSelector.clear();

@@ -1,6 +1,3 @@
-#ifndef DBG_P1B
-#define DBG_P1B(msg) juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("pitchcore_p1b_trace.log").appendText("[" + juce::Time::getCurrentTime().toString(true,true,true,true) + "][tid=" + juce::String::toHexString((juce::int64)(juce::pointer_sized_int)juce::Thread::getCurrentThreadId()) + "] " + juce::String(msg) + "\n")
-#endif
 #include "PitchEditor.h"
 #include "../../Utils/ScaleUtils.h"
 #include "../../Utils/NotePitch.h"
@@ -195,7 +192,7 @@ void PitchEditor::endNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    DBG_P1B("markNote caller=PitchEditor.cpp:195");
+    
     project->markNoteEditDirtyRange(startFrame, endFrame);
 
     // Create undo action
@@ -225,7 +222,7 @@ void PitchEditor::endNoteDrag()
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              DBG_P1B("markNote caller=PitchEditor.cpp:224");
+              
               projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
               if (n)
                 n->markSynthDirty();
@@ -405,7 +402,7 @@ void PitchEditor::endMultiNoteDrag()
       onBasePitchCacheInvalidated();
 
     // Mark dirty range
-    DBG_P1B("markNote caller=PitchEditor.cpp:403");
+    
     project->markNoteEditDirtyRange(expandedStart, expandedEnd);
 
     // Create undo action for multi-note drag
@@ -448,7 +445,7 @@ void PitchEditor::endMultiNoteDrag()
             if (projectPtr)
             {
               PitchCurveProcessor::rebuildBaseFromNotes(*projectPtr);
-              DBG_P1B("markNote caller=PitchEditor.cpp:445");
+              
               projectPtr->markNoteEditDirtyRange(capturedStart, capturedEnd);
             }
           },

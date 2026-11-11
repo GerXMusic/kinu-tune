@@ -120,17 +120,6 @@ public:
   // anterior en el primer Play tras la edicion.
   std::atomic<bool> renderPending{false};
 
-  // P1b: escritura con traza temporal (no fusionar).
-  void setRenderPending(bool v, const char *src) {
-    renderPending.store(v, std::memory_order_release);
-    juce::File::getSpecialLocation(juce::File::tempDirectory)
-        .getChildFile("pitchcore_p1b_trace.log")
-        .appendText(juce::String("[P1B] renderPending set=") + (v ? "1" : "0") +
-                    " key=" + getLiveKey() + " ptr=" +
-                    juce::String::toHexString(
-                        (juce::int64)(juce::pointer_sized_int)this) +
-                    " src=" + src + "\n");
-  }
 
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-152: restored state received for this modification. Diagnostic only;
