@@ -4066,10 +4066,11 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
     return false;
 
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
-  // P1b: con bloques sucios se retiene el transporte (stop -> flush -> start),
-  // tambien en plugin; mudear la salida evita oir el audio anterior.
+  // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
   flushResumePosition = lastHostPlaybackSeconds;
   DBG_P1B("resume pos=" + juce::String(flushResumePosition));
+  // P1b: un arrastre pendiente no debe sobrevivir al stop del flush.
+  pianoRoll.dropTransientNotePointers();
   if (onRequestHostPlayState)
     onRequestHostPlayState(false);
 

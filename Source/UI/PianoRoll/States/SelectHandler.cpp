@@ -143,6 +143,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
 
       // Start single note dragging
       isDragging = true;
+      dragStartedByMouseDown = true;
       draggedNote = note;
       owner_.updatePitchToolHandlesFromSelection();
       dragStartY = worldY;
@@ -653,6 +654,16 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   // Single note drag end
   if (isDragging && draggedNote)
   {
+    if (!dragStartedByMouseDown)
+    {
+      // P1b: arrastre que no nacio de un mouse-down en esta secuencia. Se
+      // limpia sin marcar sucio.
+      DBG_P1B("stale drag dropped, no mark");
+      isDragging = false;
+      draggedNote = nullptr;
+      dragStartedByMouseDown = false;
+      return true;
+    }
     float newOffset = draggedNote->getPitchOffset();
 
     // Check if there was any meaningful change
@@ -1160,6 +1171,7 @@ void SelectHandler::cancel()
     restoreDragBasePreview();
     draggedNote->setPitchOffset(0.0f);
     isDragging = false;
+    dragStartedByMouseDown = false;
     draggedNote = nullptr;
     dragPreviewStartFrame = -1;
     dragPreviewEndFrame = -1;

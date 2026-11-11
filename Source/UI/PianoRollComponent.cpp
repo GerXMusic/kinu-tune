@@ -3490,7 +3490,8 @@ void PianoRollComponent::dropTransientNotePointers()
   // committed safely any more (the list may already be rebuilt).
   inspectorEditActive = false;
   inspectorEditNotes.clear();
-  inspectorEditOldParams.clear();
+  if (selectHandler_)
+    selectHandler_->cancel();  inspectorEditOldParams.clear();
   inspectorEditSourceMidi.clear();
   hoveredNote = nullptr;
   if (pitchToolHandles)
