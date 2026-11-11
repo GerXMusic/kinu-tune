@@ -4385,6 +4385,22 @@ void MainComponent::finishBackendRender(bool success)
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done
                            : ParameterPanel::RenderStatus::Failed);
 
+  // P1b: cierre del flush de Play en modo plugin. La cadena standalone cierra
+  // en el callback de resynthesizeIncremental; la de plugin termina aqui.
+  if (flushChainActive)
+  {
+    // El bloque pendiente ya se renderizo: la cola queda vacia y el barrido
+    // pasa a inactivo.
+    deferredRenders.clear();
+    pushSweepState();
+    if (success && playAfterFlush)
+    {
+      playAfterFlush = false;
+      play();
+    }
+    flushChainActive = false;
+  }
+
   if (!success)
     return;
 
