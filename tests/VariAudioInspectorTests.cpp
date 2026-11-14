@@ -164,6 +164,58 @@ int main()
         CHECK(near(f.note(2).getVolumeDb(), 0.0f));
     }
 
+    // --- Transition: one undo step, valid action name ----------------------
+    // Regression: the undo-name table had five entries, so releasing this
+    // slider indexed past it and built the action name from garbage (crash).
+    // D-223: it is the only transition control (Blend was folded into the
+    // engine share). D-225: the value belongs to the union with the NEXT note,
+    // so note 0 (which touches note 1) is the one selected.
+    {
+        Fixture f;
+        f.note(0).setSelected(true); // 0-100, legato into note 1
+
+        f.roll.beginInspectorEdit(Param::Transition);
+        f.roll.setInspectorEditValue(120.0f);
+        f.roll.endInspectorEdit();
+        CHECK(f.note(0).getTransitionOutMs() == 120);
+        CHECK(f.note(1).getTransitionOutMs() == 0); // never the neighbour
+        CHECK(f.history.canUndo());
+        CHECK(f.history.getUndoName() == "Transition");
+        f.history.undo();
+        CHECK(f.note(0).getTransitionOutMs() == 0);
+        CHECK(!f.history.canUndo());
+    }
+
+    // --- D-225: Transition requires a selection -----------------------------
+    // Without a selection the other sliders act on every segment; Transition
+    // must not, or one gesture would rewrite the whole project's unions.
+    {
+        Fixture f;
+        CHECK(!f.roll.getInspectorValue(Param::Transition).has_value());
+        f.roll.beginInspectorEdit(Param::Transition);
+        f.roll.setInspectorEditValue(200.0f);
+        f.roll.endInspectorEdit();
+        for (size_t i = 0; i < 3; ++i)
+            CHECK(f.note(i).getTransitionOutMs() == 0);
+        CHECK(!f.history.canUndo());
+    }
+
+    // --- D-225: split moves the transition to the tail ----------------------
+    // The union with the next note belongs to the second part; the new inner
+    // union (first part -> second part) starts at 0.
+    {
+        Fixture f;
+        f.note(0).setTransitionOutMs(180);
+        NoteSplitter splitter;
+        splitter.setProject(&f.project);
+        CHECK(splitter.splitNoteAtFrame(&f.note(0), 40));
+        CHECK(f.note(0).getEndFrame() == 40);
+        CHECK(f.note(0).getTransitionOutMs() == 0);
+        CHECK(f.note(1).getStartFrame() == 40);
+        CHECK(f.note(1).getEndFrame() == 100);
+        CHECK(f.note(1).getTransitionOutMs() == 180);
+    }
+
     // --- A gesture that changes nothing leaves no undo step -----------------
     {
         Fixture f;

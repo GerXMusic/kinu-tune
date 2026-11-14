@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include <algorithm>
 #include <map>
 #include "../Utils/PitchMacroScope.h"
 #include "../Utils/AppLogger.h"
@@ -3221,6 +3222,13 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
       return note.getFormantShift();
     case InspectorParam::Volume:
       return note.getVolumeDb();
+    case InspectorParam::Transition:
+      // D-225: Transition requires a selection. With nothing selected the
+      // slider shows no value (and is disabled); it never falls back to "all
+      // segments" like the other sliders.
+      if (!note.isSelected())
+        return std::nullopt;
+      return static_cast<float>(note.getTransitionOutMs());
   }
   return std::nullopt;
 }
@@ -3229,6 +3237,18 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
 {
   if (inspectorEditActive)
     endInspectorEdit();
+  // D-225: Transition is the only slider that requires an explicit selection;
+  // without one it must not fall back to "every segment" (that would apply a
+  // gesture to the whole project).
+  if (param == InspectorParam::Transition)
+  {
+    const bool anySelected =
+        project != nullptr &&
+        std::any_of(project->getNotes().begin(), project->getNotes().end(),
+                    [](const Note &note) { return note.isSelected(); });
+    if (!anySelected)
+      return;
+  }
   inspectorEditNotes = getInspectorTargets();
   if (inspectorEditNotes.empty())
     return;
@@ -3283,13 +3303,45 @@ void PianoRollComponent::setInspectorEditValue(float value)
         // Gain is applied to the audio once, on release (AmplitudeAction).
         note->setVolumeDb(value);
         break;
+      case InspectorParam::Transition:
+        note->setTransitionOutMs(juce::roundToInt(value));
+        break;
     }
     note->markDirty();
     minFrame = std::min(minFrame, note->getStartFrame());
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
 
-  if (inspectorEditParam != InspectorParam::Volume)
+  if (inspectorEditParam == InspectorParam::Transition)
+  {
+    // D-225: the transition belongs to the union with the NEXT note. Both
+    // sides must be rebuilt from their source contour before the join
+    // smoother runs; rebuilding only the left note would leave the right
+    // note's old smoothing baked in.
+    std::vector<Note*> affected = inspectorEditNotes;
+    for (auto* note : inspectorEditNotes)
+    {
+      if (note == nullptr)
+        continue;
+      for (auto& candidate : project->getNotes())
+      {
+        if (&candidate == note || candidate.isRest())
+          continue;
+        if (candidate.getStartFrame() == note->getEndFrame())
+        {
+          affected.push_back(&candidate);
+          maxFrame = std::max(maxFrame, candidate.getEndFrame());
+          break;
+        }
+      }
+    }
+    PitchCurveProcessor::rebuildDeltaForNotes(*project, affected);
+    project->markNoteEditDirtyRange(minFrame, maxFrame);
+    invalidateBasePitchCache();
+    if (onPitchEdited)
+      onPitchEdited();
+  }
+  else if (inspectorEditParam != InspectorParam::Volume)
   {
     PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
     project->markNoteEditDirtyRange(minFrame, maxFrame);
@@ -3367,8 +3419,15 @@ void PianoRollComponent::endInspectorEdit()
   project->markNoteEditDirtyRange(minFrame, maxFrame);
   invalidateBasePitchCache();
 
+  // Indexed by InspectorParam: every new parameter must get its name here, or
+  // the cast below reads past the table and the undo action is built from a
+  // garbage pointer (crash on slider release). The static_assert keeps the two
+  // lists in sync at compile time.
   static const char *names[] = {"Correct Pitch", "Flatten Curve", "Pitch Drift",
-                                "Shift Formant", "Change Volume"};
+                                "Shift Formant", "Change Volume", "Transition"};
+  static_assert(sizeof(names) / sizeof(names[0]) ==
+                    static_cast<size_t>(InspectorParam::Transition) + 1,
+                "undo name table out of sync with InspectorParam");
   if (undoManager)
     undoManager->addAction(std::make_unique<InspectorEditAction>(
         project, notes, oldParams, newParams, oldSource, newSource,

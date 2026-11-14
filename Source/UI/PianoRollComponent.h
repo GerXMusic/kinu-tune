@@ -85,7 +85,7 @@ public:
   // Inspector sliders (VariAudio section). They act on the selected
   // segments, or on every segment when nothing is selected; one slider
   // gesture is one undo step.
-  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume };
+  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
   std::vector<Note *> getInspectorTargets() const;
   // Value shown for the first target, or nullopt when there are no targets.
   std::optional<float> getInspectorValue(InspectorParam param) const;

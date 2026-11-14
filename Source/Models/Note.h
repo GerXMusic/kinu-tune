@@ -221,6 +221,17 @@ public:
     void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
     int getSmoothRightFrames() const { return smoothRightFrames; }
     void setSmoothRightFrames(int frames) { smoothRightFrames = frames; }
+    // D-225: length (ms) of the pitch transition out of this note, into the
+    // next one, at a legato union. The selected note owns the union with the
+    // note after it (Melodyne: the control drags the tail of the note).
+    // 0 = the existing fixed join smoother.
+    int getTransitionOutMs() const { return transitionOutMs; }
+    void setTransitionOutMs(int ms)
+    {
+        transitionOutMs = juce::jlimit(0, 250, ms);
+    }
+    // D-223: how much of the transition replaces the natural contour is an
+    // engine law, not a per-note control (Melodyne exposes one duration).
 
     // Delta scale/offset (post-transformation, from delta control handles)
     float getDeltaScale() const { return deltaScale; }
@@ -327,6 +338,7 @@ private:
     float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
+    int transitionOutMs = 0;         // D-225: union transition out to the next note
 
     // Post-transformation scale/offset from delta control handles
     float deltaScale = 1.0f;        // Applied after all other transformations (1.0=unchanged)

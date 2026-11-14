@@ -16,16 +16,16 @@
 // Always-visible inspector on the left of the editor, laid out like the
 // VariAudio section of Cubase's Sample Editor inspector: smart-control and
 // pitch-snap menus, then the segment sliders (Correct Pitch, Flatten Curve,
-// Pitch Drift, Shift Formant, Volume), then the editor scale (root and scale
-// menus), then the harmony buttons. Scrolls vertically when the editor is
-// shorter than the column.
+// Pitch Drift, Shift Formant, Volume, Transition), then the editor scale
+// (root and scale menus), then the harmony buttons. Scrolls vertically when the
+// editor is shorter than the column.
 class VariAudioInspector : public juce::Component, private juce::Timer
 {
 public:
     static constexpr int preferredWidth = 240;
 
     // Slider order matches PianoRollComponent::InspectorParam.
-    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume };
+    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };
 
@@ -133,7 +133,7 @@ private:
     juce::ComboBox engineBox;
     juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
-    std::array<std::unique_ptr<ValueRow>, 5> rows;
+    std::array<std::unique_ptr<ValueRow>, 6> rows;
     bool editingRow = false;
     bool absoluteSelected = true; // Absolute unless the user picks Relative
     juce::Rectangle<int> variAudioCardBounds;

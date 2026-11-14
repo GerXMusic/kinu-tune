@@ -22,7 +22,7 @@ constexpr int kToggleHeight = 24;
 constexpr int kTargetLabelHeight = 18;
 constexpr int kEngineStatusHeight = 32;
 constexpr int kValueRowHeight = 34;
-constexpr int kNumRows = 5;
+constexpr int kNumRows = 6;
 
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
@@ -204,6 +204,9 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::Volume:
             return value <= -59.9 ? juce::String::fromUTF8("-\xe2\x88\x9e dB")
                                   : (value > 0.0 ? "+" : "") + juce::String(value, 1) + " dB";
+        case Param::Transition:
+            return value <= 0.0 ? juce::String("off")
+                                : juce::String(juce::roundToInt(value)) + " ms";
     }
     return {};
 }
@@ -287,6 +290,7 @@ VariAudioInspector::VariAudioInspector()
     rows[2] = std::make_unique<ValueRow>(Param::PitchDrift, 0.0, 100.0, 0.0, 1.0);
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
     rows[4] = std::make_unique<ValueRow>(Param::Volume, -60.0, 12.0, 0.0, 0.1);
+    rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
     for (auto& row : rows)
     {
         auto* r = row.get();
@@ -431,6 +435,9 @@ void VariAudioInspector::refreshLocalisedText()
     rows[2]->caption = TR("inspector.pitch_drift");
     rows[3]->caption = TR("inspector.shift_formant");
     rows[4]->caption = TR("inspector.volume");
+    rows[5]->caption = TR("inspector.transition");
+    // D-225: the control belongs to the union with the next note.
+    rows[5]->setTooltip(TR("inspector.transition_hint"));
     for (auto& row : rows)
         row->repaint();
     refreshFromProject();

@@ -135,6 +135,11 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setFormantShift(note->getFormantShift());
     secondNote.setSmoothLeftFrames(note->getSmoothLeftFrames());
     secondNote.setSmoothRightFrames(note->getSmoothRightFrames());
+    secondNote.setTransitionOutMs(note->getTransitionOutMs());
+    // D-225: the transition belongs to the union with the note on the right,
+    // so the tail keeps the original value and the new inner union (first
+    // part -> second part) starts at 0.
+    note->setTransitionOutMs(0);
     secondNote.setDeltaScale(note->getDeltaScale());
     secondNote.setDeltaOffset(note->getDeltaOffset());
     secondNote.setPitchOffset(0.0f);

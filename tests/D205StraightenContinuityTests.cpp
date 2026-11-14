@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #ifndef M_PI
@@ -180,6 +181,80 @@ Untouched untouched(float factor) {
   return u;
 }
 
+// D-221/D-223: one user control (`Transition`, in ms). The arriving note
+// carries the length; the join smoother widens its window symmetrically around
+// the boundary. The composed target must stay continuous and the correction
+// must not reach past either note nor past the requested half-width.
+struct SlideResult {
+  Metrics metrics;
+  int reachLeft = 0;   // frames with a visible correction, left of the union
+  int reachRight = 0;  // frames with a visible correction, right of the union
+};
+
+SlideResult slidePreview(int slideMs) {
+  Project project = makeProject(60.4f, 61.6f, false);
+  auto &notes = project.getNotes();
+  notes[0].setMidiNoteFromPitchCorrection(60.0f);
+  notes[1].setMidiNoteFromPitchCorrection(62.0f);
+  notes[0].setTransitionOutMs(slideMs);
+  std::vector<Note *> affected{&notes[0], &notes[1]};
+  PitchCurveProcessor::rebuildDeltaForNotes(project, affected);
+
+  const auto f0 = project.getAdjustedF0();
+  const auto &audio = project.getAudioData();
+  SlideResult r;
+  for (int i = kBoundary - 1; i >= 0; --i) {
+    const float base = audio.basePitch[static_cast<size_t>(i)];
+    const float corr = std::fabs(cents(f0[static_cast<size_t>(i)]) -
+                                 cents(midiToFreq(base - 0.50f)));
+    if (corr <= 5.0f) {
+      r.reachLeft = kBoundary - 1 - i;
+      break;
+    }
+  }
+  for (int i = kBoundary; i < kFrames; ++i) {
+    const float base = audio.basePitch[static_cast<size_t>(i)];
+    const float corr = std::fabs(cents(f0[static_cast<size_t>(i)]) -
+                                 cents(midiToFreq(base + 0.50f)));
+    if (corr <= 5.0f) {
+      r.reachRight = i - kBoundary;
+      break;
+    }
+  }
+  r.metrics = measureCurve(project);
+  return r;
+}
+
+// D-223: the share of the ramp over the baseline is an engine constant
+// (kTransitionBlendShare), so the check is the closed form frame by frame, in
+// cents (base + delta is a semitone curve and cents are linear in it):
+//   final = baseline + alpha * (ramp - baseline)
+// with the ramp a smoothstep between the baseline values at the window edges.
+// `continuousDelta` uses a contour that crosses the union smoothly, so the
+// baseline has no audible step and only the ramp term moves.
+struct MixResult {
+  Metrics metrics;
+  std::vector<float> cents;
+};
+
+MixResult mixPreview(int slideMs, bool continuousDelta = false) {
+  Project project = makeProject(60.4f, 61.6f, continuousDelta);
+  auto &notes = project.getNotes();
+  notes[0].setMidiNoteFromPitchCorrection(60.0f);
+  notes[1].setMidiNoteFromPitchCorrection(62.0f);
+  notes[0].setTransitionOutMs(slideMs);
+  std::vector<Note *> affected{&notes[0], &notes[1]};
+  PitchCurveProcessor::rebuildDeltaForNotes(project, affected);
+
+  MixResult r;
+  const auto f0 = project.getAdjustedF0();
+  r.cents.resize(f0.size());
+  for (size_t i = 0; i < f0.size(); ++i)
+    r.cents[i] = cents(f0[i]);
+  r.metrics = measureCurve(project);
+  return r;
+}
+
 } // namespace
 
 int main() {
@@ -215,6 +290,114 @@ int main() {
   CHECK(half.maxDiff <= 0.5f);
   CHECK(half.metrics.jump <= kJumpLimitCents);
   CHECK(half.metrics.slope <= kSlopeLimitCentsPerSample);
+
+  // D-221/D-223: a 200 ms transition is continuous and its correction never
+  // reaches past half the requested length (100 ms ~= 9 frames at 512/44100)
+  // nor past either note. T4: it scales with the request and stays bounded.
+  constexpr int kHalf200Ms = 9;
+  const SlideResult slide200 = slidePreview(200);
+  print("slide 200 ms", slide200.metrics);
+  std::cout << "slide 200 ms: reach=" << slide200.reachLeft << "/"
+            << slide200.reachRight << " frames\n";
+  CHECK(slide200.metrics.jump <= kJumpLimitCents);
+  CHECK(slide200.metrics.slope <= kSlopeLimitCentsPerSample);
+  CHECK(slide200.reachLeft <= kHalf200Ms + 1);
+  CHECK(slide200.reachRight <= kHalf200Ms + 1);
+
+  // A short transition must not reach further than a long one.
+  const SlideResult slide60 = slidePreview(60);
+  std::cout << "slide 60 ms: reach=" << slide60.reachLeft << "/"
+            << slide60.reachRight << " frames\n";
+  CHECK(slide60.metrics.jump <= kJumpLimitCents);
+  CHECK(slide60.reachLeft <= slide200.reachLeft);
+  CHECK(slide60.reachRight <= slide200.reachRight);
+
+  // T1: Transition = 0 is the pre-D-221 curve and leaves no residue. Set a
+  // long transition on the same project, rebuild, reset to 0 and rebuild: the
+  // result must equal a fresh Transition = 0 project.
+  const MixResult baseline = mixPreview(0);
+  CHECK(baseline.metrics.jump <= kJumpLimitCents);
+  CHECK(baseline.metrics.slope <= kSlopeLimitCentsPerSample);
+  {
+    Project p = makeProject(60.4f, 61.6f, false);
+    auto &notes = p.getNotes();
+    notes[0].setMidiNoteFromPitchCorrection(60.0f);
+    notes[1].setMidiNoteFromPitchCorrection(62.0f);
+    std::vector<Note *> affected{&notes[0], &notes[1]};
+    notes[0].setTransitionOutMs(200);
+    PitchCurveProcessor::rebuildDeltaForNotes(p, affected);
+    notes[0].setTransitionOutMs(0);
+    PitchCurveProcessor::rebuildDeltaForNotes(p, affected);
+    const auto f0 = p.getAdjustedF0();
+    float worstReset = 0.0f;
+    for (size_t i = 0; i < f0.size(); ++i)
+      worstReset = std::max(worstReset,
+                            std::fabs(cents(f0[i]) - baseline.cents[i]));
+    std::cout << "transition 0 after 200: deviation=" << worstReset << " c\n";
+    CHECK(worstReset <= 0.001f);
+  }
+
+  // T2/T3: 200 ms keeps the D-205 continuity and matches the closed form.
+  const MixResult mix200 = mixPreview(200);
+  print("transition 200 ms", mix200.metrics);
+  CHECK(mix200.metrics.jump <= kJumpLimitCents);
+  CHECK(mix200.metrics.slope <= kSlopeLimitCentsPerSample);
+
+  constexpr float kAlpha = PitchCurveProcessor::kTransitionBlendShare;
+  const int first = kBoundary - kHalf200Ms;
+  const int last = kBoundary + kHalf200Ms;
+  const float fromCents = baseline.cents[static_cast<size_t>(first)];
+  const float toCents = baseline.cents[static_cast<size_t>(last)];
+  const double span = static_cast<double>(last - first);
+  float worstFormula = 0.0f;
+  for (int frame = first; frame <= last; ++frame)
+  {
+    const double t = static_cast<double>(frame - first) / span;
+    const double s = t * t * (3.0 - 2.0 * t);
+    const float ramp =
+        fromCents + static_cast<float>(toCents - fromCents) * static_cast<float>(s);
+    const float base = baseline.cents[static_cast<size_t>(frame)];
+    const float expected = base + kAlpha * (ramp - base);
+    worstFormula = std::max(
+        worstFormula, std::fabs(mix200.cents[static_cast<size_t>(frame)] - expected));
+  }
+  std::cout << "transition 200 ms: closed-form deviation=" << worstFormula
+            << " c\n";
+  CHECK(worstFormula <= 0.001f);
+
+  // Outside the window nothing moves: the baseline is untouched.
+  float worstOutside = 0.0f;
+  for (int frame = 0; frame < kFrames; ++frame)
+    if (frame < first || frame > last)
+      worstOutside = std::max(
+          worstOutside, std::fabs(mix200.cents[static_cast<size_t>(frame)] -
+                                  baseline.cents[static_cast<size_t>(frame)]));
+  std::cout << "transition 200 ms: outside-window deviation=" << worstOutside
+            << " c\n";
+  CHECK(worstOutside <= 0.001f);
+
+  // With a continuous contour the same closed form holds: the share is the
+  // ramp's, so the natural contour keeps (1 - alpha) of itself.
+  const MixResult contourBase = mixPreview(0, true);
+  const MixResult contour200 = mixPreview(200, true);
+  const float fromContour = contourBase.cents[static_cast<size_t>(first)];
+  const float toContour = contourBase.cents[static_cast<size_t>(last)];
+  float worstContour = 0.0f;
+  for (int frame = first; frame <= last; ++frame)
+  {
+    const double t = static_cast<double>(frame - first) / span;
+    const double s = t * t * (3.0 - 2.0 * t);
+    const float ramp = fromContour + static_cast<float>(toContour - fromContour) *
+                                         static_cast<float>(s);
+    const float base = contourBase.cents[static_cast<size_t>(frame)];
+    const float expected = base + kAlpha * (ramp - base);
+    worstContour = std::max(
+        worstContour, std::fabs(contour200.cents[static_cast<size_t>(frame)] - expected));
+  }
+  std::cout << "transition 200 ms (contour): closed-form deviation="
+            << worstContour << " c\n";
+  CHECK(worstContour <= 0.001f);
+  CHECK(contour200.metrics.jump <= kJumpLimitCents);
 
   std::cout << "D205StraightenContinuityTests: all checks passed\n";
   return 0;

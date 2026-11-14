@@ -178,15 +178,39 @@ namespace
     // stays bit-identical and the D-182 glide is not modified.
     constexpr double kDeltaJoinWindowSec = 0.080;
     constexpr float kDeltaJoinMinStepCents = 60.0f;
+    // D-223/D-224: share of the D-221 ramp over the D-205 baseline. Melodyne
+    // exposes one control (a duration) and keeps the mix internal; the value
+    // lives in the header so the regression test reads the same number.
 
-    void applyDeltaJoinContinuity(Project& project, int totalFrames,
-                                  int rangeStart = 0, int rangeEnd = -1)
+    // D-225: one legato union of the canonical layout. The windows are fixed
+    // by the union itself (the two note lengths and the left note's
+    // transitionOutMs); no other union, and no rebuild range, can change them.
+    struct DeltaJoin
     {
-        auto& audioData = project.getAudioData();
-        if (totalFrames <= 0 ||
-            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
-            return;
+        int boundary = 0;
+        int transitionMs = 0;
+        bool oldAudible = false;
+        float step = 0.0f;
+        // D-205 baseline: fixed 80 ms cosine around the boundary.
+        int pass1First = 0;
+        int pass1Last = 0;
+        // D-221/D-223 user transition: half on each side of the boundary.
+        int half = 0;
+        int first = 0;
+        int last = 0;
 
+        int windowFirst() const
+        {
+            return transitionMs > 0 ? std::min(pass1First, first) : pass1First;
+        }
+        int windowLast() const
+        {
+            return transitionMs > 0 ? std::max(pass1Last, last) : pass1Last;
+        }
+    };
+
+    std::vector<const Note*> collectOrderedNotes(const Project& project)
+    {
         std::vector<const Note*> ordered;
         ordered.reserve(project.getNotes().size());
         for (const auto& note : project.getNotes())
@@ -198,12 +222,30 @@ namespace
                           return a->getStartFrame() < b->getStartFrame();
                       return a->getEndFrame() < b->getEndFrame();
                   });
+        return ordered;
+    }
 
-        struct Join {
-            int boundary;
-            float step;
-        };
-        std::vector<Join> joins;
+    int deltaJoinBaseHalf(double hopSec)
+    {
+        return std::max(
+            1, static_cast<int>(std::lround(0.5 * kDeltaJoinWindowSec / hopSec)));
+    }
+
+    // D-225: the canonical join layout. Note lengths and the left note's
+    // transition define the window:
+    //   userHalf = round(0.5 * transitionOutMs / hop)
+    //   noteHalf = max(1, floor(min(lenLeft, lenRight) / 2))
+    //   half     = min(userHalf, noteHalf)
+    // Each side stops at half the shorter note, so the whole window never
+    // passes that note's midpoint from the boundary and two contiguous unions
+    // can touch at the midpoint but never overlap. `step` and `oldAudible` are
+    // sampled from the delta as it is when the layout is built (before pass 1).
+    std::vector<DeltaJoin> buildDeltaJoins(
+        const std::vector<const Note*>& ordered,
+        const std::vector<float>& deltaPitch, int totalFrames, double hopSec)
+    {
+        std::vector<DeltaJoin> joins;
+        const int baseHalf = deltaJoinBaseHalf(hopSec);
         for (size_t i = 1; i < ordered.size(); ++i)
         {
             if (ordered[i]->getStartFrame() != ordered[i - 1]->getEndFrame())
@@ -211,28 +253,118 @@ namespace
             const int boundary = ordered[i]->getStartFrame();
             if (boundary <= 0 || boundary >= totalFrames)
                 continue;
-            if (rangeEnd >= 0 && (boundary < rangeStart || boundary >= rangeEnd))
-                continue;
-            const float step =
-                audioData.deltaPitch[static_cast<size_t>(boundary)] -
-                audioData.deltaPitch[static_cast<size_t>(boundary - 1)];
-            if (std::abs(step) * 100.0f < kDeltaJoinMinStepCents)
-                continue;
-            joins.push_back({boundary, step});
+
+            DeltaJoin join;
+            join.boundary = boundary;
+            join.transitionMs = ordered[i - 1]->getTransitionOutMs();
+            join.step =
+                deltaPitch[static_cast<size_t>(boundary)] -
+                deltaPitch[static_cast<size_t>(boundary - 1)];
+            join.oldAudible =
+                std::abs(join.step) * 100.0f >= kDeltaJoinMinStepCents;
+            join.pass1First = std::max(0, boundary - baseHalf);
+            join.pass1Last = std::min(totalFrames - 1, boundary + baseHalf);
+
+            if (join.transitionMs > 0)
+            {
+                const int lenLeft =
+                    ordered[i - 1]->getEndFrame() - ordered[i - 1]->getStartFrame();
+                const int lenRight = ordered[i]->getEndFrame() - boundary;
+                const int userHalf = std::max(
+                    1, static_cast<int>(std::lround(
+                           0.5 * (static_cast<double>(join.transitionMs) / 1000.0) /
+                           hopSec)));
+                const int noteHalf =
+                    std::max(1, std::min(lenLeft, lenRight) / 2);
+                join.half = std::min(userHalf, noteHalf);
+                join.first = std::max(0, boundary - join.half);
+                join.last = std::min(totalFrames - 1, boundary + join.half);
+            }
+            joins.push_back(join);
         }
-        if (joins.empty())
+        return joins;
+    }
+
+    // D-225: the partial rebuild computes only the joins the global rebuild
+    // computes, so its window must contain every join window that crosses it.
+    // The expansion is clamped to [lo, hi] (the padded range), so a partial
+    // rebuild never writes outside it.
+    void expandRangeForJoins(const std::vector<DeltaJoin>& joins, int lo, int hi,
+                             int& start, int& end)
+    {
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (const auto& join : joins)
+            {
+                const int first = join.windowFirst();
+                const int last = join.windowLast();
+                if (last < start || first >= end)
+                    continue;
+                if (first < start)
+                {
+                    const int next = std::max(lo, first);
+                    if (next < start)
+                    {
+                        start = next;
+                        changed = true;
+                    }
+                }
+                if (last + 1 > end)
+                {
+                    const int next = std::min(hi, last + 1);
+                    if (next > end)
+                    {
+                        end = next;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    bool joinWindowInside(const DeltaJoin& join, int rangeStart, int rangeEnd)
+    {
+        return join.windowFirst() >= rangeStart && join.windowLast() < rangeEnd;
+    }
+
+    void applyDeltaJoinContinuity(Project& project, int totalFrames,
+                                  int rangeStart = 0, int rangeEnd = -1)
+    {
+        auto& audioData = project.getAudioData();
+        if (totalFrames <= 0 ||
+            static_cast<int>(audioData.deltaPitch.size()) < totalFrames ||
+            // D-222 pass 2 reads basePitch as well; guard it so a partially
+            // built curve can never be indexed out of bounds.
+            static_cast<int>(audioData.basePitch.size()) < totalFrames)
             return;
+
+        if (rangeEnd < 0 || rangeEnd > totalFrames)
+            rangeEnd = totalFrames;
+        if (rangeStart < 0)
+            rangeStart = 0;
 
         const double hopSec =
             static_cast<double>(HOP_SIZE) /
             static_cast<double>(std::max(1, audioData.sampleRate));
-        const int halfFrames = std::max(
-            1, static_cast<int>(std::lround(0.5 * kDeltaJoinWindowSec / hopSec)));
+        const auto ordered = collectOrderedNotes(project);
+        const auto joins =
+            buildDeltaJoins(ordered, audioData.deltaPitch, totalFrames, hopSec);
+        if (joins.empty())
+            return;
 
+        // D-222 pass 1: the current join smoothing (80 ms cosine, only for
+        // audible delta steps). This is exactly what the product did before
+        // the user transition and is the baseline the blend mixes against.
         for (const auto& join : joins)
         {
-            const int first = std::max(0, join.boundary - halfFrames);
-            const int last = std::min(totalFrames - 1, join.boundary + halfFrames);
+            if (!join.oldAudible ||
+                !joinWindowInside(join, rangeStart, rangeEnd))
+                continue;
+            const int halfFrames = deltaJoinBaseHalf(hopSec);
+            const int first = join.pass1First;
+            const int last = join.pass1Last;
             const double span = static_cast<double>(2 * halfFrames);
             for (int frame = first; frame <= last; ++frame)
             {
@@ -247,6 +379,76 @@ namespace
                     value -= static_cast<float>(join.step * (1.0 - w));
             }
         }
+
+        // D-222/D-223 pass 2: blend the requested smoothstep with the baseline
+        // using the fixed engine share.
+        // The ramp endpoints are the baseline values at the window edges, so
+        // the curve is continuous for every blend and the blend never moves
+        // those edges. alpha = 0 leaves the baseline untouched (pass 1),
+        // alpha = 1 replaces the window with the v3 ramp.
+        for (const auto& join : joins)
+        {
+            if (join.transitionMs <= 0 ||
+                !joinWindowInside(join, rangeStart, rangeEnd))
+                continue;
+            const int first = join.first;
+            const int last = join.last;
+            if (first >= last)
+                continue;
+            const float fromTarget =
+                audioData.basePitch[static_cast<size_t>(first)] +
+                audioData.deltaPitch[static_cast<size_t>(first)];
+            const float toTarget =
+                audioData.basePitch[static_cast<size_t>(last)] +
+                audioData.deltaPitch[static_cast<size_t>(last)];
+            if (fromTarget <= 0.0f || toTarget <= 0.0f)
+                continue;
+            const double span = static_cast<double>(last - first);
+            const float alpha = PitchCurveProcessor::kTransitionBlendShare;
+            for (int frame = first; frame <= last; ++frame)
+            {
+                const double t = std::clamp(
+                    static_cast<double>(frame - first) / span, 0.0, 1.0);
+                const double s = t * t * (3.0 - 2.0 * t); // smoothstep
+                const float base =
+                    audioData.basePitch[static_cast<size_t>(frame)];
+                if (base <= 0.0f)
+                    continue;
+                const float baseline =
+                    base + audioData.deltaPitch[static_cast<size_t>(frame)];
+                const float ramp =
+                    fromTarget +
+                    static_cast<float>(toTarget - fromTarget) * static_cast<float>(s);
+                const float target = baseline + alpha * (ramp - baseline);
+                audioData.deltaPitch[static_cast<size_t>(frame)] = target - base;
+            }
+        }
+    }
+
+    // D-225: frames covered by a user transition. The D-182 glide must not
+    // overwrite them (the user's transition wins).
+    std::vector<uint8_t> transitionWindowMask(const Project& project,
+                                              int totalFrames)
+    {
+        std::vector<uint8_t> mask(static_cast<size_t>(std::max(0, totalFrames)), 0);
+        const auto& audioData = project.getAudioData();
+        if (totalFrames <= 0 ||
+            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
+            return mask;
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const auto ordered = collectOrderedNotes(project);
+        const auto joins =
+            buildDeltaJoins(ordered, audioData.deltaPitch, totalFrames, hopSec);
+        for (const auto& join : joins)
+        {
+            if (join.transitionMs <= 0 || join.last <= join.first)
+                continue;
+            for (int frame = join.first; frame <= join.last; ++frame)
+                mask[static_cast<size_t>(frame)] = 1;
+        }
+        return mask;
     }
 
     // D-189: rangeStart/rangeEnd limit which boundaries are re-smoothed. The
@@ -355,10 +557,16 @@ namespace
             }
         }
 
+        // D-225: the user's transition wins over the D-182 glide; do not
+        // overwrite frames covered by an active transition window.
+        const auto transitionMask = transitionWindowMask(project, totalFrames);
         for (int frame = 0; frame < totalFrames; ++frame)
         {
             const float w = blend[static_cast<size_t>(frame)];
             if (w <= 0.0f || !valid[static_cast<size_t>(frame)])
+                continue;
+            if (frame < static_cast<int>(transitionMask.size()) &&
+                transitionMask[static_cast<size_t>(frame)] != 0)
                 continue;
             const float sourceMidi =
                 freqToMidi(audioData.denseF0[static_cast<size_t>(frame)]);
@@ -549,6 +757,79 @@ namespace PitchCurveProcessor
         return one;
     }
 
+    // D-225: write each note's transformed delta into [rangeStart, rangeEnd)
+    // only. The global rebuild passes the whole file; the partial rebuilds pass
+    // their expanded window, so a note that merely overlaps the window is not
+    // rewritten outside it.
+    namespace
+    {
+        void writeNoteDeltas(Project& project, int totalFrames, int rangeStart,
+                             int rangeEnd)
+        {
+            auto& audioData = project.getAudioData();
+            const auto& allNotes = project.getNotes();
+            for (const auto& note : allNotes)
+            {
+                if (note.isRest())
+                    continue;
+
+                // A committed baked contour overrides the immutable analysis
+                // contour. Legacy projects may only have deltaPitch.
+                const auto& rawSourceData = sourceDeltaFor(note);
+                if (rawSourceData.empty())
+                    continue;
+
+                const int startFrame = note.getStartFrame();
+                const int endFrame = note.getEndFrame();
+                const int numFrames = endFrame - startFrame;
+                if (numFrames <= 0)
+                    continue;
+
+                // Resample stored delta to match the current output frame count.
+                std::vector<float> resampledBuf;
+                const std::vector<float>* sourceDataPtr = &rawSourceData;
+                if (static_cast<int>(rawSourceData.size()) != numFrames)
+                {
+                    resampledBuf =
+                        CurveResampler::resampleLinear(rawSourceData, numFrames);
+                    sourceDataPtr = &resampledBuf;
+                }
+                const auto& sourceData = *sourceDataPtr;
+
+                auto adjacentContext = buildAdjacentContext(allNotes, note);
+
+                std::vector<float> transformedDelta =
+                    PitchToolOperations::applyAllTransformations(
+                        sourceData, note.getTiltLeft(), note.getTiltRight(),
+                        note.getVibrato(), note.getSmoothLeftFrames(),
+                        note.getSmoothRightFrames(), adjacentContext,
+                        note.getPitchDrift());
+
+                const float dScale = note.getDeltaScale();
+                const float dOffset = note.getDeltaOffset();
+                if (std::abs(dScale - 1.0f) > 0.0001f ||
+                    std::abs(dOffset) > 0.0001f)
+                {
+                    for (auto& v : transformedDelta)
+                        v = v * dScale + dOffset;
+                }
+
+                for (int i = 0;
+                     i < numFrames && i < static_cast<int>(transformedDelta.size());
+                     ++i)
+                {
+                    const int globalIdx = startFrame + i;
+                    if (globalIdx < 0 || globalIdx >= totalFrames)
+                        continue;
+                    if (globalIdx < rangeStart || globalIdx >= rangeEnd)
+                        continue;
+                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] =
+                        transformedDelta[static_cast<size_t>(i)];
+                }
+            }
+        }
+    } // namespace
+
     void rebuildBaseFromNotes(Project& project)
     {
         auto& audioData = project.getAudioData();
@@ -569,67 +850,10 @@ namespace PitchCurveProcessor
         // CRITICAL: Rebuild deltaPitch from Note objects NON-DESTRUCTIVELY
         // Clear global deltaPitch first
         audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
-        
-        // Composite each note's deltaPitch curve (WITH transformations applied) into audioData.deltaPitch
-        const auto& allNotes = project.getNotes();
-        for (const auto& note : allNotes)
-        {
-            if (note.isRest())
-                continue;
-                
-            // A committed baked contour overrides the immutable analysis
-            // contour. Legacy projects may only have deltaPitch.
-            const auto& rawSourceData = sourceDeltaFor(note);
-            if (rawSourceData.empty())
-                continue;
 
-            const int startFrame = note.getStartFrame();
-            const int endFrame = note.getEndFrame();
-            const int numFrames = endFrame - startFrame;
-            if (numFrames <= 0)
-                continue;
-
-            // Resample stored delta to match the current output frame count.
-            std::vector<float> resampledBuf;
-            const std::vector<float>* sourceDataPtr = &rawSourceData;
-            if (static_cast<int>(rawSourceData.size()) != numFrames)
-            {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
-                sourceDataPtr = &resampledBuf;
-            }
-            const auto& sourceData = *sourceDataPtr;
-            
-            // Build adjacent note context
-            auto adjacentContext = buildAdjacentContext(allNotes, note);
-            
-            // Apply all transformation parameters NON-DESTRUCTIVELY
-            std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
-                sourceData,
-                note.getTiltLeft(),
-                note.getTiltRight(),
-                note.getVibrato(),
-                note.getSmoothLeftFrames(),
-                note.getSmoothRightFrames(),
-                adjacentContext,
-                note.getPitchDrift()
-            );
-
-            // Apply per-note delta scale/offset (from delta control handles)
-            const float dScale = note.getDeltaScale();
-            const float dOffset = note.getDeltaOffset();
-            if (std::abs(dScale - 1.0f) > 0.0001f || std::abs(dOffset) > 0.0001f)
-            {
-                for (auto& v : transformedDelta)
-                    v = v * dScale + dOffset;
-            }
-            
-            for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
-            {
-                const int globalIdx = startFrame + i;
-                if (globalIdx >= 0 && globalIdx < totalFrames)
-                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
-            }
-        }
+        // Composite each note's deltaPitch curve (WITH transformations applied)
+        // into audioData.deltaPitch.
+        writeNoteDeltas(project, totalFrames, 0, totalFrames);
 
         // D-205: make the composed delta continuous at contiguous joins.
         applyDeltaJoinContinuity(project, totalFrames);
@@ -685,73 +909,29 @@ namespace PitchCurveProcessor
         constexpr int kGlidePadFrames = 32;
         minFrame = std::max(0, minFrame - kGlidePadFrames);
         maxFrame = std::min(totalFrames, maxFrame + kGlidePadFrames);
+
+        // D-225: the D-205 pass 1 and the user transition windows can reach
+        // past the padded range, so it is expanded until it contains every
+        // join window that crosses it. The expansion is clamped to the padded
+        // range, so nothing outside it is written.
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const auto orderedNow = collectOrderedNotes(project);
+        const auto layout = buildDeltaJoins(orderedNow, audioData.deltaPitch,
+                                            totalFrames, hopSec);
+        const int padStart = minFrame;
+        const int padEnd = maxFrame;
+        int windowStart = padStart;
+        int windowEnd = padEnd;
+        expandRangeForJoins(layout, padStart, padEnd, windowStart, windowEnd);
+        minFrame = windowStart;
+        maxFrame = windowEnd;
+
         for (int i = minFrame; i < maxFrame; ++i)
             audioData.deltaPitch[static_cast<size_t>(i)] = 0.0f;
 
-        auto& allNotes = project.getNotes();
-        std::vector<Note*> notesToWrite;
-        notesToWrite.reserve(allNotes.size());
-        for (auto& candidate : allNotes)
-        {
-            if (candidate.isRest())
-                continue;
-            if (candidate.getEndFrame() <= minFrame ||
-                candidate.getStartFrame() >= maxFrame)
-                continue;
-            notesToWrite.push_back(&candidate);
-        }
-        for (auto* note : notesToWrite)
-        {
-            if (!note || note->isRest())
-                continue;
-
-            const auto& rawSourceData = sourceDeltaFor(*note);
-            if (rawSourceData.empty())
-                continue;
-
-            const int startFrame = note->getStartFrame();
-            const int endFrame = note->getEndFrame();
-            const int numFrames = endFrame - startFrame;
-            if (numFrames <= 0)
-                continue;
-
-            std::vector<float> resampledBuf;
-            const std::vector<float>* sourceDataPtr = &rawSourceData;
-            if (static_cast<int>(rawSourceData.size()) != numFrames)
-            {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
-                sourceDataPtr = &resampledBuf;
-            }
-            const auto& sourceData = *sourceDataPtr;
-
-            auto adjacentContext = buildAdjacentContext(allNotes, *note);
-
-            std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
-                sourceData,
-                note->getTiltLeft(),
-                note->getTiltRight(),
-                note->getVibrato(),
-                note->getSmoothLeftFrames(),
-                note->getSmoothRightFrames(),
-                adjacentContext,
-                note->getPitchDrift()
-            );
-
-            const float dScale = note->getDeltaScale();
-            const float dOffset = note->getDeltaOffset();
-            if (std::abs(dScale - 1.0f) > 0.0001f || std::abs(dOffset) > 0.0001f)
-            {
-                for (auto& v : transformedDelta)
-                    v = v * dScale + dOffset;
-            }
-
-            for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
-            {
-                const int globalIdx = startFrame + i;
-                if (globalIdx >= 0 && globalIdx < totalFrames)
-                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
-            }
-        }
+        writeNoteDeltas(project, totalFrames, minFrame, maxFrame);
 
         // D-205: same join continuity inside the rebuilt window.
         applyDeltaJoinContinuity(project, totalFrames, minFrame, maxFrame);
@@ -783,7 +963,6 @@ namespace PitchCurveProcessor
         if (totalFrames <= 0 || affectedNotes.empty())
             return;
 
-        auto& allNotes = project.getNotes();
         int minAffectedFrame = totalFrames;
         int maxAffectedFrame = 0;
 
@@ -803,94 +982,42 @@ namespace PitchCurveProcessor
         // values: the drag drifted and the commit recalculated a different
         // curve. Rebuild every note that overlaps the glide window (D-183).
         constexpr int kGlidePadFrames = 32;
-        minAffectedFrame = std::max(0, minAffectedFrame - kGlidePadFrames);
-        maxAffectedFrame = std::min(totalFrames, maxAffectedFrame + kGlidePadFrames);
-        for (int i = minAffectedFrame; i < maxAffectedFrame; ++i)
+        const int padStart = std::max(0, minAffectedFrame - kGlidePadFrames);
+        const int padEnd = std::min(totalFrames, maxAffectedFrame + kGlidePadFrames);
+
+        // D-225: preview must compute exactly the joins the commit computes in
+        // this window. The window is expanded (inside the padded range) until
+        // it contains every D-205 pass-1 and transition window that crosses
+        // it, then notes are written clipped to it: no frame outside the
+        // padded range changes.
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const auto orderedNow = collectOrderedNotes(project);
+        const auto layout = buildDeltaJoins(orderedNow, audioData.deltaPitch,
+                                            totalFrames, hopSec);
+        int windowStart = padStart;
+        int windowEnd = padEnd;
+        expandRangeForJoins(layout, padStart, padEnd, windowStart, windowEnd);
+
+        for (int i = windowStart; i < windowEnd; ++i)
             audioData.deltaPitch[static_cast<size_t>(i)] = 0.0f;
 
-        std::vector<Note*> notesToWrite;
-        notesToWrite.reserve(allNotes.size());
-        for (auto& candidate : allNotes)
-        {
-            if (candidate.isRest())
-                continue;
-            if (candidate.getEndFrame() <= minAffectedFrame ||
-                candidate.getStartFrame() >= maxAffectedFrame)
-                continue;
-            notesToWrite.push_back(&candidate);
-        }
+        writeNoteDeltas(project, totalFrames, windowStart, windowEnd);
 
-        for (auto* note : notesToWrite)
-        {
-            if (!note || note->isRest())
-                continue;
-
-            const auto& rawSourceData = sourceDeltaFor(*note);
-            if (rawSourceData.empty())
-                continue;
-
-            const int startFrame = note->getStartFrame();
-            const int endFrame = note->getEndFrame();
-            const int numFrames = endFrame - startFrame;
-            if (numFrames <= 0)
-                continue;
-
-            // Resample stored delta to match the current output frame count.
-            std::vector<float> resampledBuf;
-            const std::vector<float>* sourceDataPtr = &rawSourceData;
-            if (static_cast<int>(rawSourceData.size()) != numFrames)
-            {
-                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
-                sourceDataPtr = &resampledBuf;
-            }
-            const auto& sourceData = *sourceDataPtr;
-
-            // Build adjacent note context
-            auto adjacentContext = buildAdjacentContext(allNotes, *note);
-
-            std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
-                sourceData,
-                note->getTiltLeft(),
-                note->getTiltRight(),
-                note->getVibrato(),
-                note->getSmoothLeftFrames(),
-                note->getSmoothRightFrames(),
-                adjacentContext,
-                note->getPitchDrift()
-            );
-
-            // Apply per-note delta scale/offset
-            const float dScale = note->getDeltaScale();
-            const float dOffset = note->getDeltaOffset();
-            if (std::abs(dScale - 1.0f) > 0.0001f || std::abs(dOffset) > 0.0001f)
-            {
-                for (auto& v : transformedDelta)
-                    v = v * dScale + dOffset;
-            }
-
-            for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
-            {
-                const int globalIdx = startFrame + i;
-                if (globalIdx >= 0 && globalIdx < totalFrames)
-                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
-            }
-        }
-
-        // D-205: same join continuity inside the rebuilt window.
-        applyDeltaJoinContinuity(project, totalFrames, minAffectedFrame,
-                                 maxAffectedFrame);
+        // D-205: same join continuity, over the same canonical layout as the
+        // commit path.
+        applyDeltaJoinContinuity(project, totalFrames, windowStart, windowEnd);
 
         // D-182: an edited boundary can smooth the delta a little past the
         // affected notes, so recompose with padding. D-189 limits the glide to
         // this rebuilt window so the preview is idempotent.
-        applyEditedBoundaryGlide(project, totalFrames, minAffectedFrame,
-                                 maxAffectedFrame);
+        applyEditedBoundaryGlide(project, totalFrames, windowStart, windowEnd);
 
-        // Recompose f0 only for affected range
-        if (minAffectedFrame < maxAffectedFrame)
+        // Recompose f0 only for the rebuilt window.
         {
-            const int rangeStart = std::max(0, minAffectedFrame - 32);
-            const int rangeEnd = std::min(totalFrames, maxAffectedFrame + 32);
+            const int rangeStart = std::max(0, windowStart - 32);
+            const int rangeEnd = std::min(totalFrames, windowEnd + 32);
             for (int i = rangeStart; i < rangeEnd; ++i)
             {
                 const float base = audioData.basePitch[static_cast<size_t>(i)];

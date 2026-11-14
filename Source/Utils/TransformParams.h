@@ -17,6 +17,7 @@ struct TransformParams
     float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;
     int smoothRightFrames = 0;
+    int transitionOutMs = 0;
     float midiNote = 0.0f;
     float deltaScale = 1.0f;
     float deltaOffset = 0.0f;
@@ -37,6 +38,7 @@ struct TransformParams
         p.pitchDrift = note.getPitchDrift();
         p.smoothLeftFrames = note.getSmoothLeftFrames();
         p.smoothRightFrames = note.getSmoothRightFrames();
+        p.transitionOutMs = note.getTransitionOutMs();
         p.midiNote = note.getMidiNote();
         p.deltaScale = note.getDeltaScale();
         p.deltaOffset = note.getDeltaOffset();
@@ -56,6 +58,7 @@ struct TransformParams
         note.setVolumeDb(volumeDb);
         note.setSmoothLeftFrames(smoothLeftFrames);
         note.setSmoothRightFrames(smoothRightFrames);
+        note.setTransitionOutMs(transitionOutMs);
         note.setDeltaScale(deltaScale);
         note.setDeltaOffset(deltaOffset);
     }
@@ -70,6 +73,7 @@ struct TransformParams
                pitchDrift == other.pitchDrift &&
                smoothLeftFrames == other.smoothLeftFrames &&
                smoothRightFrames == other.smoothRightFrames &&
+               transitionOutMs == other.transitionOutMs &&
                midiNote == other.midiNote &&
                deltaScale == other.deltaScale &&
                deltaOffset == other.deltaOffset &&
@@ -91,6 +95,7 @@ struct TransformParams
                pitchDrift == 1.0f &&
                smoothLeftFrames == 0 &&
                smoothRightFrames == 0 &&
+               transitionOutMs == 0 &&
                deltaScale == 1.0f &&
                deltaOffset == 0.0f;
     }

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace
 {
@@ -17,6 +18,73 @@ constexpr int kProjectArchiveVersion = 10;
 constexpr int kProjectArchiveHasOriginalWaveform = 1 << 0;
 constexpr int kProjectArchiveHasMelSpectrogram = 1 << 1;
 constexpr int kProjectArchiveHasRenderedWaveform = 1 << 2;
+
+// D-225: v5 stored the union transition on the arriving (right) note as
+// `slideMs`; the field now lives on the left note as `transitionOutMs` (the
+// selected note owns the union with the next one). Once the whole note list is
+// loaded, move every legacy value to the previous note in timeline order.
+// A value on the first note has no union to its left and is discarded.
+void migrateLegacySlideMs(Project& project, const juce::var& notesVar)
+{
+    if (!notesVar.isArray())
+        return;
+
+    struct Legacy
+    {
+        int startFrame = 0;
+        int endFrame = 0;
+        int ms = 0;
+    };
+    std::vector<Legacy> legacy;
+    for (int i = 0; i < notesVar.size(); ++i)
+    {
+        const auto noteVar = notesVar[i];
+        if (!noteVar.isObject())
+            continue;
+        if (noteVar.hasProperty("transitionOutMs"))
+            continue; // already the new format
+        if (!noteVar.hasProperty("slideMs"))
+            continue;
+        Legacy entry;
+        entry.startFrame = static_cast<int>(noteVar.getProperty("startFrame", 0));
+        entry.endFrame = static_cast<int>(noteVar.getProperty("endFrame", 0));
+        entry.ms = static_cast<int>(noteVar.getProperty("slideMs", 0));
+        if (entry.ms > 0)
+            legacy.push_back(entry);
+    }
+    if (legacy.empty())
+        return;
+
+    auto& notes = project.getNotes();
+    for (const auto& entry : legacy)
+    {
+        size_t index = notes.size();
+        for (size_t i = 0; i < notes.size(); ++i)
+        {
+            if (!notes[i].isRest() &&
+                notes[i].getStartFrame() == entry.startFrame &&
+                notes[i].getEndFrame() == entry.endFrame)
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index == 0 || index >= notes.size())
+            continue; // first note (or unmatchable): no union to the left
+
+        size_t previous = index;
+        while (previous > 0)
+        {
+            --previous;
+            if (!notes[previous].isRest())
+                break;
+        }
+        if (previous >= index || notes[previous].isRest())
+            continue;
+        if (notes[previous].getTransitionOutMs() == 0)
+            notes[previous].setTransitionOutMs(entry.ms);
+    }
+}
 
 bool writeString(juce::OutputStream& out, const juce::String& text)
 {
@@ -434,6 +502,7 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
             }
         }
     }
+    migrateLegacySlideMs(project, notesVar);
 
     // Pitch data
     auto pitchDataVar = json.getProperty("pitchData", juce::var());
@@ -872,6 +941,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("pitchDrift", note.getPitchDrift());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
+    if (note.getTransitionOutMs() != 0)
+        obj->setProperty("transitionOutMs", note.getTransitionOutMs());
 
     // Per-note original delta pitch (pristine curve from analysis)
     if (includePitchData && note.hasOriginalDeltaPitch())
@@ -948,6 +1019,14 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setPitchDrift(static_cast<float>(json.getProperty("pitchDrift", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
+    // D-225: the transition lives on the note that owns the union with the
+    // NEXT note. v5 stored it as `slideMs` on the arriving (right) note; that
+    // legacy key is migrated in fromJson once the whole note list is loaded,
+    // so it is deliberately not read here.
+    note.setTransitionOutMs(
+        static_cast<int>(json.getProperty("transitionOutMs", 0)));
+    // D-223: blendPct is no longer a user parameter; old projects may still
+    // carry it and it is deliberately dropped.
 
     // Per-note original delta pitch (pristine curve from analysis)
     auto origDeltaStr = json.getProperty("originalDeltaPitch", juce::var());

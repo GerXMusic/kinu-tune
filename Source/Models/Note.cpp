@@ -75,6 +75,7 @@ bool Note::isNeutralForOriginalWaveform() const
            std::abs(pitchDrift - 1.0f) <= kPitchEpsilon &&
            smoothLeftFrames == 0 &&
            smoothRightFrames == 0 &&
+           transitionOutMs == 0 &&
            std::abs(deltaScale - 1.0f) <= kPitchEpsilon &&
            std::abs(deltaOffset) <= kPitchEpsilon;
 }

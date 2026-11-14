@@ -5,6 +5,12 @@
 
 namespace PitchCurveProcessor
 {
+    // D-223/D-224: share of the D-221 ramp over the D-205 baseline in a legato
+    // union. It is an engine law, not a per-note control (Melodyne exposes one
+    // duration); the user tuned the value by ear. Exposed so the regression
+    // test reads the same number the engine uses.
+    inline constexpr float kTransitionBlendShare = 0.50f;
+
     // D-183 R6 test hook: the D-182 glide must be attributable on/off.
     void setEditedBoundaryGlideEnabled(bool enabled);
 
