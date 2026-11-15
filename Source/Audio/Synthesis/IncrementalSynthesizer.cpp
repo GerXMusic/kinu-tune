@@ -3,6 +3,7 @@
 #include "FormantShifter.h"
 #include "OriginalWaveformRestore.h"
 #include "../../Utils/NoteGainCurve.h"
+#include "../../Utils/PitchCurveProcessor.h"
 #include "../../Utils/AppLogger.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/Localization.h"
@@ -383,8 +384,17 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
         }
       }
 
-      if (end > start)
+      if (end > start) {
+        // D-226: a user transition is symmetric around the boundary, so half
+        // of its ramp lives in the neighbouring note. Committing only
+        // [start, end) writes half a ramp and the splice fade at the boundary
+        // brings the old audio back. Grow the range with every transition
+        // window it crosses; outside those windows nothing changes. (The D-205
+        // pass-1 window is not expanded: at commit time it is not
+        // identifiable, see DECISIONES D-226.)
+        PitchCurveProcessor::expandRangeForJoinSmoothing(project, start, end);
         ranges.push_back({start, end});
+      }
     }
   }
 
@@ -394,7 +404,10 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
   // committing it would replace neighboring notes' waveform.
   if (needsF0RangeCommit && f0DirtyStart >= 0 &&
       f0DirtyEnd > f0DirtyStart) {
-    ranges.push_back({f0DirtyStart, f0DirtyEnd});
+    int start = f0DirtyStart;
+    int end = f0DirtyEnd;
+    PitchCurveProcessor::expandRangeForJoinSmoothing(project, start, end);
+    ranges.push_back({start, end});
   }
 
   std::sort(ranges.begin(), ranges.end(),

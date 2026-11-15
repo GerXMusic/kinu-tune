@@ -32,6 +32,21 @@ namespace PitchCurveProcessor
     std::vector<float> getDriftPreviewResponse(const Project& project, const Note& note);
 
     /**
+     * D-226: grow [startFrame, endFrame) (exclusive) with every legato-join
+     * window that crosses it. The D-205 baseline and the D-225 transition are
+     * symmetric around the boundary, so half of the smoothing lives in the
+     * neighbouring note; committing only the edited note writes half a ramp
+     * and keeps the old audio at the join.
+     *
+     * A window is the one the engine already uses (buildDeltaJoins) for a
+     * user transition (transitionMs > 0), including the D-205 baseline it
+     * mixes with. Frames outside it are not touched. Returns true when the
+     * range changed.
+     */
+    bool expandRangeForJoinSmoothing(const Project& project,
+                                     int& startFrame, int& endFrame);
+
+    /**
      * Rebuild delta pitch and f0 only for specific notes (partial rebuild).
      * Skips basePitch regeneration (assumes positions unchanged).
      * Much faster than rebuildBaseFromNotes() when only transformation

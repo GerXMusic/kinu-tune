@@ -956,6 +956,74 @@ namespace PitchCurveProcessor
         }
     }
 
+    bool expandRangeForJoinSmoothing(const Project& project, int& startFrame,
+                                     int& endFrame)
+    {
+        const auto& audioData = project.getAudioData();
+        const int totalFrames = audioData.getNumFrames();
+        if (totalFrames <= 0 || startFrame >= endFrame ||
+            // buildDeltaJoins reads deltaPitch around every contiguous
+            // boundary; a partially built curve must never be indexed.
+            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
+            return false;
+
+        const double hopSec =
+            static_cast<double>(HOP_SIZE) /
+            static_cast<double>(std::max(1, audioData.sampleRate));
+        const auto ordered = collectOrderedNotes(project);
+        const auto joins =
+            buildDeltaJoins(ordered, audioData.deltaPitch, totalFrames, hopSec);
+        if (joins.empty())
+            return false;
+
+        int first = std::max(0, startFrame);
+        int last = std::min(totalFrames, endFrame);
+        if (first >= last)
+            return false;
+
+        // Windows are non-overlapping by construction (each side stops at half
+        // the shorter note), but expanding one range can make it cross the next
+        // join, so iterate until stable.
+        bool changed = false;
+        bool again = true;
+        while (again)
+        {
+            again = false;
+            for (const auto& join : joins)
+            {
+                // D-226: only user transitions. The D-205 baseline is not
+                // identifiable here: at commit time deltaPitch is already
+                // smoothed, so `oldAudible` no longer sees the step that made
+                // pass 1 run. Expanding every contiguous join instead would
+                // commit neighbouring notes nobody edited, so pass 1 keeps its
+                // half-window limitation (declared in DECISIONES D-226).
+                if (join.transitionMs <= 0)
+                    continue;
+                const int windowFirst = join.windowFirst();
+                const int windowLast = join.windowLast();
+                if (windowLast < first || windowFirst >= last)
+                    continue;
+                if (windowFirst < first)
+                {
+                    first = std::max(0, windowFirst);
+                    changed = true;
+                    again = true;
+                }
+                if (windowLast + 1 > last)
+                {
+                    last = std::min(totalFrames, windowLast + 1);
+                    changed = true;
+                    again = true;
+                }
+            }
+        }
+        if (!changed)
+            return false;
+        startFrame = first;
+        endFrame = last;
+        return true;
+    }
+
     void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes)
     {
         auto& audioData = project.getAudioData();

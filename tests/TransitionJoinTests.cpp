@@ -333,6 +333,91 @@ int main() {
     CHECK(outside > 0.0f); // the glide did run
   }
 
+  // 8. D-226: el commit de una nota sucia incluye la mitad derecha de la
+  //    transicion, que vive en la nota siguiente. El rango crece con las
+  //    ventanas que el motor ya usa y cubre todos los frames que el suavizado
+  //    modifica; fuera de la ventana no cambia nada. Vale en las dos
+  //    direcciones (nota izquierda sucia y nota derecha sucia).
+  {
+    Project reference = makeChain({100, 100, 100}, {60.0f, 62.0f, 64.0f});
+    const auto baseline = centsOf(reference);
+
+    Project project = makeChain({100, 100, 100}, {60.0f, 62.0f, 64.0f});
+    project.getNotes()[0].setTransitionOutMs(250);
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    const auto after = centsOf(project);
+
+    int firstChanged = -1;
+    int lastChanged = -1;
+    for (int i = 0; i < static_cast<int>(after.size()); ++i) {
+      if (std::fabs(after[static_cast<size_t>(i)] -
+                    baseline[static_cast<size_t>(i)]) <= kSameLimitCents)
+        continue;
+      if (firstChanged < 0)
+        firstChanged = i;
+      lastChanged = i;
+    }
+    std::cout << "D-226 changed frames: [" << firstChanged << ","
+              << lastChanged << "]\n";
+    CHECK(firstChanged >= 0);
+    CHECK(firstChanged < 100);
+    CHECK(lastChanged >= 100); // half of the ramp is in the next note
+
+    // Left note dirty: the commit must reach the end of the window above 100.
+    int leftStart = 0;
+    int leftEnd = 100;
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(project, leftStart,
+                                                           leftEnd));
+    std::cout << "D-226 commit from left note: [" << leftStart << ","
+              << leftEnd << ")\n";
+    CHECK(leftStart == 0);
+    CHECK(leftStart <= firstChanged);
+    CHECK(leftEnd >= lastChanged + 1);
+
+    // Right note dirty: the same window grows backwards.
+    int rightStart = 100;
+    int rightEnd = 200;
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(project, rightStart,
+                                                           rightEnd));
+    std::cout << "D-226 commit from right note: [" << rightStart << ","
+              << rightEnd << ")\n";
+    CHECK(rightStart <= firstChanged);
+    CHECK(rightEnd == 200);
+
+    // Transition 0 and no delta step: nothing to expand.
+    Project plain = makeChain({100, 100}, {60.0f, 62.0f});
+    int plainStart = 0;
+    int plainEnd = 100;
+    CHECK(!PitchCurveProcessor::expandRangeForJoinSmoothing(plain, plainStart,
+                                                            plainEnd));
+    CHECK(plainStart == 0 && plainEnd == 100);
+
+    // D-226 limit: the D-205 baseline (pass 1) is not expanded. At commit
+    // time deltaPitch is already smoothed, so the step that made pass 1 run is
+    // not observable; expanding every contiguous join would commit a
+    // neighbour nobody edited. A 70 c delta step with Transition 0 therefore
+    // stays local (documented in DECISIONES D-226).
+    Project stepProject = makeChain({100, 100}, {60.0f, 62.0f});
+    stepProject.getNotes()[0].setOriginalDeltaPitch(
+        std::vector<float>(100, 0.7f)); // 70 c step at the boundary
+    PitchCurveProcessor::rebuildBaseFromNotes(stepProject);
+    int stepStart = 0;
+    int stepEnd = 100;
+    CHECK(!PitchCurveProcessor::expandRangeForJoinSmoothing(
+        stepProject, stepStart, stepEnd));
+    CHECK(stepStart == 0 && stepEnd == 100);
+
+    // A transition on the same step does expand, and by the transition
+    // window, because that value is stored on the note.
+    stepProject.getNotes()[0].setTransitionOutMs(250);
+    PitchCurveProcessor::rebuildBaseFromNotes(stepProject);
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(
+        stepProject, stepStart, stepEnd));
+    std::cout << "D-226 commit with a 70 c delta step + 250 ms: [" << stepStart
+              << "," << stepEnd << ")\n";
+    CHECK(stepEnd > 100 && stepEnd < 120);
+  }
+
   std::cout << "TransitionJoinTests: all checks passed\n";
   return 0;
 }
