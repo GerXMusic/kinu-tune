@@ -363,24 +363,28 @@ int main() {
     CHECK(firstChanged < 100);
     CHECK(lastChanged >= 100); // half of the ramp is in the next note
 
-    // Left note dirty: the commit must reach the end of the window above 100.
+    // D-229: left note dirty: the commit must cover BOTH whole notes, not
+    // just the window (the ramp moves the neighbouring note's grain lattice).
     int leftStart = 0;
     int leftEnd = 100;
     CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(project, leftStart,
                                                            leftEnd));
-    std::cout << "D-226 commit from left note: [" << leftStart << ","
+    std::cout << "D-226/229 commit from left note: [" << leftStart << ","
               << leftEnd << ")\n";
     CHECK(leftStart == 0);
     CHECK(leftStart <= firstChanged);
     CHECK(leftEnd >= lastChanged + 1);
+    CHECK(leftEnd == 200); // the whole right note, not only the window
 
-    // Right note dirty: the same window grows backwards.
+    // Right note dirty: the same window grows backwards over the whole left
+    // note.
     int rightStart = 100;
     int rightEnd = 200;
     CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(project, rightStart,
                                                            rightEnd));
-    std::cout << "D-226 commit from right note: [" << rightStart << ","
+    std::cout << "D-226/229 commit from right note: [" << rightStart << ","
               << rightEnd << ")\n";
+    CHECK(rightStart == 0);
     CHECK(rightStart <= firstChanged);
     CHECK(rightEnd == 200);
 
@@ -415,7 +419,7 @@ int main() {
         stepProject, stepStart, stepEnd));
     std::cout << "D-226 commit with a 70 c delta step + 250 ms: [" << stepStart
               << "," << stepEnd << ")\n";
-    CHECK(stepEnd > 100 && stepEnd < 120);
+    CHECK(stepEnd == 200); // whole right note (D-229)
   }
 
   std::cout << "TransitionJoinTests: all checks passed\n";

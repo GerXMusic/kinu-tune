@@ -226,6 +226,17 @@ namespace
         return ordered;
     }
 
+    // D-229: the note whose span contains `frame` ([start, end)).
+    const Note* noteContaining(const std::vector<const Note*>& ordered,
+                               int frame)
+    {
+        for (const auto* note : ordered)
+            if (note != nullptr && note->getStartFrame() <= frame &&
+                frame < note->getEndFrame())
+                return note;
+        return nullptr;
+    }
+
     int deltaJoinBaseHalf(double hopSec)
     {
         return std::max(
@@ -1004,15 +1015,29 @@ namespace PitchCurveProcessor
                 const int windowLast = join.windowLast();
                 if (windowLast < first || windowFirst >= last)
                     continue;
-                if (windowFirst < first)
+
+                // D-229: commit the WHOLE notes the window touches, not just
+                // the window. A pitch-curve change inside a note moves the
+                // whole grain lattice of that note (PSOLA), so splicing the
+                // new prefix into audio rendered with the old lattice clicks
+                // and masks the ramp. Re-rendering the full notes is what the
+                // user's manual "render the notes again" did.
+                const Note* leftNote = noteContaining(ordered, windowFirst);
+                const Note* rightNote = noteContaining(ordered, windowLast);
+                const int spanFirst =
+                    leftNote != nullptr ? leftNote->getStartFrame() : windowFirst;
+                const int spanLast = rightNote != nullptr
+                                         ? rightNote->getEndFrame()
+                                         : windowLast + 1;
+                if (spanFirst < first)
                 {
-                    first = std::max(0, windowFirst);
+                    first = std::max(0, spanFirst);
                     changed = true;
                     again = true;
                 }
-                if (windowLast + 1 > last)
+                if (spanLast > last)
                 {
-                    last = std::min(totalFrames, windowLast + 1);
+                    last = std::min(totalFrames, spanLast);
                     changed = true;
                     again = true;
                 }

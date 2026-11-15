@@ -32,16 +32,18 @@ namespace PitchCurveProcessor
     std::vector<float> getDriftPreviewResponse(const Project& project, const Note& note);
 
     /**
-     * D-226: grow [startFrame, endFrame) (exclusive) with every legato-join
-     * window that crosses it. The D-205 baseline and the D-225 transition are
-     * symmetric around the boundary, so half of the smoothing lives in the
-     * neighbouring note; committing only the edited note writes half a ramp
-     * and keeps the old audio at the join.
+     * D-226/D-229: grow [startFrame, endFrame) (exclusive) with every
+     * transition window that crosses it, and with the WHOLE notes that window
+     * touches. The ramp is symmetric around the boundary, so half of it lives
+     * in the neighbouring note; and a curve change inside a note moves that
+     * note's whole PSOLA grain lattice, so committing only the window splices
+     * new audio against old-lattice audio. Re-rendering the full notes is what
+     * the user's manual "render the notes again" did.
      *
      * A window is the one the engine already uses (buildDeltaJoins) for a
      * user transition (transitionMs > 0), including the D-205 baseline it
-     * mixes with. Frames outside it are not touched. Returns true when the
-     * range changed.
+     * mixes with. Frames outside the notes touched are not changed. Returns
+     * true when the range changed.
      */
     bool expandRangeForJoinSmoothing(const Project& project,
                                      int& startFrame, int& endFrame);
