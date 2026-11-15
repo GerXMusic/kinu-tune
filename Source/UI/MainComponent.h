@@ -346,6 +346,13 @@ private:
   bool deferredRenderPending = false;
   bool flushChainActive = false;
   bool playAfterFlush = false;
+  // D-227: an edit made while a render is in flight must not be swallowed by
+  // that render's completion. markRenderDirty bumps the revision; the flush
+  // records the value it requested and re-renders instead of clearing when it
+  // no longer matches (a stale render published and the dirty state wiped is
+  // the "sometimes it does not smooth" report).
+  std::uint64_t dirtyRevision = 0;
+  std::uint64_t flushRenderRevision = 0;
   double lastHostPlaybackSeconds = 0.0;
   double flushResumePosition = 0.0;
   // P1b fase 4: el guardado espera al flush y se reanuda cuando este termina.

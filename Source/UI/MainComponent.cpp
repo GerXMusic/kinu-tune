@@ -3923,6 +3923,10 @@ void MainComponent::resynthesizeIncremental()
 
   if (isPluginMode() && onRequestBackendRender)
   {
+    // D-227: remember which revision this render is for. If an edit arrives
+    // before it completes, finishBackendRender re-renders instead of clearing
+    // the newer dirty state.
+    flushRenderRevision = dirtyRevision;
     onRequestBackendRender(*project);
     return;
   }
@@ -4007,6 +4011,11 @@ void MainComponent::markRenderDirty()
   const auto range = project->getDirtyFrameRange();
   if (range.first >= 0 && range.second > range.first)
     deferredRenders.markBlock(range.first, range.second);
+
+  ++dirtyRevision;
+  LOG("P1b: markRenderDirty rev=" + juce::String(dirtyRevision) +
+      " range=[" + juce::String(range.first) + "," +
+      juce::String(range.second) + ")");
 
   deferredRenderPending = true;
   pushSweepState();
@@ -4393,10 +4402,25 @@ void MainComponent::finishBackendRender(bool success)
   // operacion que la ruta standalone), se baja la cadena y se arranca.
   if (success && flushChainActive)
   {
+    auto *doneProject = getProject();
+    const bool newerEdits =
+        doneProject != nullptr && dirtyRevision != flushRenderRevision;
+    LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
+        " requestRev=" + juce::String(flushRenderRevision) +
+        " newerEdits=" + juce::String(newerEdits ? 1 : 0));
+    if (newerEdits)
+    {
+      // D-227: this render was requested before an edit. Clearing the dirty
+      // state here would wipe that edit and the next Play would have nothing
+      // to render (the reported "sometimes it does not smooth"). Render the
+      // newer state first; the transport keeps waiting.
+      resynthesizeIncremental();
+      return;
+    }
     // La ruta standalone limpia estos estados en el proyecto del render
     // (IncrementalSynthesizer::clearAllDirty); en plugin el editor conserva su
     // copia, asi que se limpia aqui antes de arrancar.
-    if (auto *doneProject = getProject())
+    if (doneProject != nullptr)
       doneProject->clearAllDirty();
     deferredRenders.clear();
     flushChainActive = false;

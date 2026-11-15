@@ -127,7 +127,22 @@ void testSourceWiring() {
   std::cout << "markRenderDirty()=" << marks
             << " resynthesizeIncremental()=" << renders << "\n";
   CHECK(marks >= 7);
-  CHECK(renders <= 2);
+  // D-227 adds the third: the flush chain re-renders when an edit arrived
+  // while the requested render was in flight.
+  CHECK(renders == 3);
+
+  // D-227: an edit during a render bumps the revision, and the completion
+  // re-renders instead of clearing the newer dirty state.
+  CHECK(mainComponent.find("++dirtyRevision;") != std::string::npos);
+  const auto finishHook =
+      mainComponent.find("void MainComponent::finishBackendRender");
+  CHECK(finishHook != std::string::npos);
+  const auto newerGuard = mainComponent.find("if (newerEdits)", finishHook);
+  const auto clearDirty =
+      mainComponent.find("doneProject->clearAllDirty();", finishHook);
+  CHECK(newerGuard != std::string::npos);
+  CHECK(clearDirty != std::string::npos);
+  CHECK(newerGuard < clearDirty);
 
   // Phase 2: the UI Play flushes the dirty blocks before starting playback.
   const auto playHook = mainComponent.find("toolbar.onPlay");

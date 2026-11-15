@@ -2,6 +2,7 @@
 #include "BasePitchCurve.h"
 #include "CurveResampler.h"
 #include "PitchToolOperations.h"
+#include "AppLogger.h"
 #include "../Utils/Constants.h"
 #include <algorithm>
 #include <cmath>
@@ -1019,6 +1020,9 @@ namespace PitchCurveProcessor
         }
         if (!changed)
             return false;
+        LOG("D-226: commit range [" + juce::String(startFrame) + "," +
+            juce::String(endFrame) + ") -> [" + juce::String(first) + "," +
+            juce::String(last) + ")");
         startFrame = first;
         endFrame = last;
         return true;
