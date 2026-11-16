@@ -4,6 +4,9 @@ build-*/
 cmake-build-*/
 dist/
 
+# CTest output when it is run from the source directory by mistake
+/Testing/
+
 # JUCE is now a git submodule in third_party/
 
 # IDE files
