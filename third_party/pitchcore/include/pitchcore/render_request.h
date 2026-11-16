@@ -93,4 +93,30 @@ inline double sampleCurve (const std::vector<float>& curve, double frame, int nu
     return curve[(size_t) left] * (1.0 - amount) + curve[(size_t) right] * amount;
 }
 
+// P4.2 (plan/m2/p3-criterio-nuevo.md §5): mapeo de una curva de RAZONES a la
+// rejilla de salida por frame ABSOLUTO. Misma funcion que el nucleo (P4.1);
+// la copia vendorizada no la tenia. Fuera del rango se mantiene el borde.
+inline std::vector<float> buildPitchRatioOnGrid (const std::vector<float>& curve,
+                                                 double curveHop,
+                                                 int    curveFrame0,
+                                                 double outHop,
+                                                 int    totalFrames)
+{
+    const int total = totalFrames > 0 ? totalFrames : 0;
+    std::vector<float> out ((size_t) total, 1.f);
+    if (curve.empty() || curveHop <= 0.0 || outHop <= 0.0) return out;
+    const int last = (int) curve.size() - 1;
+    for (int k = 0; k < total; ++k)
+    {
+        const double src = (double) k * outHop / curveHop - (double) curveFrame0;
+        if (src <= 0.0)            { out[(size_t) k] = curve.front(); continue; }
+        if (src >= (double) last)  { out[(size_t) k] = curve.back();  continue; }
+        const int    l = (int) std::floor (src);
+        const double t = src - (double) l;
+        out[(size_t) k] = (float) ((1.0 - t) * curve[(size_t) l]
+                                   + t * curve[(size_t) (l + 1)]);
+    }
+    return out;
+}
+
 } // namespace pitchcore

@@ -410,6 +410,15 @@ collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
     ranges.push_back({start, end});
   }
 
+  // D-230: spans recorded by a transition change (the union of its old and
+  // new values). Without them, setting a transition to 0 has no window for
+  // the expansion above to see and the right note's old ramp is left in place.
+  for (const auto &[hintStart, hintEnd] : project.getTransitionCommitRanges()) {
+    if (hintStart < 0 || hintEnd <= hintStart)
+      continue;
+    ranges.push_back({hintStart, hintEnd});
+  }
+
   std::sort(ranges.begin(), ranges.end(),
             [](const CommitFrameRange &a, const CommitFrameRange &b) {
               return a.start < b.start;
@@ -904,13 +913,24 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
   if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
-      !project->hasF0DirtyRange()) {
+      !project->hasF0DirtyRange() && !project->hasTransitionCommitRanges()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
+  // D-230: a transition change records the whole-note span it must rewrite,
+  // computed from the union of its old and new values. Removing a transition
+  // leaves no active window for the commit expansion to find, so this span is
+  // the only thing that brings the neighbouring note's old ramp into the
+  // render and commit ranges.
+  for (const auto &[hintStart, hintEnd] : project->getTransitionCommitRanges()) {
+    if (hintEnd <= hintStart)
+      continue;
+    dirtyStart = dirtyStart < 0 ? hintStart : std::min(dirtyStart, hintStart);
+    dirtyEnd = dirtyEnd < 0 ? hintEnd : std::max(dirtyEnd, hintEnd);
+  }
   const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
   auto editedClusters = selectConnectedEditedNotes(
@@ -922,6 +942,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     dirtyStart = renderRangeOverrideStart;
     dirtyEnd = renderRangeOverrideEnd;
     commitFrameRanges.push_back({dirtyStart, dirtyEnd});
+    // D-230: keep a recorded transition span inside the block that is being
+    // rendered. Clamped, never widened past the override.
+    for (const auto &[hintStart, hintEnd] : project->getTransitionCommitRanges()) {
+      const int first = std::max(dirtyStart, hintStart);
+      const int last = std::min(dirtyEnd, hintEnd);
+      if (last > first)
+        commitFrameRanges.push_back({first, last});
+    }
   } else {
     if (editedClusters.startFrame >= 0)
       dirtyStart = std::min(dirtyStart, editedClusters.startFrame);

@@ -1277,6 +1277,65 @@ int main(int argc, char **argv)
         }
     }
 
+    // P4.2: mismo caso que P4.1 (curva fina 2,9 ms -> rejilla ARA 512) por el
+    // adaptador vendorizado. El escalon tiene que caer en la MISMA muestra y
+    // el mapeo 1:1 (rojo) tiene que fallar.
+    {
+        const double fineHop = 44100.0 * 0.0029;
+        const double outHop  = 512.0;
+        const int origen = 40, onset = 300, dur = 120;
+        const float shift = 1.0594631f;
+        const double mid = 0.5 * (1.0 + (double) shift);
+        const int n = onset + dur + 50;
+        std::vector<float> ratioFine ((size_t) n, 1.f);
+        for (int i = onset; i < onset + dur; ++i) ratioFine[(size_t) i] = shift;
+
+        const int total = (int) std::ceil (((double) (origen + n) * fineHop) / outHop) + 8;
+        const auto ratioB = pitchcore::buildPitchRatioOnGrid (ratioFine, fineHop, origen, outHop, total);
+        const double esperado = (double) (origen + onset) * fineHop;
+        const double tol = 0.5 * fineHop;
+
+        int kOn = -1;
+        for (int k = 0; k < total; ++k)
+            if (ratioB[(size_t) k] >= mid) { kOn = k; break; }
+        const double xOn = kOn >= 0 ? (double) kOn * outHop : -1.0;
+
+        DspSynthesisRequest forkReq;
+        forkReq.source.assign (1024, 0.f);
+        forkReq.hopSize = (int) outHop;
+        forkReq.numOutputFrames = total;
+        forkReq.sampleRate = 44100;
+        forkReq.sourceFrame.resize ((size_t) total);
+        for (int i = 0; i < total; ++i) forkReq.sourceFrame[(size_t) i] = (double) i;
+        forkReq.pitchRatio = ratioB;
+
+        const auto core = pitchcore_adapter::toCoreRequest (forkReq);
+        bool iguales = core.pitchRatio.size() == ratioB.size();
+        for (size_t i = 0; iguales && i < ratioB.size(); ++i)
+            iguales = core.pitchRatio[i] == ratioB[i];
+        int kCore = -1;
+        for (int k = 0; k < (int) core.pitchRatio.size(); ++k)
+            if (core.pitchRatio[(size_t) k] >= mid) { kCore = k; break; }
+        const double xCore = kCore >= 0 ? (double) kCore * outHop : -1.0;
+
+        if (! iguales || std::fabs (xCore - xOn) > tol || std::fabs (xOn - esperado) > tol)
+        {
+            std::printf ("FALLA P4.2 adaptador: core %.1f, B %.1f, esperado %.1f (iguales=%d)\n",
+                         xCore, xOn, esperado, (int) iguales);
+            ++failures;
+        }
+        else
+            std::printf ("P4.2 adaptador: escalon core %.1f = B %.1f, esperado %.1f (tol %.1f)\n",
+                         xCore, xOn, esperado, tol);
+
+        const double xNaive = (double) onset * outHop;
+        if (std::fabs (xNaive - esperado) <= tol)
+        {
+            std::printf ("FALLA P4.2: el mapeo 1:1 (rojo) no falla\n");
+            ++failures;
+        }
+    }
+
     std::printf("veredicto  : %s\n",
                 failures == 0 ? "PASA (los criterios pedidos)" : "FALLA");
     return failures == 0 ? 0 : 1;

@@ -3415,6 +3415,27 @@ void PianoRollComponent::endInspectorEdit()
     minFrame = std::min(minFrame, note->getStartFrame());
     maxFrame = std::max(maxFrame, note->getEndFrame());
   }
+  if (inspectorEditParam == InspectorParam::Transition)
+  {
+    // D-230: the commit span comes from the union of the gesture's start and
+    // end values, not from the value that happens to be current. Dragging a
+    // transition back to 0 leaves no window for the renderer to find, but the
+    // right note's audio still carries the old ramp.
+    for (size_t i = 0; i < notes.size() && i < oldParams.size() &&
+                       i < newParams.size(); ++i)
+    {
+      int spanStart = 0;
+      int spanEnd = 0;
+      if (PitchCurveProcessor::transitionChangeCommitRange(
+              *project, *notes[i], oldParams[i].transitionOutMs,
+              newParams[i].transitionOutMs, spanStart, spanEnd))
+      {
+        project->addTransitionCommitRange(spanStart, spanEnd);
+        minFrame = std::min(minFrame, spanStart);
+        maxFrame = std::max(maxFrame, spanEnd);
+      }
+    }
+  }
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
   project->markNoteEditDirtyRange(minFrame, maxFrame);
   invalidateBasePitchCache();
@@ -3431,7 +3452,8 @@ void PianoRollComponent::endInspectorEdit()
   if (undoManager)
     undoManager->addAction(std::make_unique<InspectorEditAction>(
         project, notes, oldParams, newParams, oldSource, newSource,
-        names[static_cast<int>(inspectorEditParam)]));
+        names[static_cast<int>(inspectorEditParam)],
+        inspectorEditParam == InspectorParam::Transition));
 
   if (onPitchEdited)
     onPitchEdited();

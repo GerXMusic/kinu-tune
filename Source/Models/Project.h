@@ -296,6 +296,35 @@ public:
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
 
+    // D-230: frame ranges that must be committed whole because a transition
+    // value changed, computed from the union of the old and new values. This
+    // is transient render state, like the dirty flags: it is set by the
+    // gesture (and its undo action) and consumed by the next render. It exists
+    // because removing a transition (value 0) leaves no transition window for
+    // the synthesizer to detect, yet the audio of the neighbouring note still
+    // carries the old ramp and must be replaced.
+    void addTransitionCommitRange(int startFrame, int endFrame);
+    const std::vector<std::pair<int, int>> &getTransitionCommitRanges() const
+    {
+        return transitionCommitRanges;
+    }
+    bool hasTransitionCommitRanges() const
+    {
+        return !transitionCommitRanges.empty();
+    }
+    void clearTransitionCommitRanges() { transitionCommitRanges.clear(); }
+
+    // D-231: joins whose D-205 pass 1 was audible, recorded before the delta
+    // is smoothed (afterwards the step that triggered it is gone). Render
+    // state only: cleared on clearAllDirty and never serialized.
+    void clearPass1JoinWindows() { pass1JoinWindows.clear(); }
+    void addPass1JoinWindow(int startFrame, int endFrame);
+    const std::vector<std::pair<int, int>> &getPass1JoinWindows() const
+    {
+        return pass1JoinWindows;
+    }
+    bool hasPass1JoinWindows() const { return !pass1JoinWindows.empty(); }
+
     // Modified state
     bool isModified() const { return modified; }
     void setModified(bool mod) { modified = mod; }
@@ -381,6 +410,11 @@ private:
     // D-197 edited-note block walk (padded frame spans, not note flags).
     std::vector<std::pair<int, int>> editedBlockRanges;
     int editedBlockCursor = -1;
+
+    // D-230: whole-note spans a transition change must rewrite. Transient.
+    std::vector<std::pair<int, int>> transitionCommitRanges;
+    // D-231: [first, last] of every audible pass-1 join.
+    std::vector<std::pair<int, int>> pass1JoinWindows;
 
     bool modified = false;
 

@@ -68,7 +68,6 @@ inline pitchcore::RenderRequest toCoreRequest(const DspSynthesisRequest &request
     core.totalFrames = base + frames;
 
     core.sourceFrame.assign(static_cast<size_t>(core.totalFrames), 0.0);
-    core.pitchRatio.assign(static_cast<size_t>(core.totalFrames), 1.0f);
 
     const float firstRatio =
         request.pitchRatio.empty() ? 1.0f : request.pitchRatio.front();
@@ -76,19 +75,22 @@ inline pitchcore::RenderRequest toCoreRequest(const DspSynthesisRequest &request
     {
         core.sourceFrame[static_cast<size_t>(j)] =
             firstSource - static_cast<double>(base - j);
-        core.pitchRatio[static_cast<size_t>(j)] = firstRatio;
     }
+    // P4.2: el mapeo de la razon usa la misma funcion que el nucleo, en frame
+    // ABSOLUTO (base) y con la rejilla de la peticion. Antes se copiaba a mano
+    // una tabla local; con hop igual es identico, y ahora la regresion I-13 la
+    // cubre la funcion compartida.
+    core.pitchRatio = pitchcore::buildPitchRatioOnGrid(
+        request.pitchRatio, static_cast<double>(hop), base,
+        static_cast<double>(hop), core.totalFrames);
+    (void) firstRatio;
 
     const int available = static_cast<int>(
         std::min(request.sourceFrame.size(), request.pitchRatio.size()));
     const int copyFrames = std::min(frames, available);
     for (int i = 0; i < copyFrames; ++i)
-    {
         core.sourceFrame[static_cast<size_t>(base + i)] =
             request.sourceFrame[static_cast<size_t>(i)];
-        core.pitchRatio[static_cast<size_t>(base + i)] =
-            request.pitchRatio[static_cast<size_t>(i)];
-    }
 
     core.sourceF0 = request.sourceF0;
     core.sourceVoiced = request.sourceVoiced;

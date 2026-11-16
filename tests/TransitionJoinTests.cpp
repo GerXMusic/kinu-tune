@@ -396,30 +396,124 @@ int main() {
                                                             plainEnd));
     CHECK(plainStart == 0 && plainEnd == 100);
 
-    // D-226 limit: the D-205 baseline (pass 1) is not expanded. At commit
-    // time deltaPitch is already smoothed, so the step that made pass 1 run is
-    // not observable; expanding every contiguous join would commit a
-    // neighbour nobody edited. A 70 c delta step with Transition 0 therefore
-    // stays local (documented in DECISIONES D-226).
+    // D-231: the D-205 baseline (pass 1) is symmetric around the boundary, so
+    // its right half lives in the neighbour. The step is gone at commit time,
+    // so the window is recorded while the curve is composed. A 70 c step with
+    // Transition 0 therefore commits both whole notes (D-226 point 5 is
+    // inverted by D-231; the old limitation is no longer accepted).
     Project stepProject = makeChain({100, 100}, {60.0f, 62.0f});
     stepProject.getNotes()[0].setOriginalDeltaPitch(
         std::vector<float>(100, 0.7f)); // 70 c step at the boundary
     PitchCurveProcessor::rebuildBaseFromNotes(stepProject);
+    CHECK(stepProject.hasPass1JoinWindows());
     int stepStart = 0;
     int stepEnd = 100;
-    CHECK(!PitchCurveProcessor::expandRangeForJoinSmoothing(
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(
         stepProject, stepStart, stepEnd));
-    CHECK(stepStart == 0 && stepEnd == 100);
+    std::cout << "D-231 70 c step, Transition 0, commit from left: ["
+              << stepStart << "," << stepEnd << ")\n";
+    CHECK(stepStart == 0 && stepEnd == 200);
+
+    int stepRightStart = 100;
+    int stepRightEnd = 200;
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(
+        stepProject, stepRightStart, stepRightEnd));
+    CHECK(stepRightStart == 0 && stepRightEnd == 200);
+
+    // D-230 guard still holds with the window recorded: a transition-only
+    // edit of the right note does not rewrite the previous note.
+    stepProject.getNotes()[1].markDirty();
+    int guardStart = 100;
+    int guardEnd = 200;
+    CHECK(!PitchCurveProcessor::expandRangeForJoinSmoothing(
+        stepProject, guardStart, guardEnd));
+    CHECK(guardStart == 100 && guardEnd == 200);
+
+    // The recorded windows are render state only.
+    stepProject.clearAllDirty();
+    CHECK(!stepProject.hasPass1JoinWindows());
 
     // A transition on the same step does expand, and by the transition
     // window, because that value is stored on the note.
     stepProject.getNotes()[0].setTransitionOutMs(250);
     PitchCurveProcessor::rebuildBaseFromNotes(stepProject);
+    stepStart = 0;
+    stepEnd = 100;
     CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(
         stepProject, stepStart, stepEnd));
     std::cout << "D-226 commit with a 70 c delta step + 250 ms: [" << stepStart
               << "," << stepEnd << ")\n";
     CHECK(stepEnd == 200); // whole right note (D-229)
+  }
+
+  // 9. D-230: (a) una edicion solo de transicion no re-renderiza la nota
+  //    anterior aunque esa nota tenga su propia transicion activa; (b) quitar
+  //    la transicion (a 0, tambien por undo) conserva en el commit la union
+  //    entera, porque ya no hay ventana activa que el motor pueda detectar.
+  {
+    Project project = makeChain({100, 100, 100}, {60.0f, 62.0f, 64.0f});
+    // P->A and A->B both active: editing A used to expand to three notes.
+    project.getNotes()[0].setTransitionOutMs(250);
+    project.getNotes()[1].setTransitionOutMs(250);
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+
+    project.getNotes()[1].markDirty();
+    int start = 100;
+    int end = 200;
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(project, start,
+                                                           end));
+    std::cout << "D-230 transition-only edit of A: commit=[" << start << ","
+              << end << ")\n";
+    CHECK(start == 100); // the previous note is NOT rewritten
+    CHECK(end == 300);   // A and B whole
+
+    // If the left note is dirty too (multi-selection), the gate must not hide
+    // its own P->A union: the whole P-A-B span is committed.
+    project.getNotes()[0].markDirty();
+    int bothStart = 100;
+    int bothEnd = 200;
+    CHECK(PitchCurveProcessor::expandRangeForJoinSmoothing(
+        project, bothStart, bothEnd));
+    CHECK(bothStart == 0);
+    CHECK(bothEnd == 300);
+    project.getNotes()[0].clearDirty();
+
+    // The union of old (250) and new (0) is still both whole notes. This is
+    // what the gesture/undo records so the old ramp in B is replaced.
+    int spanStart = -1;
+    int spanEnd = -1;
+    CHECK(PitchCurveProcessor::transitionChangeCommitRange(
+        project, project.getNotes()[1], 250, 0, spanStart, spanEnd));
+    CHECK(spanStart == 100);
+    CHECK(spanEnd == 300);
+
+    // Applying it (0 -> 250) records the same union.
+    CHECK(PitchCurveProcessor::transitionChangeCommitRange(
+        project, project.getNotes()[1], 0, 250, spanStart, spanEnd));
+    CHECK(spanStart == 100 && spanEnd == 300);
+
+    // No union / no value: nothing to record.
+    CHECK(!PitchCurveProcessor::transitionChangeCommitRange(
+        project, project.getNotes()[1], 0, 0, spanStart, spanEnd));
+    // The last note has no union to its right.
+    CHECK(!PitchCurveProcessor::transitionChangeCommitRange(
+        project, project.getNotes()[2], 250, 0, spanStart, spanEnd));
+
+    // Removing the value leaves no active window: the generic expansion
+    // cannot see it, which is why the recorded span exists.
+    project.getNotes()[1].setTransitionOutMs(0);
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    int removedStart = 100;
+    int removedEnd = 200;
+    CHECK(!PitchCurveProcessor::expandRangeForJoinSmoothing(
+        project, removedStart, removedEnd));
+    CHECK(removedStart == 100 && removedEnd == 200);
+
+    project.addTransitionCommitRange(100, 300);
+    CHECK(project.hasTransitionCommitRanges());
+    CHECK(project.getTransitionCommitRanges().size() == 1);
+    project.clearAllDirty();
+    CHECK(!project.hasTransitionCommitRanges());
   }
 
   std::cout << "TransitionJoinTests: all checks passed\n";

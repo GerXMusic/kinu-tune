@@ -49,6 +49,24 @@ namespace PitchCurveProcessor
                                      int& startFrame, int& endFrame);
 
     /**
+     * D-230: the whole-note span a transition change of `leftNote` can touch,
+     * computed from the union of the old and new values. When a transition is
+     * removed (new value 0), the current curve no longer contains its window,
+     * so expandRangeForJoinSmoothing cannot see it; the old ramp still lives
+     * in the right note's audio and must be rewritten. Returns false when the
+     * note has no contiguous right neighbour or both values are 0.
+     *
+     * This does not modify the project; the caller records the span with
+     * Project::addTransitionCommitRange() and widens its dirty range, so the
+     * next render both renders and commits it.
+     */
+    bool transitionChangeCommitRange(const Project& project,
+                                     const Note& leftNote,
+                                     int oldTransitionMs,
+                                     int newTransitionMs,
+                                     int& startFrame, int& endFrame);
+
+    /**
      * Rebuild delta pitch and f0 only for specific notes (partial rebuild).
      * Skips basePitch regeneration (assumes positions unchanged).
      * Much faster than rebuildBaseFromNotes() when only transformation
