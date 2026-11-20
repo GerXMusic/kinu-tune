@@ -231,7 +231,7 @@ void SideRail::resized()
         return;
     const juce::ScopedValueSetter<bool> guard(layingOut, true);
 
-    const int iconSize = 72;
+    const int iconSize = 55;
     const int iconGap = 6;
     int visibleCount = 0;
     for (const auto& button : buttons)
