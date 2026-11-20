@@ -11,7 +11,6 @@ namespace
 {
 constexpr int kToolSlot = 34;
 constexpr int kToolGap = 2;
-constexpr int kTransportSlot = 28;
 
 void styleFlatTextButton(juce::TextButton& button)
 {
@@ -97,13 +96,15 @@ ToolbarComponent::ToolbarComponent()
     leftPanelButton.setImage(loadImage(BinaryData::tracks_png, BinaryData::tracks_pngSize));
     trackViewButton.setImage(loadImage(BinaryData::region_png, BinaryData::region_pngSize));
 
-    // Transport and history stay on the left/right ends, as in Melodyne.
+    // Playback is driven by the host (REAPER), so the editor does not show
+    // its own transport. The buttons are kept as state holders for the
+    // existing callbacks, but never added as visible children.
     addChildComponent(recordButton);
-    addAndMakeVisible(playButton);
-    addAndMakeVisible(stopButton);
-    addAndMakeVisible(loopButton);
-    addAndMakeVisible(followButton);
-    addAndMakeVisible(auditionButton);
+    addChildComponent(playButton);
+    addChildComponent(stopButton);
+    addChildComponent(loopButton);
+    addChildComponent(followButton);
+    addChildComponent(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
     addChildComponent(parametersButton);
@@ -297,25 +298,15 @@ void ToolbarComponent::resized()
     advancedModeButton.setBounds(modeSwitchBounds.withTrimmedLeft(half));
     left.removeFromLeft(modeWidth + 12);
 
-    // Transport (play/stop/loop) and the two view toggles.
-    const int transportH = 30;
-    bool showFollow = getWidth() >= 840;
-    bool showAudition = getWidth() >= 780;
-    int transportX = left.getX();
-    auto placeTransport = [&](juce::Button& button, int size = kTransportSlot) {
-        button.setBounds(transportX, centreY - size / 2, size, size);
-        transportX += size + 2;
-    };
-    if (recordButton.isVisible())
-        placeTransport(recordButton);
-    placeTransport(playButton);
-    placeTransport(stopButton);
-    placeTransport(loopButton);
-    if (showFollow)
-        placeTransport(followButton);
-    if (showAudition)
-        placeTransport(auditionButton);
-    left.removeFromLeft(transportX - left.getX() + 10);
+    // No transport strip: REAPER owns playback. The tools take the space
+    // that the old play/stop/loop group used to reserve.
+    playButton.setBounds({});
+    stopButton.setBounds({});
+    loopButton.setBounds({});
+    followButton.setBounds({});
+    auditionButton.setBounds({});
+    recordButton.setBounds({});
+    left.removeFromLeft(10);
 
     // Tools sit in the remaining centre.
     int visibleTools = 0;
@@ -834,10 +825,13 @@ void ToolbarComponent::mouseDoubleClick(const juce::MouseEvent& e)
 
 void ToolbarComponent::setPluginMode(bool isPlugin)
 {
+    // The host owns playback in every mode, so the transport stays hidden.
     pluginMode = isPlugin;
-    playButton.setVisible(true);
-    stopButton.setVisible(true);
-    loopButton.setVisible(true);
+    playButton.setVisible(false);
+    stopButton.setVisible(false);
+    loopButton.setVisible(false);
+    followButton.setVisible(false);
+    auditionButton.setVisible(false);
     resized();
 }
 

@@ -227,10 +227,24 @@ void SideRail::resized()
 
     const int iconSize = 36;
     const int iconGap = 3;
-    int y = 10;
-    for (size_t i = 0; i < buttons.size(); ++i)
+    int visibleCount = 0;
+    for (const auto& button : buttons)
+        if (button->isVisible())
+            ++visibleCount;
+
+    // Centre the stack between the top edge and the settings button. The old
+    // layout pinned it to the top, which left a large empty column below and
+    // read as an off-centre menu.
+    const int groupHeight =
+        visibleCount > 0 ? visibleCount * iconSize + (visibleCount - 1) * iconGap
+                         : 0;
+    const int settingsTop = getHeight() - iconSize - 10;
+    const int topMargin = 10;
+    const int freeHeight = juce::jmax(0, settingsTop - topMargin - 8);
+    int y = topMargin + juce::jmax(0, (freeHeight - groupHeight) / 2);
+
+    for (auto& button : buttons)
     {
-        auto& button = buttons[i];
         if (!button->isVisible())
             continue;
         button->setBounds((railWidth - iconSize) / 2, y, iconSize, iconSize);
@@ -238,8 +252,8 @@ void SideRail::resized()
     }
 
     if (settingsButton != nullptr)
-        settingsButton->setBounds((railWidth - iconSize) / 2,
-                                  getHeight() - iconSize - 10, iconSize, iconSize);
+        settingsButton->setBounds((railWidth - iconSize) / 2, settingsTop,
+                                  iconSize, iconSize);
 
     drawerBounds = {};
     if (const auto* item = findItem(openId))

@@ -150,6 +150,7 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     setupLabel(blockHint, 11.0f, false, APP_COLOR_TEXT_MUTED);
     setupLabel(blockStatus, 11.0f, false, APP_COLOR_TEXT_MUTED);
     setupLabel(deviceTitle, 11.5f, true, APP_COLOR_TEXT_MUTED);
+    deviceTitle.setVisible(false);
 
     addAndMakeVisible(engineChoices);
     addAndMakeVisible(blockChoices);
@@ -278,6 +279,7 @@ void EnginePanel::setDeviceOptions(const juce::StringArray& names, int selectedI
     deviceIndex = juce::jlimit(0, juce::jmax(0, names.size() - 1), selectedIndex);
     hasDeviceRow = names.size() > 1;
     deviceButton.setVisible(hasDeviceRow);
+    deviceTitle.setVisible(hasDeviceRow);
     if (hasDeviceRow)
         deviceButton.setButtonText(names[deviceIndex]);
     resized();
@@ -329,35 +331,40 @@ void EnginePanel::paint(juce::Graphics& g)
 
 void EnginePanel::resized()
 {
-    auto area = getLocalBounds().reduced(kPad, 10);
+    auto area = getLocalBounds().reduced(kPad, 8);
 
+    // Project engine first, compactly: the drawer must read top-down as
+    // "what renders" before any secondary option.
     engineTitle.setBounds(area.removeFromTop(kTitleHeight));
-    engineHint.setBounds(area.removeFromTop(kHintHeight));
+    engineHint.setBounds(area.removeFromTop(24));
     const int engineRows = 3;
     engineCard = area.removeFromTop(kCardPad * 2 + engineRows * kRowHeight);
     engineChoices.setBounds(engineCard.reduced(kCardPad, kCardPad));
 
-    if (editorMode == EditorUiMode::Advanced)
-    {
-        area.removeFromTop(14);
-        blockTitle.setBounds(area.removeFromTop(kTitleHeight));
-        blockHint.setBounds(area.removeFromTop(kHintHeight));
-        blockCard = area.removeFromTop(kCardPad * 2 + 4 * kRowHeight);
-        blockChoices.setBounds(blockCard.reduced(kCardPad, kCardPad));
-        area.removeFromTop(6);
-        blockStatus.setBounds(area.removeFromTop(46));
-    }
-
-    area.removeFromTop(16);
-    deviceTitle.setBounds(area.removeFromTop(kTitleHeight));
+    // Inference device directly under the project engine, not stranded at
+    // the bottom of the drawer.
     if (hasDeviceRow)
     {
+        area.removeFromTop(12);
+        deviceTitle.setBounds(area.removeFromTop(kTitleHeight));
         deviceRow = area.removeFromTop(32);
         deviceButton.setBounds(deviceRow);
     }
     else
     {
+        deviceTitle.setBounds({});
         deviceRow = {};
         deviceButton.setBounds({});
+    }
+
+    if (editorMode == EditorUiMode::Advanced)
+    {
+        area.removeFromTop(16);
+        blockTitle.setBounds(area.removeFromTop(kTitleHeight));
+        blockHint.setBounds(area.removeFromTop(kHintHeight));
+        blockCard = area.removeFromTop(kCardPad * 2 + 4 * kRowHeight);
+        blockChoices.setBounds(blockCard.reduced(kCardPad, kCardPad));
+        area.removeFromTop(6);
+        blockStatus.setBounds(area.removeFromTop(40));
     }
 }

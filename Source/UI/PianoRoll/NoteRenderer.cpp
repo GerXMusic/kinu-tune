@@ -24,51 +24,15 @@ struct NoteGradientColours
   juce::Colour side;
 };
 
-float getPitchCenterAmount(float midi, int pitchReferenceHz)
+NoteGradientColours getNoteGradientColours()
 {
-  const float pitchCenter =
-      ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
-  const float distanceFromCenter = std::abs(midi - pitchCenter);
-
-  return juce::jlimit(0.0f, 1.0f, distanceFromCenter / 0.5f);
-}
-
-juce::Colour interpolateLayeredColour(juce::Colour first,
-                                      juce::Colour second,
-                                      juce::Colour third,
-                                      juce::Colour fourth,
-                                      float amount)
-{
-  if (amount < 1.0f / 3.0f)
-    return first.interpolatedWith(second, amount * 3.0f);
-
-  if (amount < 2.0f / 3.0f)
-    return second.interpolatedWith(third, amount * 3.0f - 1.0f);
-
-  return third.interpolatedWith(fourth, amount * 3.0f - 2.0f);
-}
-
-NoteGradientColours getNoteGradientColours(float midi, int pitchReferenceHz)
-{
-  // Melodyne palette: in-tune notes are a muted steel blue, and the colour
-  // walks through teal and gold to orange/red as the note moves away from the
-  // nearest semitone. The waveform drawn inside stays white, as in Melodyne.
-  static const juce::Colour inTuneCentre(0xFF3C82B4u);
-  static const juce::Colour inTuneSide(0xFF1D4E72u);
-  static const juce::Colour firstLayerCentre(0xFF5D9CC6u);
-  static const juce::Colour firstLayerSide(0xFF2A6188u);
-  static const juce::Colour secondLayerCentre(0xFFC9A25Cu);
-  static const juce::Colour secondLayerSide(0xFF9A6A2Au);
-  static const juce::Colour outOfTuneCentre(0xFFD9803Fu);
-  static const juce::Colour outOfTuneSide(0xFF8C3E1Eu);
-
-  const float amount = getPitchCenterAmount(midi, pitchReferenceHz);
-
-  return {
-      interpolateLayeredColour(inTuneCentre, firstLayerCentre,
-                               secondLayerCentre, outOfTuneCentre, amount),
-      interpolateLayeredColour(inTuneSide, firstLayerSide, secondLayerSide,
-                               outOfTuneSide, amount)};
+  // Melodyne note colour. Every blob is the same warm amber, whatever its
+  // tuning: a note must never read as "in tune" or "out of tune" from its
+  // colour, only the pitch curve on top tells that story. The waveform inside
+  // stays white, as in Melodyne.
+  static const juce::Colour centre(0xFFF0A54Fu);
+  static const juce::Colour side(0xFFA9551Au);
+  return {centre, side};
 }
 
 void setNoteGradientFill(juce::Graphics &g,
@@ -365,8 +329,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           greyscale
               ? NoteGradientColours{juce::Colour(0xFFCCCCCCu),
                                     juce::Colour(0xFF3A3A3Au)}
-              : getNoteGradientColours(note.getAdjustedMidiNote(),
-                                       pitchReferenceHz);
+              : getNoteGradientColours();
       juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
       // The shape that was filled, for the pinned-track outline.
       juce::Path bodyShape;
@@ -462,8 +425,17 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             juce::Rectangle<float>(x, y + 1.0f, renderedWidth,
                                    std::max(2.0f, h - 2.0f))
                 .reduced(0.0f, 0.5f);
-        const float rounding = juce::jmin(4.5f, segmentBounds.getHeight() * 0.35f);
+        // Melodyne reads the segment as a soft pill, not a sharp rectangle:
+        // the corner radius grows with the row height.
+        const float rounding =
+            juce::jmin(9.0f, segmentBounds.getHeight() * 0.46f);
         const bool selected = note.isSelected();
+
+        // A faint drop shadow lifts the blob off the semitone row.
+        g.setColour(juce::Colours::black.withAlpha(0.28f));
+        g.fillRoundedRectangle(segmentBounds.translated(0.0f, 1.0f)
+                                   .expanded(0.5f, 0.0f),
+                               rounding);
 
         setNoteGradientFill(g, segmentBounds, segmentBounds.getCentreY(), noteColours);
         g.fillRoundedRectangle(segmentBounds, rounding);
@@ -506,9 +478,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                             waveHeight * 0.5f);
             wavePath.closeSubPath();
 
-            g.setColour(APP_COLOR_NOTE_WAVE.withAlpha(selected ? 0.40f : 0.28f));
+            // White waveform, as in Melodyne; the blob colour stays amber.
+            g.setColour(juce::Colours::white.withAlpha(selected ? 0.75f : 0.62f));
             g.fillPath(wavePath);
-            g.setColour(juce::Colours::white.withAlpha(selected ? 0.28f : 0.14f));
+            g.setColour(juce::Colours::white.withAlpha(selected ? 0.36f : 0.22f));
             g.drawLine(left, centreY, left + renderedWidth, centreY, 0.8f);
           }
         }
@@ -536,9 +509,9 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                    .removeFromTop(1.0f),
                                rounding * 0.5f);
         g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
-                             : juce::Colour(0xCC0E2738u));
+                             : juce::Colour(0xFF6E3510u));
         g.drawRoundedRectangle(segmentBounds.reduced(0.5f), rounding,
-                               selected ? 1.6f : 1.0f);
+                               selected ? 1.6f : 1.2f);
         if (selected)
         {
           g.setColour(APP_COLOR_ACCENT_SELECT.withAlpha(0.55f));
@@ -859,8 +832,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
 
-      const auto labelFont =
-          juce::Font("Montserrat", "Regular", 11.0f).withPointHeight(11.0f);
+      const auto labelFont = AppFont::getFont(12.0f);
       const float labelWidth = std::max(
           60.0f, static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
                      labelFont, label)) + 16.0f);
