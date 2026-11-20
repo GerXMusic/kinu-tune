@@ -143,11 +143,11 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
   // any per-note pitch offset, including the live drag preview.
   if (params.showDeltaPitch)
   {
-    // Melodyne draws a warm red pitch contour over the amber blob. It is the
-    // only element that tells the tuning; the blob colour must stay neutral.
+    // Blue pitch contour, as before the Melodyne palette experiment. It is
+    // the only element that tells the tuning; the note body stays steel blue.
     const auto curveColour =
         greyscale ? APP_COLOR_PITCH_CURVE.withSaturation(0.0f)
-                  : juce::Colour(0xFFE2573Au);
+                  : APP_COLOR_PRIMARY;
     g.setColour(curveColour.withMultipliedAlpha(
         juce::jlimit(0.0f, 1.0f, params.pitchCurveAlpha)));
 

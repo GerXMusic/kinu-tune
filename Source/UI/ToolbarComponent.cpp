@@ -25,7 +25,7 @@ class ModeButtonLook final : public juce::LookAndFeel_V4
 public:
     juce::Font getTextButtonFont(juce::TextButton&, int) override
     {
-        return AppFont::getFont(11.5f);
+        return AppFont::getFont(14.5f);
     }
 };
 
@@ -65,12 +65,12 @@ void ToolbarComponent::ToolIconButton::paintButton(juce::Graphics& g, bool over,
         g.fillRoundedRectangle(bounds, 7.0f);
     }
 
-    const auto iconBox = bounds.withSizeKeepingCentre(bounds.getHeight() * 0.52f,
-                                                      bounds.getHeight() * 0.52f);
+    const auto iconBox = bounds.withSizeKeepingCentre(bounds.getHeight() * 0.58f,
+                                                      bounds.getHeight() * 0.58f);
     drawGuiIcon(g, icon, iconBox,
                 active ? APP_COLOR_PRIMARY_GLOW
                        : (over ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_RAIL_ICON),
-                1.65f);
+                1.75f);
 }
 
 ToolbarComponent::ToolbarComponent()
@@ -171,7 +171,10 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(scaleButton);
     addAndMakeVisible(tempoButton);
     addAndMakeVisible(gridButton);
-    addAndMakeVisible(engineButton);
+    // The engine summary chip was removed: the engine in use is chosen in the
+    // Motor drawer, and the top bar no longer announces it.
+    addChildComponent(engineButton);
+    engineButton.setVisible(false);
 
     // Tooltips and captions come from the string table.
     refreshLocalisedText();
@@ -248,7 +251,7 @@ void ToolbarComponent::paint(juce::Graphics& g)
     const auto active = uiMode == EditorUiMode::Basic
                             ? modeSwitchBounds.withWidth(half)
                             : modeSwitchBounds.withTrimmedLeft(half);
-    g.setColour(APP_COLOR_RAIL_ACTIVE.brighter(0.10f));
+    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.22f));
     g.fillRoundedRectangle(active.toFloat().reduced(2.0f), 5.5f);
     g.setColour(APP_COLOR_PRIMARY);
     g.fillRoundedRectangle(active.toFloat().reduced(2.0f).removeFromBottom(2.0f), 1.0f);
@@ -271,13 +274,8 @@ void ToolbarComponent::paint(juce::Graphics& g)
         g.drawRoundedRectangle(rightGroupBounds.toFloat().reduced(0.5f), 9.0f, 1.0f);
     }
 
-    // Engine chip: a small dot in front of the engine name.
-    if (engineButton.isVisible())
-    {
-        const auto r = engineButton.getBounds().toFloat();
-        g.setColour(APP_COLOR_PRIMARY);
-        g.fillEllipse(r.getX() + 4.0f, r.getCentreY() - 2.5f, 5.0f, 5.0f);
-    }
+    // Engine chip: removed from the bar. The engine in use is shown in the
+    // Motor drawer; the top bar keeps only the scale, tempo and grid.
 }
 
 void ToolbarComponent::resized()
@@ -337,10 +335,9 @@ void ToolbarComponent::resized()
         x += kToolSlot + kToolGap;
     }
 
-    // Right group: engine, scale, tempo, grid, undo/redo.
+    // Right group: scale, tempo, grid, undo/redo.
     const bool compact = getWidth() < 1000;
     bool showTempo = getWidth() >= 1080;
-    bool showEngine = getWidth() >= 980;
     const int rightW = getWidth() < 900 ? 250 : (compact ? 300 : 380);
     auto right = bounds.removeFromRight(rightW);
     rightGroupBounds = right;
@@ -363,9 +360,8 @@ void ToolbarComponent::resized()
 
     placeRight(scaleButton, compact ? 100 : 124);
 
-    engineButton.setVisible(showEngine);
-    if (showEngine)
-        placeRight(engineButton, compact ? 82 : 96);
+    engineButton.setVisible(false);
+    engineButton.setBounds({});
 
     // Old hidden controls and overlays.
     timeLabel.setVisible(false);
@@ -494,7 +490,7 @@ void ToolbarComponent::showScaleMenu()
     static const char* names[] = {"C", "C#", "D", "D#", "E", "F",
                                   "F#", "G", "G#", "A", "A#", "B"};
     for (int i = 0; i < 12; ++i)
-        roots.addItem(100 + i, names[i]);
+        roots.addItem(100 + i, names[i], true, scaleRootLabel == names[i]);
     menu.addSubMenu(TR("scale.root"), roots);
 
     juce::PopupMenu modes;
@@ -508,8 +504,20 @@ void ToolbarComponent::showScaleMenu()
         {"scale.phrygian", 11}, {"scale.phrygian_dominant", 12},
         {"scale.whole_tone", 13}};
     for (const auto& entry : modeEntries)
-        modes.addItem(200 + entry.value, TR(entry.key));
+    {
+        const auto label = TR(entry.key);
+        modes.addItem(200 + entry.value, label, true, label == scaleModeLabel);
+    }
     menu.addSubMenu(TR("scale.mode"), modes);
+
+    // The two switches that used to live in the inspector's Editor Scale card
+    // now sit here, with the root and the mode, so the top dropdown is the
+    // single place for the editor scale.
+    menu.addSeparator();
+    menu.addItem(300, TR("inspector.use_project_key"), true,
+                 isProjectKeyUsed && isProjectKeyUsed());
+    menu.addItem(301, TR("inspector.snap_scale"), true,
+                 isSnapToScale && isSnapToScale());
 
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&scaleButton),
                        [this](int result) {
@@ -523,6 +531,12 @@ void ToolbarComponent::showScaleMenu()
                                if (onScaleModeSelected)
                                    onScaleModeSelected(result - 200);
                            }
+                           else if (result == 300 && onProjectKeyUsedChanged &&
+                                    isProjectKeyUsed)
+                               onProjectKeyUsedChanged(!isProjectKeyUsed());
+                           else if (result == 301 && onSnapToScaleChanged &&
+                                    isSnapToScale)
+                               onSnapToScaleChanged(!isSnapToScale());
                        });
 }
 

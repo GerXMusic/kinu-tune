@@ -16,7 +16,7 @@ struct NoteGradientColours {
 NoteGradientColours getNoteGradientColours() {
   // Same fixed amber as the editor blobs: the overview must not imply a
   // tuning state from colour either.
-  return {juce::Colour(0xFFF0A54Fu), juce::Colour(0xFFA9551Au)};
+  return {juce::Colour(0xFF5E93D6u), juce::Colour(0xFF304861u)};
 }
 
 float noteRangeY(float midi, float minPitch, float maxPitch,

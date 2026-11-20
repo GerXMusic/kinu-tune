@@ -240,16 +240,13 @@ VariAudioInspector::VariAudioInspector()
     viewport.setScrollBarThickness(kScrollBarThickness);
     addAndMakeVisible(viewport);
 
-    for (auto* header : {&variAudioHeader, &editorScaleHeader})
-    {
-        header->setFont(AppFont::getBoldFont(16.0f));
-        header->setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
-        content.addAndMakeVisible(*header);
-    }
+    variAudioHeader.setFont(AppFont::getBoldFont(16.0f));
+    variAudioHeader.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    content.addAndMakeVisible(variAudioHeader);
 
     for (auto* label : {&smartControlsLabel, &snapModeLabel, &engineLabel})
     {
-        label->setFont(AppFont::getFont(13.0f));
+        label->setFont(AppFont::getFont(14.0f));
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         content.addAndMakeVisible(*label);
     }
@@ -388,7 +385,6 @@ VariAudioInspector::VariAudioInspector()
             onEditorScaleChanged();
         refreshFromProject();
     };
-    content.addAndMakeVisible(useProjectKeyToggle);
 
     styleCombo(scaleRootBox);
     for (size_t i = 0; i < kRootLabels.size(); ++i)
@@ -401,7 +397,6 @@ VariAudioInspector::VariAudioInspector()
         if (id >= 1 && id <= static_cast<int>(kRootLabels.size()))
             applyScaleRoot(id - 1);
     };
-    content.addAndMakeVisible(scaleRootBox);
 
     styleCombo(scaleModeBox);
     scaleModeBox.setTextWhenNothingSelected("-");
@@ -412,7 +407,6 @@ VariAudioInspector::VariAudioInspector()
         if (id >= 1 && id <= static_cast<int>(kModeOptions.size()))
             applyScaleMode(kModeOptions[static_cast<size_t>(id - 1)].mode);
     };
-    content.addAndMakeVisible(scaleModeBox);
 
     snapScaleToggle.onClick = [this]
     {
@@ -421,10 +415,6 @@ VariAudioInspector::VariAudioInspector()
                                       ? DragSnapMode::Scale
                                       : DragSnapMode::Chromatic);
     };
-    content.addAndMakeVisible(snapScaleToggle);
-
-    harmonyPanel.getCurrentProject = [this] { return getCurrentProject ? getCurrentProject() : nullptr; };
-    content.addAndMakeVisible(harmonyPanel);
 
     refreshLocalisedText();
     // Selection, snap state and values change from many places (canvas,
@@ -682,14 +672,14 @@ void VariAudioInspector::paint(juce::Graphics& g)
 void VariAudioInspector::paintContent(juce::Graphics& g)
 {
     constexpr float radius = 8.0f;
-    for (const auto& cardBounds : {variAudioCardBounds, editorScaleCardBounds})
-    {
-        auto rect = cardBounds.toFloat();
-        g.setColour(juce::Colour(0xFF171717u));
-        g.fillRoundedRectangle(rect, radius);
-        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
-        g.drawRoundedRectangle(rect.reduced(0.5f), radius, 0.75f);
-    }
+    // Card backgrounds: the note inspector is the only card left; the editor
+    // scale moved to the top scale dropdown and harmony has its own rail
+    // drawer, so neither is repeated here.
+    auto rect = variAudioCardBounds.toFloat();
+    g.setColour(juce::Colour(0xFF171717u));
+    g.fillRoundedRectangle(rect, radius);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+    g.drawRoundedRectangle(rect.reduced(0.5f), radius, 0.75f);
 
     // Rows sit in one framed box, separated by hairlines, as in Cubase.
     auto box = rowsBoxBounds.toFloat();
@@ -721,8 +711,7 @@ void VariAudioInspector::paintContent(juce::Graphics& g)
 
 int VariAudioInspector::getContentHeight() const
 {
-    return kPadY + kVariAudioCardHeight + kPadY + kEditorScaleCardHeight +
-           harmonyPanel.getPreferredHeight() + kPadY;
+    return kPadY + kVariAudioCardHeight + kPadY;
 }
 
 void VariAudioInspector::resized()
@@ -785,24 +774,5 @@ void VariAudioInspector::layoutContent(int width)
     macroArea.removeFromTop(4);
     levelingButton.setBounds(macroArea.removeFromTop(kMacroRowHeight));
 
-    // Editor scale, as in Cubase: the scale the harmony buttons follow.
-    area.removeFromTop(kPadY);
-    editorScaleCardBounds = area.removeFromTop(kEditorScaleCardHeight);
-    auto scaleCard = editorScaleCardBounds.reduced(kInnerPadX, kInnerPadY);
-    editorScaleHeader.setBounds(scaleCard.removeFromTop(kHeaderHeight));
-    scaleCard.removeFromTop(kRowGap);
-    useProjectKeyToggle.setBounds(scaleCard.removeFromTop(kToggleHeight));
-    scaleCard.removeFromTop(kRowGap);
-    auto scaleRow = scaleCard.removeFromTop(kMenuRowHeight);
-    scaleRootBox.setBounds(scaleRow.removeFromLeft(kRootMenuWidth).reduced(0, 1));
-    scaleRow.removeFromLeft(kMenuGap);
-    scaleModeBox.setBounds(scaleRow.reduced(0, 1));
-    scaleCard.removeFromTop(kRowGap);
-    snapScaleToggle.setBounds(scaleCard.removeFromTop(kToggleHeight));
-
-    // HarmonyPanel pads itself like the side-panel cards; give it the column.
-    area.setX(area.getX() - kPadX);
-    area.setWidth(width);
-    harmonyPanel.setBounds(area.removeFromTop(harmonyPanel.getPreferredHeight()));
     content.repaint();
 }

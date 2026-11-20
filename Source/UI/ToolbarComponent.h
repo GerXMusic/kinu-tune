@@ -153,6 +153,11 @@ public:
     std::function<void(EditorTool)> onToolSelected;
     std::function<void(int)> onScaleRootSelected;
     std::function<void(int)> onScaleModeSelected;
+    // Editor scale switches, now part of the top scale dropdown.
+    std::function<bool()> isProjectKeyUsed;
+    std::function<void(bool)> onProjectKeyUsedChanged;
+    std::function<bool()> isSnapToScale;
+    std::function<void(bool)> onSnapToScaleChanged;
     std::function<void(int)> onGridDivisionSelected;
     std::function<void()> onEngineClicked;
     // Clip / Track view toggle (ARA only). Hidden until made available.

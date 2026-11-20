@@ -836,10 +836,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     parameterPanel.updateGlobalSliders();
     notifyProjectDataChanged();
   };
-  auto &harmonyPanel = variAudioInspector.getHarmonyPanel();
-  harmonyPanel.onHarmonyRequested =
-      [this](HarmonyUtils::Interval interval, bool up)
-  { return pianoRoll.applyHarmonyInterval(interval, up); };
   variAudioInspector.isProjectKeyScope = [this] { return isTrackViewMode(); };
   variAudioInspector.onEditorScaleChanged = [this]
   {
@@ -910,8 +906,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.onProjectBound = [this](Project *)
   {
     // Every path that rebinds the project goes through the parameter panel,
-    // so the inspector and harmony card follow it from here.
-    variAudioInspector.getHarmonyPanel().refreshProject();
+    // so the inspector and the harmony drawer follow it from here.
+    railHarmonyPanel.refreshProject();
     variAudioInspector.refresh();
     if (hasCachedHostTimelineState)
       updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
@@ -1077,6 +1073,36 @@ MainComponent::MainComponent(bool enableAudioDevice)
         ScaleMode::PhrygianDominant, ScaleMode::WholeTone};
     if (modeIndex >= 0 && modeIndex < 14)
       variAudioInspector.selectScaleMode(modes[modeIndex]);
+  };
+  // The two Editor Scale switches now live in the top scale dropdown.
+  toolbar.isProjectKeyUsed = [this]
+  {
+    const auto* project = getProject();
+    return project != nullptr && project->getUseProjectKey();
+  };
+  toolbar.onProjectKeyUsedChanged = [this](bool useProjectKey)
+  {
+    auto* project = getProject();
+    if (project == nullptr)
+      return;
+    project->setUseProjectKey(useProjectKey);
+    pianoRoll.refreshScaleFromProject();
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
+  };
+  toolbar.isSnapToScale = [this]
+  {
+    const auto* project = getProject();
+    return project != nullptr && project->getDragSnapMode() == DragSnapMode::Scale;
+  };
+  toolbar.onSnapToScaleChanged = [this](bool snapToScale)
+  {
+    if (getProject() == nullptr)
+      return;
+    pianoRoll.setDragSnapMode(snapToScale ? DragSnapMode::Scale
+                                          : DragSnapMode::Chromatic);
+    parameterPanel.updateGlobalSliders();
+    notifyProjectDataChanged();
   };
   toolbar.onGridDivisionSelected = [this](int index)
   {

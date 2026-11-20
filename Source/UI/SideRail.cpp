@@ -129,6 +129,7 @@ void SideRail::rebuildButtons()
         auto button = std::make_unique<RailButton>(item.id, item.icon);
         button->onClick = [this, id = item.id] { togglePanel(id); };
         button->setTooltip(TR(item.title.toRawUTF8()));
+        button->setActive(item.id == openId);
         button->setVisible(item.available &&
                            (!item.advancedOnly || editorMode == EditorUiMode::Advanced));
         addAndMakeVisible(*button);
@@ -163,6 +164,11 @@ void SideRail::setOpenId(const juce::String& id)
             previous->content->setVisible(false);
 
     openId = id;
+    // The open drawer's icon is highlighted, so the rail shows which panel is
+    // selected instead of every icon looking the same.
+    for (size_t i = 0; i < buttons.size() && i < items.size(); ++i)
+        if (buttons[i] != nullptr)
+            buttons[i]->setActive(items[i].id == openId);
     if (auto* item = findItem(openId))
         if (item->content != nullptr)
         {

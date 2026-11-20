@@ -8,7 +8,6 @@
 #include "../Models/Project.h"
 #include "../Utils/Localization.h"
 #include "Components/StyledWidgets.h"
-#include "HarmonyPanel.h"
 #include "GuiTypes.h"
 #include <array>
 #include <functional>
@@ -43,8 +42,6 @@ public:
     // Used by the top-bar global scale control; same path as the menus.
     void selectScaleRoot(int root) { applyScaleRoot(root); }
     void selectScaleMode(ScaleMode mode) { applyScaleMode(mode); }
-
-    HarmonyPanel& getHarmonyPanel() { return harmonyPanel; }
 
     // Asked on every refresh; never cached (see HarmonyPanel).
     std::function<Project*()> getCurrentProject;
@@ -179,8 +176,6 @@ private:
     int shownEngineId = 0;
     int shownRootId = 0;
     int shownModeId = 0;
-
-    HarmonyPanel harmonyPanel; // draws its own card and title
 
     LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 

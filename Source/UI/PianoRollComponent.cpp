@@ -782,10 +782,11 @@ void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
       return;
     const float startX = timeToX(startSeconds);
     const float endX = timeToX(endSeconds);
-    g.setColour(juce::Colours::white.withAlpha(0.04f));
-    g.fillRect(startX, 0.0f, endX - startX, height);
+    // No backdrop fill: with the take no longer drawn behind the canvas, a
+    // translucent rectangle across the region read as a stray box. Only the
+    // source boundaries stay, faintly.
     if (drawBoundaries) {
-      g.setColour(juce::Colours::white.withAlpha(0.25f));
+      g.setColour(juce::Colours::white.withAlpha(0.12f));
       g.fillRect(startX - 0.5f, 0.0f, 1.0f, height);
       g.fillRect(endX - 0.5f, 0.0f, 1.0f, height);
     }
@@ -1151,9 +1152,15 @@ void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
     const float x1 = hx(region.startSeconds);
     const float x2 = hx(region.endSeconds);
 
-    g.setColour(juce::Colours::white.withAlpha(0.04f));
-    g.fillRect(x1, 0.0f, x2 - x1, height);
-    g.setColour(juce::Colours::white.withAlpha(0.25f));
+    // The active region no longer gets a translucent backdrop (it read as a
+    // stray rectangle); only its boundaries remain. Inactive regions keep a
+    // faint wash so they still read as separate takes.
+    if (!region.active)
+    {
+      g.setColour(juce::Colours::white.withAlpha(0.03f));
+      g.fillRect(x1, 0.0f, x2 - x1, height);
+    }
+    g.setColour(juce::Colours::white.withAlpha(region.active ? 0.12f : 0.20f));
     g.fillRect(x1 - 0.5f, 0.0f, 1.0f, height);
     g.fillRect(x2 - 0.5f, 0.0f, 1.0f, height);
 
@@ -2251,6 +2258,19 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  // Whatever path this event takes (note drag, box selection, popup, early
+  // return), the marquee must not outlive the button release: a stuck
+  // selection rectangle would stay painted over the canvas.
+  struct MarqueeEnder
+  {
+    BoxSelector *selector;
+    ~MarqueeEnder()
+    {
+      if (selector != nullptr)
+        selector->endSelection();
+    }
+  } marqueeEnder{boxSelector.get()};
+
   if (toolPillGesture)
   {
     toolPillGesture = false;

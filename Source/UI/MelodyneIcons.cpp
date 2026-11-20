@@ -100,12 +100,14 @@ void drawGuiIcon(juce::Graphics& g, GuiIcon icon, juce::Rectangle<float> bounds,
     }
     case GuiIcon::Harmony:
     {
-        g.drawLine({ at(0.64f, 0.12f), at(0.64f, 0.72f) }, strokeWidth * 1.4f);
-        g.drawLine({ at(0.64f, 0.12f), at(0.88f, 0.18f) }, strokeWidth * 1.4f);
+        // Quarter-note glyph centred in the icon box. The old path started at
+        // x = 0.46 and ran to 0.88, so the whole icon read shifted right.
+        g.drawLine({ at(0.52f, 0.12f), at(0.52f, 0.72f) }, strokeWidth * 1.4f);
+        g.drawLine({ at(0.52f, 0.12f), at(0.76f, 0.18f) }, strokeWidth * 1.4f);
         g.fillEllipse(juce::Rectangle<float>(0.0f, 0.0f, 0.24f * w, 0.18f * h)
-                          .withCentre(at(0.52f, 0.76f)));
+                          .withCentre(at(0.40f, 0.76f)));
         g.fillEllipse(juce::Rectangle<float>(0.0f, 0.0f, 0.15f * w, 0.15f * h)
-                          .withCentre(at(0.78f, 0.70f)));
+                          .withCentre(at(0.66f, 0.70f)));
         break;
     }
     case GuiIcon::MidiGuide:

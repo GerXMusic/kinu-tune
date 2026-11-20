@@ -26,12 +26,11 @@ struct NoteGradientColours
 
 NoteGradientColours getNoteGradientColours()
 {
-  // Melodyne note colour. Every blob is the same warm amber, whatever its
-  // tuning: a note must never read as "in tune" or "out of tune" from its
-  // colour, only the pitch curve on top tells that story. The waveform inside
-  // stays white, as in Melodyne.
-  static const juce::Colour centre(0xFFF0A54Fu);
-  static const juce::Colour side(0xFFA9551Au);
+  // Steel-blue note body, the colour the editor used before the Melodyne
+  // palette experiment. The waveform inside stays white and the pitch curve
+  // on top is the only element that tells the tuning.
+  static const juce::Colour centre(0xFF5E93D6u);
+  static const juce::Colour side(0xFF304861u);
   return {centre, side};
 }
 
@@ -509,7 +508,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                    .removeFromTop(1.0f),
                                rounding * 0.5f);
         g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
-                             : juce::Colour(0xFF6E3510u));
+                             : juce::Colour(0xFF2B7FD3u));
         g.drawRoundedRectangle(segmentBounds.reduced(0.5f), rounding,
                                selected ? 1.6f : 1.2f);
         if (selected)

@@ -127,7 +127,7 @@ void ToolPill::paint(juce::Graphics& g)
 
     if (hovered >= 0 && hovered < count && hoverLabel.isNotEmpty())
     {
-        const auto labelFont = AppFont::getFont(10.5f);
+        const auto labelFont = AppFont::getFont(12.0f);
         const float width =
             static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
                 labelFont, hoverLabel)) + 14.0f;
