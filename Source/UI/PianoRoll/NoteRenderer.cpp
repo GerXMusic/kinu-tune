@@ -449,7 +449,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             renderedWidth > 6.0f && endSample > startSample)
         {
           const float centreY = segmentBounds.getCentreY();
-          const float waveHeight = std::max(2.0f, segmentBounds.getHeight() - 3.0f);
+          const float waveHeight = std::max(2.0f, segmentBounds.getHeight() - 2.0f);
           const int pointCount = std::max(
               2, std::min(1024,
                           static_cast<int>(std::ceil(renderedWidth)) + 1));
@@ -458,6 +458,24 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
               renderedWidth, audioData.sampleRate, pixelsPerSecond, true,
               pitchToolController ? pitchToolController->getAmplitudePreviewGain(note)
                                   : 1.0f);
+
+          // The envelope is an absolute RMS, so on quiet material it shrinks
+          // to a couple of pixels and the blob reads as a plain MIDI bar.
+          // Lift each note up to a similar visual size (capped, so a silent
+          // segment is not blown up into noise) while keeping the relative
+          // shape inside the note.
+          if (!waveValues.empty())
+          {
+            const float peak =
+                *std::max_element(waveValues.begin(), waveValues.end());
+            if (peak > 0.03f)
+            {
+              const float gain = std::min(6.0f, 0.85f / peak);
+              if (gain > 1.0f)
+                for (auto &value : waveValues)
+                  value = std::min(1.0f, value * gain);
+            }
+          }
 
           const size_t numPoints = waveValues.size();
           if (numPoints >= 2)
@@ -477,10 +495,11 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                             waveHeight * 0.5f);
             wavePath.closeSubPath();
 
-            // White waveform, as in Melodyne; the blob colour stays amber.
-            g.setColour(juce::Colours::white.withAlpha(selected ? 0.75f : 0.62f));
+            // Blue waveform over the steel-blue blob, as the user asked: the
+            // tuning curve on top is white, so only the contour is white.
+            g.setColour(juce::Colour(0xFF0E2B4Au).withAlpha(selected ? 0.95f : 0.84f));
             g.fillPath(wavePath);
-            g.setColour(juce::Colours::white.withAlpha(selected ? 0.36f : 0.22f));
+            g.setColour(juce::Colour(0xFF8FC6F5u).withAlpha(selected ? 0.55f : 0.38f));
             g.drawLine(left, centreY, left + renderedWidth, centreY, 0.8f);
           }
         }
