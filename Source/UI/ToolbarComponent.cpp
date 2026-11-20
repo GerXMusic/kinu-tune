@@ -1,16 +1,83 @@
 #include "ToolbarComponent.h"
 #include "PianoRollComponent.h" // For EditMode enum
 #include "StyledComponents.h"
+#include "Components/AppFont.h"
+#include "MelodyneIcons.h"
 #include "../Utils/Localization.h"
 #include "../Utils/UI/TimecodeFont.h"
 #include "BinaryData.h"
 
+namespace
+{
+constexpr int kToolSlot = 34;
+constexpr int kToolGap = 2;
+constexpr int kTransportSlot = 28;
+
+void styleFlatTextButton(juce::TextButton& button)
+{
+    button.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    button.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    button.setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+    button.setColour(juce::TextButton::textColourOnId, APP_COLOR_TEXT_PRIMARY);
+}
+
+class ModeButtonLook final : public juce::LookAndFeel_V4
+{
+public:
+    juce::Font getTextButtonFont(juce::TextButton&, int) override
+    {
+        return AppFont::getFont(11.5f);
+    }
+};
+
+ModeButtonLook& modeButtonLook()
+{
+    static ModeButtonLook look;
+    return look;
+}
+} // namespace
+
+ToolbarComponent::ToolIconButton::ToolIconButton(EditorTool toolToUse, GuiIcon iconToUse)
+    : juce::Button("tool"), tool(toolToUse), icon(iconToUse)
+{
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    refreshTooltip();
+}
+
+void ToolbarComponent::ToolIconButton::refreshTooltip()
+{
+    setTooltip(TR(toolLabelKey(tool)));
+}
+
+void ToolbarComponent::ToolIconButton::paintButton(juce::Graphics& g, bool over,
+                                                   bool down)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    if (active)
+    {
+        g.setColour(APP_COLOR_PRIMARY.withAlpha(0.20f));
+        g.fillRoundedRectangle(bounds, 7.0f);
+        g.setColour(APP_COLOR_PRIMARY.withAlpha(0.85f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 7.0f, 1.0f);
+    }
+    else if (over || down)
+    {
+        g.setColour(APP_COLOR_RAIL_ACTIVE.withAlpha(down ? 0.95f : 0.7f));
+        g.fillRoundedRectangle(bounds, 7.0f);
+    }
+
+    const auto iconBox = bounds.withSizeKeepingCentre(bounds.getHeight() * 0.52f,
+                                                      bounds.getHeight() * 0.52f);
+    drawGuiIcon(g, icon, iconBox,
+                active ? APP_COLOR_PRIMARY_GLOW
+                       : (over ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_RAIL_ICON),
+                1.65f);
+}
+
 ToolbarComponent::ToolbarComponent()
 {
-    auto loadImage = [](const void *data, int size)
-    {
-        return juce::ImageFileFormat::loadFrom(data, static_cast<size_t>(size));
-    };
+    auto loadImage = [](const void* data, int size)
+    { return juce::ImageFileFormat::loadFrom(data, static_cast<size_t>(size)); };
 
     recordButton.setImage(loadImage(BinaryData::record_png, BinaryData::record_pngSize));
     playButton.setImage(loadImage(BinaryData::play_png, BinaryData::play_pngSize));
@@ -28,34 +95,31 @@ ToolbarComponent::ToolbarComponent()
     followButton.setImage(loadImage(BinaryData::scroll_png, BinaryData::scroll_pngSize));
     parametersButton.setImage(loadImage(BinaryData::side_png, BinaryData::side_pngSize));
     leftPanelButton.setImage(loadImage(BinaryData::tracks_png, BinaryData::tracks_pngSize));
-    // region.png: clip icon (off) / track icon (on), each with a hover frame.
     trackViewButton.setImage(loadImage(BinaryData::region_png, BinaryData::region_pngSize));
 
-    // Configure buttons
+    // Transport and history stay on the left/right ends, as in Melodyne.
     addChildComponent(recordButton);
     addAndMakeVisible(playButton);
     addAndMakeVisible(stopButton);
     addAndMakeVisible(loopButton);
-    addAndMakeVisible(selectModeButton);
-    addAndMakeVisible(splitModeButton);
-    addAndMakeVisible(pitchDrawingModeButton);
-    addAndMakeVisible(timingModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(auditionButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
-    addAndMakeVisible(parametersButton);
-    addChildComponent(leftPanelButton); // shown only in ARA mode
-    addChildComponent(trackViewButton); // shown only in ARA mode
+    addChildComponent(parametersButton);
+    addChildComponent(leftPanelButton);
+    addChildComponent(trackViewButton);
+    // The old four tool buttons are kept as state holders for existing
+    // callbacks, but the Melodyne row below is what the user sees.
+    addChildComponent(selectModeButton);
+    addChildComponent(splitModeButton);
+    addChildComponent(pitchDrawingModeButton);
+    addChildComponent(timingModeButton);
 
     recordButton.addListener(this);
     playButton.addListener(this);
     stopButton.addListener(this);
     loopButton.addListener(this);
-    selectModeButton.addListener(this);
-    splitModeButton.addListener(this);
-    pitchDrawingModeButton.addListener(this);
-    timingModeButton.addListener(this);
     followButton.addListener(this);
     auditionButton.addListener(this);
     undoButton.addListener(this);
@@ -63,260 +127,274 @@ ToolbarComponent::ToolbarComponent()
     parametersButton.addListener(this);
     leftPanelButton.addListener(this);
     trackViewButton.addListener(this);
+    selectModeButton.addListener(this);
+    splitModeButton.addListener(this);
+    pitchDrawingModeButton.addListener(this);
+    timingModeButton.addListener(this);
 
-    // Tooltips and the zoom caption all come from the string table; they are
-    // set here and re-set whenever the language changes.
+    // Melodyne tool row.
+    const EditorTool tools[] = {EditorTool::Main, EditorTool::Pitch,
+                                EditorTool::Formant, EditorTool::Amplitude,
+                                EditorTool::Separation, EditorTool::Timing};
+    for (size_t i = 0; i < toolButtons.size(); ++i)
+    {
+        toolButtons[i] = std::make_unique<ToolIconButton>(tools[i], iconForTool(tools[i]));
+        toolButtons[i]->onClick = [this, tool = tools[i]] {
+            setActiveTool(tool);
+            if (onToolSelected)
+                onToolSelected(tool);
+        };
+        addAndMakeVisible(*toolButtons[i]);
+    }
+
+    styleFlatTextButton(basicModeButton);
+    styleFlatTextButton(advancedModeButton);
+    basicModeButton.setLookAndFeel(&modeButtonLook());
+    advancedModeButton.setLookAndFeel(&modeButtonLook());
+    styleFlatTextButton(scaleButton);
+    styleFlatTextButton(tempoButton);
+    styleFlatTextButton(gridButton);
+    styleFlatTextButton(engineButton);
+
+    basicModeButton.onClick = [this] { setUiMode(EditorUiMode::Basic);
+                                       if (onUiModeChanged) onUiModeChanged(EditorUiMode::Basic); };
+    advancedModeButton.onClick = [this] { setUiMode(EditorUiMode::Advanced);
+                                          if (onUiModeChanged) onUiModeChanged(EditorUiMode::Advanced); };
+    scaleButton.onClick = [this] { showScaleMenu(); };
+    gridButton.onClick = [this] { showGridMenu(); };
+    engineButton.onClick = [this] { if (onEngineClicked) onEngineClicked(); };
+    tempoButton.setMouseCursor(juce::MouseCursor::NormalCursor);
+
+    addAndMakeVisible(basicModeButton);
+    addAndMakeVisible(advancedModeButton);
+    addAndMakeVisible(scaleButton);
+    addAndMakeVisible(tempoButton);
+    addAndMakeVisible(gridButton);
+    addAndMakeVisible(engineButton);
+
+    // Tooltips and captions come from the string table.
     refreshLocalisedText();
 
-    // Set default active states
     selectModeButton.setToggleState(true, juce::dontSendNotification);
     followButton.setToggleState(followPlayback, juce::dontSendNotification);
     auditionButton.setToggleState(false, juce::dontSendNotification);
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
-    parametersButton.setToggleState(false, juce::dontSendNotification);
-    leftPanelButton.setToggleState(false, juce::dontSendNotification);
 
-    // Time label with app font (larger and bold for readability)
-    addAndMakeVisible(timeLabel);
+    // Time label (hidden in the compact Melodyne bar, kept for the API).
+    addChildComponent(timeLabel);
     timeLabel.setText("00:00.000 / 00:00.000", juce::dontSendNotification);
     timeLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
     timeLabel.setJustificationType(juce::Justification::centred);
     timeLabel.setFont(TimecodeFont::getBoldFont(21.0f).withHorizontalScale(0.92f));
 
-    // Zoom slider
-    addAndMakeVisible(zoomLabel);
-    addAndMakeVisible(zoomSlider);
-
+    addChildComponent(zoomLabel);
+    addChildComponent(zoomSlider);
     zoomLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-
     zoomSlider.setRange(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND, 1.0);
     zoomSlider.setValue(100.0);
     zoomSlider.setSkewFactorFromMidPoint(200.0);
     zoomSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     zoomSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     zoomSlider.addListener(this);
-
     zoomSlider.setColour(juce::Slider::backgroundColourId, APP_COLOR_SURFACE_ALT);
     zoomSlider.setColour(juce::Slider::trackColourId, APP_COLOR_PRIMARY.withAlpha(0.75f));
     zoomSlider.setColour(juce::Slider::thumbColourId, APP_COLOR_PRIMARY);
 
-    // Progress bar (hidden by default)
     addChildComponent(progressBar);
     addChildComponent(progressLabel);
-
     progressLabel.setVisible(false);
     progressBar.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xFFFF5600u));
-    progressBar.setColour(juce::ProgressBar::backgroundColourId, juce::Colours::transparentBlack);
+    progressBar.setColour(juce::ProgressBar::backgroundColourId,
+                          juce::Colours::transparentBlack);
     progressBar.setLookAndFeel(&DarkLookAndFeel::getInstance());
 
+    updateModeButtonStates();
+    updateToolButtonStates();
 }
 
 ToolbarComponent::~ToolbarComponent()
 {
+    basicModeButton.setLookAndFeel(nullptr);
+    advancedModeButton.setLookAndFeel(nullptr);
     progressBar.setLookAndFeel(nullptr);
 }
 
-void ToolbarComponent::paint(juce::Graphics &g)
+void ToolbarComponent::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
+    const auto bounds = getLocalBounds().toFloat();
 
-    // Flat surface background
-    g.setColour(juce::Colour(0xFF0D0B0Bu));
+    // Flat graphite top bar with a single hairline under it.
+    g.setColour(juce::Colour(0xFF15171Bu));
     g.fillRect(bounds);
+    g.setColour(APP_COLOR_BORDER_SUBTLE);
+    g.fillRect(0.0f, bounds.getBottom() - 1.0f, bounds.getWidth(), 1.0f);
 
     if (logoImage.isValid())
     {
         const int logoW = (logoImage.getWidth() + 1) / 2;
         const int logoH = (logoImage.getHeight() + 1) / 2;
-        const int logoX = 17;
-        const int logoY = (getHeight() - logoH) / 2;
-        g.drawImage(logoImage, logoX, logoY, logoW, logoH,
+        g.drawImage(logoImage, 15, (getHeight() - logoH) / 2, logoW, logoH,
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
     }
 
-    // Left-panel group background
-    if (!leftPanelCapsuleBounds.isEmpty())
-    {
-        g.setColour(juce::Colour(0xFF191818u));
-        g.fillRoundedRectangle(leftPanelCapsuleBounds.toFloat(), 8.0f);
-    }
+    // Segmented Basic / Advanced control.
+    g.setColour(juce::Colour(0xFF101215u));
+    g.fillRoundedRectangle(modeSwitchBounds.toFloat(), 7.0f);
+    g.setColour(APP_COLOR_BORDER_SUBTLE);
+    g.drawRoundedRectangle(modeSwitchBounds.toFloat().reduced(0.5f), 7.0f, 1.0f);
+    const int half = modeSwitchBounds.getWidth() / 2;
+    const auto active = uiMode == EditorUiMode::Basic
+                            ? modeSwitchBounds.withWidth(half)
+                            : modeSwitchBounds.withTrimmedLeft(half);
+    g.setColour(APP_COLOR_RAIL_ACTIVE.brighter(0.10f));
+    g.fillRoundedRectangle(active.toFloat().reduced(2.0f), 5.5f);
+    g.setColour(APP_COLOR_PRIMARY);
+    g.fillRoundedRectangle(active.toFloat().reduced(2.0f).removeFromBottom(2.0f), 1.0f);
 
-    // Transport capsule background
-    if (!transportCapsuleBounds.isEmpty())
-    {
-        auto capsule = transportCapsuleBounds.toFloat();
-        g.setColour(juce::Colour(0xFF191818u));
-        g.fillRoundedRectangle(capsule, 8.0f);
-    }
-
-    // Edit tools form their own capsule, matching the transport group.
+    // Tool strip background.
     if (!toolContainerBounds.isEmpty())
     {
-        g.setColour(juce::Colour(0xFF191818u));
-        g.fillRoundedRectangle(toolContainerBounds.toFloat(), 8.0f);
+        g.setColour(juce::Colour(0xFF101215u));
+        g.fillRoundedRectangle(toolContainerBounds.toFloat(), 9.0f);
+        g.setColour(APP_COLOR_BORDER_SUBTLE);
+        g.drawRoundedRectangle(toolContainerBounds.toFloat().reduced(0.5f), 9.0f, 1.0f);
+    }
+
+    // Right-side utility group.
+    if (!rightGroupBounds.isEmpty())
+    {
+        g.setColour(juce::Colour(0xFF101215u));
+        g.fillRoundedRectangle(rightGroupBounds.toFloat(), 9.0f);
+        g.setColour(APP_COLOR_BORDER_SUBTLE);
+        g.drawRoundedRectangle(rightGroupBounds.toFloat().reduced(0.5f), 9.0f, 1.0f);
+    }
+
+    // Engine chip: a small dot in front of the engine name.
+    if (engineButton.isVisible())
+    {
+        const auto r = engineButton.getBounds().toFloat();
+        g.setColour(APP_COLOR_PRIMARY);
+        g.fillEllipse(r.getX() + 4.0f, r.getCentreY() - 2.5f, 5.0f, 5.0f);
     }
 }
 
 void ToolbarComponent::resized()
 {
-    auto bounds = getLocalBounds().reduced(12, 0);
-    const auto fullToolbarBounds = bounds;
-    const int contentH = bounds.getHeight() - 2; // leave 1px top/bottom margin + 1px for separator
-    const int yOffset = 1;
-    const int capsuleH = contentH - 10; // capsule inner height with vertical padding
-    const int capsuleY = yOffset + (contentH - capsuleH) / 2;
+    auto bounds = getLocalBounds().reduced(10, 0);
+    const int centreY = bounds.getCentreY();
+    const int contentH = 34;
 
-    // =========================================================================
-    // RIGHT SIDE — Parameters button
-    // =========================================================================
-    const int rightButtonSize = 30;
-    auto rightSection = bounds.removeFromRight(250);
+    // Logo occupies the same spot as before.
+    const int logoRight = 15 + (logoImage.isValid() ? (logoImage.getWidth() + 1) / 2 : 0);
+    auto left = bounds.withTrimmedLeft(logoRight + 10);
 
-    // Parameters button — rightmost
-    auto paramBtnArea = rightSection.removeFromRight(rightButtonSize + 6);
-    parametersButton.setBounds(
-        paramBtnArea.getRight() - rightButtonSize,
-        capsuleY + (capsuleH - rightButtonSize) / 2,
-        rightButtonSize, rightButtonSize);
+    // Basic / Advanced selector, top-left as decided in gui-decision.md.
+    const int modeWidth = (getWidth() < 1100) ? 150 : 162;
+    modeSwitchBounds = {left.getX(), centreY - 13, modeWidth, 26};
+    const int half = modeWidth / 2;
+    basicModeButton.setBounds(modeSwitchBounds.withWidth(half));
+    advancedModeButton.setBounds(modeSwitchBounds.withTrimmedLeft(half));
+    left.removeFromLeft(modeWidth + 12);
 
-    // Everything left of the side-panel button sits 5px further right: the
-    // buttons below are laid out from this edge.
-    rightSection.setRight(rightSection.getRight() + 5);
+    // Transport (play/stop/loop) and the two view toggles.
+    const int transportH = 30;
+    bool showFollow = getWidth() >= 840;
+    bool showAudition = getWidth() >= 780;
+    int transportX = left.getX();
+    auto placeTransport = [&](juce::Button& button, int size = kTransportSlot) {
+        button.setBounds(transportX, centreY - size / 2, size, size);
+        transportX += size + 2;
+    };
+    if (recordButton.isVisible())
+        placeTransport(recordButton);
+    placeTransport(playButton);
+    placeTransport(stopButton);
+    placeTransport(loopButton);
+    if (showFollow)
+        placeTransport(followButton);
+    if (showAudition)
+        placeTransport(auditionButton);
+    left.removeFromLeft(transportX - left.getX() + 10);
 
-    // Clip / Track toggle, next to the side-panel button (ARA only). Takes no
-    // space when hidden, so the other modes' layout is unchanged.
-    if (trackViewAvailable)
+    // Tools sit in the remaining centre.
+    int visibleTools = 0;
+    for (auto& button : toolButtons)
     {
-        auto trackViewBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
-        trackViewButton.setBounds(trackViewBtnArea.getRight() - rightButtonSize,
-                                  capsuleY + (capsuleH - rightButtonSize) / 2,
-                                  rightButtonSize, rightButtonSize);
+        const bool advanced = button->getTool() == EditorTool::Formant ||
+                              button->getTool() == EditorTool::Amplitude;
+        const bool visible = !advanced || uiMode == EditorUiMode::Advanced;
+        button->setVisible(visible);
+        if (visible)
+            ++visibleTools;
+    }
+    const int toolGroupWidth = visibleTools * kToolSlot +
+                               juce::jmax(0, visibleTools - 1) * kToolGap + 16;
+    const int rightLimit = bounds.getRight() - 360;
+    int toolX = left.getX();
+    const int centreCandidate = bounds.getCentreX() - toolGroupWidth / 2;
+    if (centreCandidate > left.getX() && centreCandidate + toolGroupWidth < rightLimit)
+        toolX = centreCandidate;
+    toolX = juce::jmax(toolX, left.getX());
+    toolContainerBounds = {toolX, centreY - 19, toolGroupWidth, 38};
+    int x = toolContainerBounds.getX() + 8;
+    for (auto& button : toolButtons)
+    {
+        if (!button->isVisible())
+            continue;
+        button->setBounds(x, centreY - kToolSlot / 2, kToolSlot, kToolSlot);
+        x += kToolSlot + kToolGap;
     }
 
-    auto redoBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
-    redoButton.setBounds(redoBtnArea.getRight() - rightButtonSize,
-                         capsuleY + (capsuleH - rightButtonSize) / 2,
-                         rightButtonSize, rightButtonSize);
+    // Right group: engine, scale, tempo, grid, undo/redo.
+    const bool compact = getWidth() < 1000;
+    bool showTempo = getWidth() >= 1080;
+    bool showEngine = getWidth() >= 980;
+    const int rightW = getWidth() < 900 ? 250 : (compact ? 300 : 380);
+    auto right = bounds.removeFromRight(rightW);
+    rightGroupBounds = right;
+    const int utilityH = 26;
 
-    auto undoBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
-    undoButton.setBounds(undoBtnArea.getRight() - rightButtonSize,
-                         capsuleY + (capsuleH - rightButtonSize) / 2,
-                         rightButtonSize, rightButtonSize);
+    int rx = right.getRight() - 8;
+    auto placeRight = [&](juce::Component& c, int width) {
+        rx -= width;
+        c.setBounds(rx, centreY - utilityH / 2, width, utilityH);
+        rx -= 6;
+    };
 
-    auto auditionBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
-    auditionButton.setBounds(auditionBtnArea.getRight() - rightButtonSize - 4,
-                             capsuleY + (capsuleH - rightButtonSize) / 2,
-                             rightButtonSize, rightButtonSize);
+    placeRight(redoButton, 26);
+    placeRight(undoButton, 26);
+    placeRight(gridButton, 48);
 
-    // Keep the edit tools centered in the toolbar.
-    const int editToolGap = 6;
-    const int editToolPad = 15;
-    const int editToolSlotSize = 22;
-    const int editToolGroupHeight = 38;
-    const int logoRight = 17 + (logoImage.isValid()
-                                    ? (logoImage.getWidth() + 1) / 2
-                                    : 0);
-    const int editToolGroupWidth = editToolSlotSize * 4 + editToolGap * 3
-                                   + editToolPad * 2;
-    const int editToolGroupX = fullToolbarBounds.getCentreX()
-                               - editToolGroupWidth / 2;
-    const int editToolGroupY = yOffset + (contentH - editToolGroupHeight) / 2;
-    toolContainerBounds = {editToolGroupX, editToolGroupY,
-                           editToolGroupWidth, editToolGroupHeight};
-    int editToolX = toolContainerBounds.getX() + editToolPad;
+    tempoButton.setVisible(showTempo);
+    if (showTempo)
+        placeRight(tempoButton, 58);
 
-    selectModeButton.setVisible(true);
-    selectModeButton.setBounds(editToolX,
-                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
-                               editToolSlotSize, editToolSlotSize);
-    editToolX += editToolSlotSize + editToolGap;
-    splitModeButton.setVisible(true);
-    splitModeButton.setBounds(editToolX,
-                              toolContainerBounds.getCentreY() - editToolSlotSize / 2,
-                              editToolSlotSize, editToolSlotSize);
-    editToolX += editToolSlotSize + editToolGap;
-    pitchDrawingModeButton.setVisible(true);
-    pitchDrawingModeButton.setBounds(editToolX,
-                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
-                               editToolSlotSize, editToolSlotSize);
-    editToolX += editToolSlotSize + editToolGap;
-    timingModeButton.setVisible(true);
-    timingModeButton.setBounds(editToolX,
-                               toolContainerBounds.getCentreY() - editToolSlotSize / 2,
-                               editToolSlotSize, editToolSlotSize);
+    placeRight(scaleButton, compact ? 100 : 124);
 
-    // Hide the remaining controls that have been removed from the toolbar.
+    engineButton.setVisible(showEngine);
+    if (showEngine)
+        placeRight(engineButton, compact ? 82 : 96);
+
+    // Old hidden controls and overlays.
     timeLabel.setVisible(false);
     zoomLabel.setVisible(false);
     zoomSlider.setVisible(false);
     timeCapsuleBounds = {};
+    transportCapsuleBounds = {};
+    leftPanelCapsuleBounds = {};
+    parametersButton.setVisible(false);
+    leftPanelButton.setVisible(false);
+    trackViewButton.setVisible(false);
+    selectModeButton.setVisible(false);
+    splitModeButton.setVisible(false);
+    pitchDrawingModeButton.setVisible(false);
+    timingModeButton.setVisible(false);
 
-    playButton.setVisible(true);
-    stopButton.setVisible(true);
-    loopButton.setVisible(true);
-    followButton.setVisible(true);
-
-    // Keep transport beside the logo. In plugin mode these buttons request
-    // host transport changes through MainComponent.
-    const int transportSlotSize = 30;
-    const int transportPad = 9;
-    const int transportSlotStride = 28;
-    const int numTransport = recordButton.isVisible() ? 5 : 4;
-    const int capsuleW = transportSlotSize
-                         + (numTransport - 1) * transportSlotStride
-                         + transportPad * 2 + 6;
-    const int transportCapsuleH = 38;
-    const int transportCapsuleY = yOffset + (contentH - transportCapsuleH) / 2;
-
-    // Left-panel group (ARA only): its own capsule between the logo and the
-    // transport. When hidden it takes no space and the transport sits beside
-    // the logo.
-    const int firstGroupX = logoRight + 19;
-    int capsuleX = firstGroupX;
-    if (leftPanelAvailable)
-    {
-        constexpr int groupGap = 6;
-        const int leftGroupW = transportSlotSize + transportPad * 2 + 6 - 15;
-        leftPanelCapsuleBounds = {firstGroupX, transportCapsuleY,
-                                  leftGroupW, transportCapsuleH};
-        leftPanelButton.setBounds(leftPanelCapsuleBounds.getCentreX() - transportSlotSize / 2,
-                                  leftPanelCapsuleBounds.getCentreY() - transportSlotSize / 2,
-                                  transportSlotSize, transportSlotSize);
-        capsuleX = leftPanelCapsuleBounds.getRight() + groupGap;
-    }
-    else
-    {
-        leftPanelCapsuleBounds = {};
-    }
-    transportCapsuleBounds = juce::Rectangle<int>(capsuleX, transportCapsuleY, capsuleW, transportCapsuleH);
     if (showingProgress)
         progressBar.setBounds(toolContainerBounds.getX(),
                               toolContainerBounds.getBottom() - 2,
                               toolContainerBounds.getWidth(), 2);
-
-    auto setButtonInSlot = [&](juce::Button &button, int slotX)
-    {
-        const int buttonW = button.getWidth() > 0 ? button.getWidth() : transportSlotSize;
-        const int buttonH = button.getHeight() > 0 ? button.getHeight() : transportSlotSize;
-        button.setBounds(slotX + (transportSlotSize - buttonW) / 2,
-                         transportCapsuleY + (transportCapsuleH - buttonH) / 2,
-                         buttonW, buttonH);
-    };
-
-    int slotX = capsuleX + transportPad;
-    if (recordButton.isVisible()) {
-        setButtonInSlot(recordButton, slotX);
-        slotX += transportSlotStride;
-    }
-    setButtonInSlot(stopButton, slotX);
-    slotX += transportSlotStride;
-    setButtonInSlot(playButton, slotX);
-    slotX += transportSlotStride;
-    setButtonInSlot(loopButton, slotX);
-    slotX += transportSlotStride;
-    setButtonInSlot(followButton, slotX);
-    followButton.setBounds(followButton.getBounds().translated(5, 0));
 }
 
 void ToolbarComponent::refreshLocalisedText()
@@ -334,18 +412,144 @@ void ToolbarComponent::refreshLocalisedText()
     parametersButton.setTooltip(TR("panel.parameters"));
     leftPanelButton.setTooltip(TR("panel.tracks"));
     refreshTrackViewTooltip();
-#if JUCE_MAC
+#ifdef JUCE_MAC
     undoButton.setTooltip(TR("command.undo") + " (\u2318Z)");
     redoButton.setTooltip(TR("command.redo") + " (\u21e7\u2318Z)");
 #else
     undoButton.setTooltip(TR("command.undo") + " (Ctrl+Z)");
     redoButton.setTooltip(TR("command.redo") + " (Ctrl+Y)");
 #endif
+    for (auto& button : toolButtons)
+        if (button)
+            button->refreshTooltip();
 
+    basicModeButton.setButtonText(TR("mode.basic"));
+    advancedModeButton.setButtonText(TR("mode.advanced"));
+    scaleButton.setButtonText(scaleRootLabel + "  " + scaleModeLabel);
+    tempoButton.setButtonText(tempoLabelText);
+    gridButton.setButtonText(gridLabelText);
+    engineButton.setButtonText(engineLabelText);
+    scaleButton.setTooltip(TR("editor.scale"));
+    gridButton.setTooltip(TR("editor.grid"));
+    tempoButton.setTooltip(TR("editor.tempo"));
+    engineButton.setTooltip(TR("panel.rendering"));
+    refreshTrackViewTooltip();
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
+    resized();
 }
 
-void ToolbarComponent::buttonClicked(juce::Button *button)
+void ToolbarComponent::updateModeButtonStates()
+{
+    basicModeButton.setToggleState(uiMode == EditorUiMode::Basic,
+                                   juce::dontSendNotification);
+    advancedModeButton.setToggleState(uiMode == EditorUiMode::Advanced,
+                                      juce::dontSendNotification);
+    repaint();
+}
+
+void ToolbarComponent::updateToolButtonStates()
+{
+    for (auto& button : toolButtons)
+        if (button)
+            button->setActiveState(button->getTool() == activeTool);
+}
+
+void ToolbarComponent::setUiMode(EditorUiMode mode)
+{
+    uiMode = mode;
+    updateModeButtonStates();
+    resized();
+    repaint();
+}
+
+void ToolbarComponent::setActiveTool(EditorTool tool)
+{
+    activeTool = tool;
+    updateToolButtonStates();
+}
+
+void ToolbarComponent::setScaleSummary(const juce::String& root,
+                                       const juce::String& mode)
+{
+    scaleRootLabel = root;
+    scaleModeLabel = mode;
+    scaleButton.setButtonText(scaleRootLabel + "  " + scaleModeLabel);
+    resized();
+}
+
+void ToolbarComponent::setTempoSummary(const juce::String& text)
+{
+    tempoLabelText = text;
+    tempoButton.setButtonText(tempoLabelText);
+}
+
+void ToolbarComponent::setGridSummary(const juce::String& text)
+{
+    gridLabelText = text;
+    gridButton.setButtonText(gridLabelText);
+}
+
+void ToolbarComponent::setEngineSummary(const juce::String& text)
+{
+    engineLabelText = text;
+    engineButton.setButtonText(engineLabelText);
+    resized();
+}
+
+void ToolbarComponent::showScaleMenu()
+{
+    juce::PopupMenu menu;
+    juce::PopupMenu roots;
+    static const char* names[] = {"C", "C#", "D", "D#", "E", "F",
+                                  "F#", "G", "G#", "A", "A#", "B"};
+    for (int i = 0; i < 12; ++i)
+        roots.addItem(100 + i, names[i]);
+    menu.addSubMenu(TR("scale.root"), roots);
+
+    juce::PopupMenu modes;
+    struct ModeEntry { const char* key; int value; };
+    static const ModeEntry modeEntries[] = {
+        {"scale.major", 0}, {"scale.minor", 1}, {"scale.blues", 2},
+        {"scale.dorian", 3}, {"scale.harmonic_minor", 4},
+        {"scale.locrian", 5}, {"scale.lydian", 6},
+        {"scale.major_pentatonic", 7}, {"scale.melodic_minor", 8},
+        {"scale.minor_pentatonic", 9}, {"scale.mixolydian", 10},
+        {"scale.phrygian", 11}, {"scale.phrygian_dominant", 12},
+        {"scale.whole_tone", 13}};
+    for (const auto& entry : modeEntries)
+        modes.addItem(200 + entry.value, TR(entry.key));
+    menu.addSubMenu(TR("scale.mode"), modes);
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&scaleButton),
+                       [this](int result) {
+                           if (result >= 100 && result < 112)
+                           {
+                               if (onScaleRootSelected)
+                                   onScaleRootSelected(result - 100);
+                           }
+                           else if (result >= 200 && result < 214)
+                           {
+                               if (onScaleModeSelected)
+                                   onScaleModeSelected(result - 200);
+                           }
+                       });
+}
+
+void ToolbarComponent::showGridMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem(1, "1/4");
+    menu.addItem(2, "1/8");
+    menu.addItem(3, "1/16");
+    menu.addItem(4, "1/32");
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&gridButton),
+                       [this](int result) {
+                           if (result > 0 && onGridDivisionSelected)
+                               onGridDivisionSelected(result - 1);
+                       });
+}
+
+void ToolbarComponent::buttonClicked(juce::Button* button)
 {
     if (button == &recordButton)
     {
@@ -359,11 +563,8 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
             if (onPause)
                 onPause();
         }
-        else
-        {
-            if (onPlay)
-                onPlay();
-        }
+        else if (onPlay)
+            onPlay();
     }
     else if (button == &stopButton && onStop)
         onStop();
@@ -375,33 +576,15 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
             onToggleLoop(loopEnabled);
     }
     else if (button == &selectModeButton)
-    {
         setEditMode(EditMode::Select);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::Select);
-    }
     else if (button == &splitModeButton)
-    {
         setEditMode(EditMode::Split);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::Split);
-    }
     else if (button == &pitchDrawingModeButton)
-    {
         setEditMode(EditMode::PitchDrawing);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::PitchDrawing);
-    }
     else if (button == &timingModeButton)
-    {
         setEditMode(EditMode::Timing);
-        if (onEditModeChanged)
-            onEditModeChanged(EditMode::Timing);
-    }
     else if (button == &followButton)
-    {
         followPlayback = followButton.getToggleState();
-    }
     else if (button == &auditionButton)
     {
         if (onToggleAudition)
@@ -430,7 +613,7 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     }
 }
 
-void ToolbarComponent::sliderValueChanged(juce::Slider *slider)
+void ToolbarComponent::sliderValueChanged(juce::Slider* slider)
 {
     if (slider == &zoomSlider && onZoomChanged)
         onZoomChanged(static_cast<float>(slider->getValue()));
@@ -445,12 +628,7 @@ void ToolbarComponent::setPlaying(bool playing)
 void ToolbarComponent::setTransportEnabled(bool enabled)
 {
     transportEnabled = enabled;
-
-    // Capture is driven by the plugin itself, so it only follows `enabled`.
     recordButton.setEnabled(enabled);
-
-    // Play / stop / cycle command the host transport. Without a host link
-    // (non-ARA plugin mode) they cannot do anything, so keep them disabled.
     const bool hostControls = enabled && hostTransportAvailable;
     stopButton.setEnabled(hostControls);
     playButton.setEnabled(hostControls);
@@ -461,15 +639,12 @@ void ToolbarComponent::setHostTransportAvailable(bool available)
 {
     if (hostTransportAvailable == available)
         return;
-
     hostTransportAvailable = available;
-
     if (!available)
     {
         isPlaying = false;
         playButton.setToggleState(false, juce::dontSendNotification);
     }
-
     setTransportEnabled(transportEnabled);
     repaint();
 }
@@ -480,6 +655,11 @@ void ToolbarComponent::setToolGroupEnabled(bool enabled)
     splitModeButton.setEnabled(enabled);
     pitchDrawingModeButton.setEnabled(enabled);
     timingModeButton.setEnabled(enabled);
+    for (auto& button : toolButtons)
+        if (button)
+            button->setEnabled(enabled);
+    scaleButton.setEnabled(enabled);
+    gridButton.setEnabled(enabled);
 }
 
 void ToolbarComponent::setCurrentTime(double time)
@@ -502,15 +682,21 @@ void ToolbarComponent::setEditMode(EditMode mode)
     splitModeButton.setToggleState(mode == EditMode::Split,
                                    juce::dontSendNotification);
     pitchDrawingModeButton.setToggleState(mode == EditMode::PitchDrawing,
-                                    juce::dontSendNotification);
+                                          juce::dontSendNotification);
     timingModeButton.setToggleState(mode == EditMode::Timing,
                                     juce::dontSendNotification);
-    resized();
+    // Keep the visible Melodyne row in step with shortcut / menu changes.
+    const EditorTool mapped = mode == EditMode::Split          ? EditorTool::Separation
+                              : mode == EditMode::PitchDrawing ? EditorTool::Pitch
+                              : mode == EditMode::Timing       ? EditorTool::Timing
+                                                               : EditorTool::Main;
+    if (!isAdvancedOnlyTool(activeTool) || uiMode != EditorUiMode::Advanced)
+        activeTool = mapped;
+    updateToolButtonStates();
 }
 
 void ToolbarComponent::setZoom(float pixelsPerSecond)
 {
-    // Update slider without triggering callback
     zoomSlider.setValue(pixelsPerSecond, juce::dontSendNotification);
 }
 
@@ -536,7 +722,7 @@ void ToolbarComponent::setLeftPanelAvailable(bool available)
     if (leftPanelAvailable == available)
         return;
     leftPanelAvailable = available;
-    leftPanelButton.setVisible(available);
+    leftPanelButton.setVisible(false);
     resized();
     repaint();
 }
@@ -551,7 +737,7 @@ void ToolbarComponent::setTrackViewAvailable(bool available)
     if (trackViewAvailable == available)
         return;
     trackViewAvailable = available;
-    trackViewButton.setVisible(available);
+    trackViewButton.setVisible(false);
     resized();
 }
 
@@ -574,13 +760,13 @@ void ToolbarComponent::setUndoRedoEnabled(bool undoEnabled, bool redoEnabled)
     redoButton.setEnabled(redoEnabled);
 }
 
-void ToolbarComponent::showProgress(const juce::String &message)
+void ToolbarComponent::showProgress(const juce::String& message)
 {
     juce::ignoreUnused(message);
     showingProgress = true;
     progressLabel.setVisible(false);
     progressBar.setVisible(true);
-    progressValue = -1.0; // Indeterminate
+    progressValue = -1.0;
     resized();
     repaint();
 }
@@ -596,13 +782,11 @@ void ToolbarComponent::hideProgress()
 
 void ToolbarComponent::setProgress(float progress)
 {
-    if (progress < 0)
-        progressValue = -1.0; // Indeterminate
-    else
-        progressValue = static_cast<double>(juce::jlimit(0.0f, 1.0f, progress));
+    progressValue = progress < 0 ? -1.0
+                                 : static_cast<double>(juce::jlimit(0.0f, 1.0f, progress));
 }
 
-void ToolbarComponent::setStatusMessage(const juce::String &message)
+void ToolbarComponent::setStatusMessage(const juce::String& message)
 {
     juce::ignoreUnused(message);
 }
@@ -615,53 +799,35 @@ void ToolbarComponent::updateTimeDisplay()
 
 juce::String ToolbarComponent::formatTime(double seconds)
 {
-    int mins = static_cast<int>(seconds) / 60;
-    int secs = static_cast<int>(seconds) % 60;
-    int ms = static_cast<int>((seconds - std::floor(seconds)) * 1000);
-
+    const int mins = static_cast<int>(seconds) / 60;
+    const int secs = static_cast<int>(seconds) % 60;
+    const int ms = static_cast<int>((seconds - std::floor(seconds)) * 1000);
     return juce::String::formatted("%02d:%02d.%03d", mins, secs, ms);
 }
 
-void ToolbarComponent::mouseDown(const juce::MouseEvent &e)
+void ToolbarComponent::mouseDown(const juce::MouseEvent& e)
 {
 #if JUCE_MAC
-    // Standalone only: the toolbar doubles as the window's drag handle.
-    // In plugin mode getTopLevelComponent() is the AudioProcessorEditor itself,
-    // which lives inside the host's view - dragging it would move the editor
-    // component within that view and leave the UI clipped/offset.
     if (!pluginMode)
-    {
-        if (auto *window = getTopLevelComponent())
+        if (auto* window = getTopLevelComponent())
             dragger.startDraggingComponent(window, e.getEventRelativeTo(window));
-    }
-    else
-    {
-        juce::ignoreUnused(e);
-    }
 #else
     juce::ignoreUnused(e);
 #endif
 }
 
-void ToolbarComponent::mouseDrag(const juce::MouseEvent &e)
+void ToolbarComponent::mouseDrag(const juce::MouseEvent& e)
 {
 #if JUCE_MAC
-    // See mouseDown(): never drag the top-level component in plugin mode.
     if (!pluginMode)
-    {
-        if (auto *window = getTopLevelComponent())
+        if (auto* window = getTopLevelComponent())
             dragger.dragComponent(window, e.getEventRelativeTo(window), nullptr);
-    }
-    else
-    {
-        juce::ignoreUnused(e);
-    }
 #else
     juce::ignoreUnused(e);
 #endif
 }
 
-void ToolbarComponent::mouseDoubleClick(const juce::MouseEvent &e)
+void ToolbarComponent::mouseDoubleClick(const juce::MouseEvent& e)
 {
     juce::ignoreUnused(e);
 }
@@ -669,11 +835,9 @@ void ToolbarComponent::mouseDoubleClick(const juce::MouseEvent &e)
 void ToolbarComponent::setPluginMode(bool isPlugin)
 {
     pluginMode = isPlugin;
-
     playButton.setVisible(true);
     stopButton.setVisible(true);
     loopButton.setVisible(true);
-
     resized();
 }
 

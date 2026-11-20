@@ -54,8 +54,8 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
   const bool showScaleOverlay =
       params.scaleMode != ScaleMode::None && params.scaleMode != ScaleMode::Chromatic &&
       params.scaleRootNote >= 0;
-  const auto whiteKeyRowColour = juce::Colour(0xFF1C1C1Bu);
-  const auto blackKeyRowColour = juce::Colour(0xFF151515u);
+  const auto whiteKeyRowColour = APP_COLOR_CANVAS_ROW_WHITE;
+  const auto blackKeyRowColour = APP_COLOR_CANVAS_ROW_BLACK;
 
   if (params.drawRowBackgrounds)
   {

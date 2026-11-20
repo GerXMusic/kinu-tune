@@ -145,7 +145,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
   {
     const auto curveColour =
         greyscale ? APP_COLOR_PITCH_CURVE.withSaturation(0.0f)
-                  : APP_COLOR_PITCH_CURVE;
+                  : APP_COLOR_PRIMARY_GLOW;
     g.setColour(curveColour.withMultipliedAlpha(
         juce::jlimit(0.0f, 1.0f, params.pitchCurveAlpha)));
 
@@ -154,7 +154,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
     auto strokeCurrentPath = [&]()
     {
       if (pathStarted)
-        g.strokePath(path, juce::PathStrokeType(2.0f));
+        g.strokePath(path, juce::PathStrokeType(1.35f));
       path.clear();
       pathStarted = false;
     };
@@ -222,10 +222,11 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       const float visualStartFrame = note.getVisualStartFrame();
       const float visualEndFrame = note.getVisualEndFrame();
       const int currentRegion = getRegionIndex(note);
-      const bool continuesPreviousPath =
-          hasPreviousNote &&
-          std::abs(visualStartFrame - previousVisualEndFrame) < 0.001f &&
-          currentRegion >= 0 && currentRegion == previousRegion;
+      // Melodyne draws one line per note. Joining contiguous notes turned
+      // every boundary into a tall vertical stroke once the view was zoomed
+      // out, which read as a waveform rather than a pitch contour.
+      const bool continuesPreviousPath = false;
+      juce::ignoreUnused(currentRegion);
 
       if (!continuesPreviousPath)
         strokeCurrentPath();

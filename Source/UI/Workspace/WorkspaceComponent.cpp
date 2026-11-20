@@ -7,12 +7,21 @@ WorkspaceComponent::WorkspaceComponent()
     mainCard.setPadding(0);
     mainCard.setCornerRadius(0.0f);
     mainCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
+    addAndMakeVisible(sideRail);
     addAndMakeVisible(mainCard);
     addAndMakeVisible(panelContainer);
     addChildComponent(leftPanelContainer);
 
     // Initially hide panel container (no panels visible)
     panelContainer.setVisible(false);
+
+    sideRail.onWidthChanged = [this] { resized(); };
+    sideRail.onPanelVisibilityChanged = [this](const juce::String& id, bool visible)
+    {
+        if (onRailPanelVisibilityChanged)
+            onRailPanelVisibilityChanged(id, visible);
+        resized();
+    };
 }
 
 void WorkspaceComponent::SlideAnimation::start(bool visible)
@@ -64,6 +73,10 @@ void WorkspaceComponent::resized()
     // Apply left/bottom margins
     bounds.removeFromLeft(margin);
     bounds.removeFromBottom(margin);
+
+    // Melodyne/SynthV rail on the far left. Its width grows while a drawer
+    // is open, pushing the canvas toward the centre.
+    sideRail.setBounds(bounds.removeFromLeft(sideRail.getPreferredWidth()));
 
     if (inspectorContent != nullptr)
         inspectorContent->setBounds(bounds.removeFromLeft(inspectorWidth));
@@ -128,6 +141,37 @@ void WorkspaceComponent::setMainContent(juce::Component* content)
 {
     mainContent = content;
     mainCard.setContentComponent(content);
+}
+
+void WorkspaceComponent::addRailPanel(const juce::String& id,
+                                      const juce::String& title, GuiIcon icon,
+                                      juce::Component* content, int width)
+{
+    sideRail.addPanel(id, title, icon, content, width);
+    resized();
+}
+
+void WorkspaceComponent::showRailPanel(const juce::String& id, bool show)
+{
+    sideRail.showPanel(id, show);
+    resized();
+}
+
+bool WorkspaceComponent::isRailPanelVisible(const juce::String& id) const
+{
+    return sideRail.isPanelVisible(id);
+}
+
+void WorkspaceComponent::setRailPanelAvailable(const juce::String& id, bool available)
+{
+    sideRail.setPanelAvailable(id, available);
+    resized();
+}
+
+void WorkspaceComponent::setEditorMode(EditorUiMode mode)
+{
+    sideRail.setEditorMode(mode);
+    resized();
 }
 
 void WorkspaceComponent::addPanel(const juce::String& id, const juce::String& title,

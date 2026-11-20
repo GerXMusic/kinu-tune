@@ -482,7 +482,18 @@ file(GLOB_RECURSE PITCHNET_UI_SOURCES CONFIGURE_DEPENDS
 list(APPEND PITCHNET_UI_SOURCES
     "Source/UI/PianoRoll/PianoRollInteractionContext.cpp"
     "Source/UI/PianoRoll/PianoRollInteractionContext.h"
-    "Source/UI/PianoRoll/PianoRollViewState.h")
+    "Source/UI/PianoRoll/PianoRollViewState.h"
+    "Source/UI/MelodyneIcons.cpp"
+    "Source/UI/MelodyneIcons.h"
+    "Source/UI/SideRail.cpp"
+    "Source/UI/SideRail.h"
+    "Source/UI/EnginePanel.cpp"
+    "Source/UI/EnginePanel.h"
+    "Source/UI/MidiGuidePanel.cpp"
+    "Source/UI/MidiGuidePanel.h"
+    "Source/UI/ToolPill.cpp"
+    "Source/UI/ToolPill.h"
+    "Source/UI/GuiTypes.h")
 if(NOT APPLE)
     list(FILTER PITCHNET_UI_SOURCES EXCLUDE REGEX "\\.mm$")
 endif()

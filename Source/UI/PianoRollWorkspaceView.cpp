@@ -193,6 +193,51 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);
+  addChildComponent(toolPill);
+
+  pianoRoll.onShowToolPill = [this](juce::Point<int> screenPoint)
+  { showToolPillAt(screenPoint); };
+  pianoRoll.onShowCanvasMenu = [this](juce::Point<int> screenPoint)
+  { pianoRoll.showCanvasMenuAt(screenPoint); };
+  pianoRoll.onHideToolPill = [this] { toolPill.hidePill(); };
+  pianoRoll.onToolPillDrag = [this](juce::Point<int> screenPoint)
+  { toolPill.updateHoverFromScreen(screenPoint); };
+  pianoRoll.onToolPillRelease = [this](juce::Point<int> screenPoint)
+  { toolPill.releaseAtScreen(screenPoint); };
+  toolPill.onToolSelected = [this](EditorTool tool)
+  {
+    setCurrentTool(tool);
+    if (tool == EditorTool::Formant || tool == EditorTool::Amplitude)
+    {
+      // These tools only focus their inspector group today; selection mode
+      // keeps the canvas usable while the placeholder is active.
+      if (pianoRoll.onEditModeRequested)
+        pianoRoll.onEditModeRequested(EditMode::Select);
+      else
+        pianoRoll.setEditMode(EditMode::Select);
+    }
+    else
+    {
+      const EditMode mode = tool == EditorTool::Pitch      ? EditMode::PitchDrawing
+                            : tool == EditorTool::Separation ? EditMode::Split
+                            : tool == EditorTool::Timing     ? EditMode::Timing
+                                                             : EditMode::Select;
+      if (pianoRoll.onEditModeRequested)
+        pianoRoll.onEditModeRequested(mode);
+      else
+        pianoRoll.setEditMode(mode);
+    }
+    if (onToolSelected)
+      onToolSelected(tool);
+    repaint();
+  };
+  toolPill.onMenuRequested = [this]
+  {
+    pianoRoll.showCanvasMenuAt(juce::Desktop::getInstance()
+                                   .getMainMouseSource()
+                                   .getScreenPosition()
+                                   .roundToInt());
+  };
 
   overviewCard.setVisible(false);
   overviewPanel.setVisible(false);
@@ -562,6 +607,29 @@ void PianoRollWorkspaceView::repaintOverviewViewport()
 void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
 {
   overviewPanel.setShowSegmentsDebug(show);
+}
+
+void PianoRollWorkspaceView::setEditorMode(EditorUiMode mode)
+{
+  editorMode = mode;
+  toolPill.setEditorMode(mode);
+  repaint();
+}
+
+void PianoRollWorkspaceView::setCurrentTool(EditorTool tool)
+{
+  toolPill.setCurrentTool(tool);
+}
+
+void PianoRollWorkspaceView::showToolPillAt(juce::Point<int> screenPoint)
+{
+  // Host bounds are in this component's coordinates, not the card's.
+  toolPill.showAt(screenPoint, getLocalBounds());
+}
+
+void PianoRollWorkspaceView::hideToolPill()
+{
+  toolPill.hidePill();
 }
 
 void PianoRollWorkspaceView::setOverviewVisible(bool visible)

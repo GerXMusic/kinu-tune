@@ -812,6 +812,13 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   variAudioInspector.onNoteEngineChanged = [this](NoteEngine engine)
   { applyNoteEngineToSelection(engine); };
+  variAudioInspector.onCorrectPitchMacro = [this]
+  {
+    pianoRoll.beginInspectorEdit(
+        PianoRollComponent::InspectorParam::CorrectPitch);
+    pianoRoll.setInspectorEditValue(100.0f);
+    pianoRoll.endInspectorEdit();
+  };
   variAudioInspector.onSnapModeChanged =
       [this](VariAudioInspector::SnapMode mode)
   {
@@ -840,19 +847,36 @@ MainComponent::MainComponent(bool enableAudioDevice)
     parameterPanel.updateGlobalSliders();
     notifyProjectDataChanged();
   };
-  workspace.setInspectorContent(&variAudioInspector,
-                                VariAudioInspector::preferredWidth);
-
-  // Add parameter panel to workspace.
-  workspace.addPanel("parameters", TR("panel.parameters"), &parameterPanel,
-                     false);
-
-  // Left side panel (slides in from the left, same width as the right panel).
-  workspace.setLeftPanelContent("tracks", TR("panel.tracks"), &trackListPanel);
-  trackListPanel.onPreferredHeightChanged = [this]()
+  // Melodyne/SynthV rail. The inspector, engine, tracks, harmony and MIDI
+  // guide are drawers; one is open at a time and the canvas is pushed.
+  workspace.addRailPanel("notes", "panel.notes", GuiIcon::Notes,
+                         &variAudioInspector, 300);
+  workspace.addRailPanel("engine", "engine.title", GuiIcon::Engine,
+                         &enginePanel, 276);
+  workspace.addRailPanel("tracks", "panel.tracks", GuiIcon::Tracks,
+                         &trackListPanel, 258);
+  workspace.addRailPanel("harmony", "harmony.title", GuiIcon::Harmony,
+                         &railHarmonyPanel, 258);
+  workspace.addRailPanel("midi", "panel.midi_guides", GuiIcon::MidiGuide,
+                         &midiGuidePanel, 258);
+  workspace.setRailPanelAvailable("tracks", false); // ARA only
+  workspace.getSideRail().onSettingsClicked = [this] { showSettings(); };
+  midiGuidePanel.onImportRequested = [this]
   {
-    workspace.refreshLeftPanelContentHeight();
+    if (midiGuideFileChooser == nullptr)
+      midiGuideFileChooser = std::make_unique<juce::FileChooser>(
+          TR("midi.import"), juce::File(), "*.mid;*.midi");
+    midiGuideFileChooser->launchAsync(
+        juce::FileBrowserComponent::openMode |
+            juce::FileBrowserComponent::canSelectFiles,
+        [](const juce::FileChooser&) {});
   };
+  railHarmonyPanel.getCurrentProject = [this] { return getProject(); };
+  railHarmonyPanel.onHarmonyRequested =
+      [this](HarmonyUtils::Interval interval, bool up)
+  { return pianoRoll.applyHarmonyInterval(interval, up); };
+  workspace.showRailPanel("notes", true);
+  workspace.setRailPanelAvailable("tracks", isPluginMode());
   trackListPanel.setUseDawTrackColour(settingsManager->getUseDawTrackColour());
   trackListPanel.onUseDawTrackColourChanged = [this](bool use)
   {
@@ -867,6 +891,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   if (isPluginMode())
     toolbar.setPluginMode(true);
   toolbar.setTransportEnabled(isPluginMode());
+  editorUiMode = (settingsManager != nullptr && settingsManager->getAdvancedEditorMode())
+                     ? EditorUiMode::Advanced
+                     : EditorUiMode::Basic;
+  toolbar.setUiMode(editorUiMode);
+  workspace.setEditorMode(editorUiMode);
+  pianoRollView.setEditorMode(editorUiMode);
+  enginePanel.setEditorMode(editorUiMode);
+  variAudioInspector.setEditorMode(editorUiMode);
+  refreshEditorChrome();
 
   // Set undo manager for piano roll
   pianoRoll.setUndoManager(undoManager);
@@ -923,6 +956,36 @@ MainComponent::MainComponent(bool enableAudioDevice)
     notifyProjectDataChanged();
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
+
+  // Rail engine drawer: same callbacks as the old rendering panel, plus the
+  // per-block engine in Advanced (gui-decision.md §2).
+  enginePanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
+  enginePanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
+  {
+    settingsManager->setSynthesisEngineType(type);
+    settingsManager->saveConfig();
+    if (auto *project = getProject())
+      project->setSynthesisEngine(type);
+    if (editorController)
+      editorController->setSynthesisEngineType(type);
+    rerenderEditedNotes();
+    notifyProjectDataChanged();
+    parameterPanel.setSynthesisEngine(type);
+    toolbar.setEngineSummary(type == SynthesisEngineType::Vocoder ? "Neural"
+                             : type == SynthesisEngineType::Pitchcore ? "Pitchcore"
+                                                                      : "Classic");
+    enginePanel.setSynthesisEngine(type);
+  };
+  enginePanel.getNoteEngine = [this] { return getSelectionNoteEngine(); };
+  enginePanel.onNoteEngineChanged = [this](NoteEngine engine)
+  { applyNoteEngineToSelection(engine); };
+  enginePanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
+  enginePanel.setDeviceOptions(GpuDeviceList::getDeviceNames(
+                                   settingsManager->getDevice()),
+                               settingsManager->getGPUDeviceId());
+  enginePanel.onDeviceChanged = [this](int deviceId)
+  { parameterPanel.onRenderDeviceChanged(deviceId); };
+
   refreshRenderDeviceOptions();
   parameterPanel.onRenderDeviceChanged = [this](int deviceId)
   {
@@ -970,6 +1033,68 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { setEditMode(mode); };
   toolbar.onEditModeChanged = [this](EditMode mode)
   { setEditMode(mode); };
+  pianoRollView.onToolSelected = [this](EditorTool tool)
+  {
+    toolbar.setActiveTool(tool);
+    if (isAdvancedOnlyTool(tool) && editorUiMode != EditorUiMode::Advanced)
+    {
+      // Basic does not expose these tools; keep the canvas on Main.
+      setEditMode(EditMode::Select);
+      return;
+    }
+    switch (tool)
+    {
+    case EditorTool::Pitch:      setEditMode(EditMode::PitchDrawing); break;
+    case EditorTool::Separation: setEditMode(EditMode::Split); break;
+    case EditorTool::Timing:     setEditMode(EditMode::Timing); break;
+    default:                     setEditMode(EditMode::Select); break;
+    }
+  };
+  toolbar.onToolSelected = [this](EditorTool tool)
+  {
+    if (isAdvancedOnlyTool(tool) && editorUiMode != EditorUiMode::Advanced)
+      return;
+    switch (tool)
+    {
+    case EditorTool::Pitch:      setEditMode(EditMode::PitchDrawing); break;
+    case EditorTool::Separation: setEditMode(EditMode::Split); break;
+    case EditorTool::Timing:     setEditMode(EditMode::Timing); break;
+    default:                     setEditMode(EditMode::Select); break;
+    }
+    pianoRollView.setCurrentTool(tool);
+  };
+  toolbar.onUiModeChanged = [this](EditorUiMode mode)
+  { setEditorUiMode(mode); };
+  toolbar.onScaleRootSelected = [this](int root)
+  { variAudioInspector.selectScaleRoot(root); };
+  toolbar.onScaleModeSelected = [this](int modeIndex)
+  {
+    static const ScaleMode modes[] = {
+        ScaleMode::Major, ScaleMode::Minor, ScaleMode::Blues,
+        ScaleMode::Dorian, ScaleMode::HarmonicMinor, ScaleMode::Locrian,
+        ScaleMode::Lydian, ScaleMode::MajorPentatonic, ScaleMode::MelodicMinor,
+        ScaleMode::MinorPentatonic, ScaleMode::Mixolydian, ScaleMode::Phrygian,
+        ScaleMode::PhrygianDominant, ScaleMode::WholeTone};
+    if (modeIndex >= 0 && modeIndex < 14)
+      variAudioInspector.selectScaleMode(modes[modeIndex]);
+  };
+  toolbar.onGridDivisionSelected = [this](int index)
+  {
+    static const TimelineGridDivision divisions[] = {
+        TimelineGridDivision::Quarter, TimelineGridDivision::Eighth,
+        TimelineGridDivision::Sixteenth, TimelineGridDivision::ThirtySecond};
+    if (index < 0 || index >= 4)
+      return;
+    if (auto *project = getProject())
+    {
+      project->setTimelineGridDivision(divisions[index]);
+      pianoRoll.setTimelineGridDivision(divisions[index]);
+      notifyProjectDataChanged();
+    }
+    toolbar.setGridSummary(index == 0 ? "1/4" : index == 1 ? "1/8"
+                             : index == 2 ? "1/16" : "1/32");
+  };
+  toolbar.onEngineClicked = [this] { workspace.showRailPanel("engine", true); };
   toolbar.onToggleLoop = [this](bool enabled)
   {
     if (auto *project = getProject())
@@ -1004,7 +1129,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   toolbar.onToggleLeftPanel = [this](bool visible)
   {
-    workspace.showLeftPanel(visible);
+    workspace.showRailPanel("tracks", visible);
   };
   pianoRoll.onUndoRequested = [this]() { undo(); };
   pianoRoll.onRedoRequested = [this]() { redo(); };
@@ -1414,6 +1539,7 @@ void MainComponent::bindBackendController(EditorController *controller)
     toolbar.setTotalTime(project->getAudioData().getDuration());
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
   }
+  refreshEditorChrome();
 }
 
 void MainComponent::bindUndoManager(PitchUndoManager *manager)
@@ -1489,6 +1615,7 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
 #endif
   }
 
+  refreshEditorChrome();
   // D-180-R3: if the cursor was seeded before this bind, reveal it with the
   // pps/width available now. Do not clear the flag: focus and the first paint
   // may still run before the final zoom settles.
@@ -1563,6 +1690,8 @@ void MainComponent::refreshRenderDeviceOptions()
   parameterPanel.setRenderDeviceOptions(
       GpuDeviceList::getDeviceNames(executionDevice),
       settingsManager->getGPUDeviceId());
+  enginePanel.setDeviceOptions(GpuDeviceList::getDeviceNames(executionDevice),
+                               settingsManager->getGPUDeviceId());
 }
 
 bool MainComponent::isInferenceBusy() const
@@ -4102,9 +4231,20 @@ void MainComponent::rerenderEditedNotes()
 
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
 {
-  parameterPanel.setRenderStatus(
-      status, editorController ? editorController->getSynthesisEngineType()
-                               : defaultSynthesisEngineType());
+  const auto engine = editorController ? editorController->getSynthesisEngineType()
+                                       : defaultSynthesisEngineType();
+  parameterPanel.setRenderStatus(status, engine);
+  const char *text = status == ParameterPanel::RenderStatus::Rendering ? "Rendering…"
+                     : status == ParameterPanel::RenderStatus::Done    ? "Last render: "
+                     : status == ParameterPanel::RenderStatus::Failed  ? "Render failed"
+                                                                       : "";
+  juce::String summary = text;
+  if (status == ParameterPanel::RenderStatus::Done ||
+      status == ParameterPanel::RenderStatus::Failed)
+    summary += engine == SynthesisEngineType::Vocoder   ? "Neural"
+               : engine == SynthesisEngineType::Pitchcore ? "Pitchcore"
+                                                          : "Classic";
+  enginePanel.setRenderStatusText(summary);
 }
 
 void MainComponent::onNoteSelected(Note *note)
@@ -4243,8 +4383,74 @@ void MainComponent::onZoomChanged(float pixelsPerSecond)
 
 void MainComponent::notifyProjectDataChanged()
 {
+  refreshEditorChrome();
   if (onProjectDataChanged)
     onProjectDataChanged();
+}
+
+void MainComponent::setEditorUiMode(EditorUiMode mode)
+{
+  editorUiMode = mode;
+  if (settingsManager != nullptr)
+  {
+    settingsManager->setAdvancedEditorMode(mode == EditorUiMode::Advanced);
+    settingsManager->saveConfig();
+  }
+  toolbar.setUiMode(mode);
+  workspace.setEditorMode(mode);
+  pianoRollView.setEditorMode(mode);
+  enginePanel.setEditorMode(mode);
+  variAudioInspector.setEditorMode(mode);
+  refreshEditorChrome();
+  repaint();
+}
+
+void MainComponent::refreshEditorChrome()
+{
+  static const char *roots[] = {"C", "C#", "D", "D#", "E", "F",
+                                "F#", "G", "G#", "A", "A#", "B"};
+  static const char *modeKeys[] = {
+      "scale.major", "scale.minor", "scale.blues", "scale.dorian",
+      "scale.harmonic_minor", "scale.locrian", "scale.lydian",
+      "scale.major_pentatonic", "scale.melodic_minor",
+      "scale.minor_pentatonic", "scale.mixolydian", "scale.phrygian",
+      "scale.phrygian_dominant", "scale.whole_tone"};
+
+  const auto *project = getProject();
+  const int root = project != nullptr ? juce::jlimit(0, 11, project->getScaleRootNote()) : 0;
+  juce::String mode = "Major";
+  if (project != nullptr)
+  {
+    const int modeValue = static_cast<int>(project->getPreferredScaleMode());
+    const int modeIndex = modeValue >= static_cast<int>(ScaleMode::Major)
+                              ? modeValue - static_cast<int>(ScaleMode::Major)
+                              : -1;
+    if (modeIndex >= 0 && modeIndex < 14)
+      mode = TR(modeKeys[modeIndex]);
+  }
+  toolbar.setScaleSummary(roots[root], mode);
+  if (project != nullptr)
+    toolbar.setTempoSummary(juce::String(project->getTimelineTempoBpm(), 2));
+
+  if (project != nullptr)
+  {
+    switch (project->getTimelineGridDivision())
+    {
+    case TimelineGridDivision::Eighth:        toolbar.setGridSummary("1/8"); break;
+    case TimelineGridDivision::Sixteenth:     toolbar.setGridSummary("1/16"); break;
+    case TimelineGridDivision::ThirtySecond:  toolbar.setGridSummary("1/32"); break;
+    case TimelineGridDivision::Quarter:
+    default:                                  toolbar.setGridSummary("1/4"); break;
+    }
+  }
+
+  const auto engine = settingsManager != nullptr ? settingsManager->getSynthesisEngineType()
+                                                 : defaultSynthesisEngineType();
+  toolbar.setEngineSummary(engine == SynthesisEngineType::Vocoder   ? "Neural"
+                           : engine == SynthesisEngineType::Pitchcore ? "Pitchcore"
+                                                                      : "Classic");
+  enginePanel.setSynthesisEngine(engine);
+  toolbar.setUiMode(editorUiMode);
 }
 
 void MainComponent::applyProjectSynthesisEngine()
@@ -5439,10 +5645,11 @@ void MainComponent::triggerResynthesis()
 
 void MainComponent::setTrackViewModeAvailable(bool available) {
   toolbar.setTrackViewAvailable(available);
-  // The left side panel is ARA only, like the Clip / Track toggle.
+  // The left rail's Tracks drawer is ARA only, like the Clip / Track toggle.
   toolbar.setLeftPanelAvailable(available);
-  if (!available)
-    workspace.showLeftPanel(false);
+  workspace.setRailPanelAvailable("tracks", available);
+  if (!available && workspace.isRailPanelVisible("tracks"))
+    workspace.showRailPanel("tracks", false);
   pianoRollView.setTrackViewModeAvailable(available);
   const bool track = available && settingsManager != nullptr &&
                      settingsManager->getTrackViewMode();

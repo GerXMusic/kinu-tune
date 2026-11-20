@@ -19,6 +19,10 @@
 #include "Main/SettingsManager.h"
 #include "ParameterPanel.h"
 #include "TrackListPanel.h"
+#include "EnginePanel.h"
+#include "MidiGuidePanel.h"
+#include "HarmonyPanel.h"
+#include "GuiTypes.h"
 #include "PianoRollComponent.h"
 #include "PianoRollWorkspaceView.h"
 #include "VariAudioInspector.h"
@@ -486,6 +490,12 @@ private:
   VariAudioInspector variAudioInspector; // left column, VariAudio-style
   ParameterPanel parameterPanel;
   TrackListPanel trackListPanel; // content of the left side panel
+  EnginePanel enginePanel;       // rail drawer: project and block engine
+  MidiGuidePanel midiGuidePanel; // rail drawer: MIDI guides (placeholder)
+  HarmonyPanel railHarmonyPanel; // rail drawer: harmony macro
+  EditorUiMode editorUiMode = EditorUiMode::Basic;
+  void setEditorUiMode(EditorUiMode mode);
+  void refreshEditorChrome();
   std::function<void()> onTrackColourModeChanged;
   std::unique_ptr<UiBrightnessEffect> uiBrightnessEffect;
   AnalysisBackdrop analysisBackdrop;
@@ -497,6 +507,7 @@ private:
   std::unique_ptr<SettingsOverlay> settingsOverlay;
 
   std::unique_ptr<juce::FileChooser> fileChooser;
+  std::unique_ptr<juce::FileChooser> midiGuideFileChooser;
   juce::StringArray recentFiles;
 
   bool isPlaying = false;

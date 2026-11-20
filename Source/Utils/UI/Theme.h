@@ -40,6 +40,26 @@ extern const juce::Colour APP_COLOR_TITLEBAR_MINIMIZE_MAC;
 extern const juce::Colour APP_COLOR_TITLEBAR_MAXIMIZE_MAC;
 extern const juce::Colour APP_COLOR_TITLEBAR_CLOSE_HOVER;
 
+// ── Melodyne-style editor chrome ──────────────────────────────────
+// The rail and drawers that frame the canvas. Kept separate from the
+// generic surfaces so the editor can read as one instrument without
+// changing the look of dialogs and settings.
+extern const juce::Colour APP_COLOR_RAIL;
+extern const juce::Colour APP_COLOR_RAIL_ACTIVE;
+extern const juce::Colour APP_COLOR_RAIL_ICON;
+extern const juce::Colour APP_COLOR_DRAWER;
+extern const juce::Colour APP_COLOR_DRAWER_HEADER;
+extern const juce::Colour APP_COLOR_CANVAS_ROW_WHITE;
+extern const juce::Colour APP_COLOR_CANVAS_ROW_BLACK;
+extern const juce::Colour APP_COLOR_NOTE_WAVE;
+extern const juce::Colour APP_COLOR_NOTE_IN_TUNE;
+extern const juce::Colour APP_COLOR_NOTE_OUT_OF_TUNE;
+extern const juce::Colour APP_COLOR_PLAYHEAD;
+extern const juce::Colour APP_COLOR_ACCENT_WARM;
+extern const juce::Colour APP_COLOR_ACCENT_SELECT;
+extern const juce::Colour APP_COLOR_TOOL_PILL;
+extern const juce::Colour APP_COLOR_TIMELINE_TEXT;
+
 // ── Scrollbars ────────────────────────────────────────────────────
 // One look for every scrollbar in the app: a dim grey rounded thumb over a
 // recessed gutter. The piano-roll canvas set the look; styleCanvasScrollBar()

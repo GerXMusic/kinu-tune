@@ -129,6 +129,11 @@ public:
 
   void requestCanvasKeyboardFocus();
 
+  /** Melodyne canvas menu, reachable from the tool pill's "more" slot. */
+  void showCanvasMenuAt(juce::Point<int> screenPoint);
+  /** Melodyne note context menu: mute / unmute / delete / restore. */
+  void showNoteMenuAt(Note& note, juce::Point<int> screenPoint);
+
   // ScrollBar::Listener
   void scrollBarMoved(juce::ScrollBar *scrollBar,
                       double newRangeStart) override;
@@ -292,6 +297,14 @@ public:
 
   // Callbacks
   std::function<void(EditMode)> onEditModeRequested;
+  // Melodyne: a right click on the canvas asks the workspace for the tool pill
+  // instead of opening the menu directly. The pill's "more" slot calls back
+  // to show the same canvas menu.
+  std::function<void(juce::Point<int>)> onShowToolPill;
+  std::function<void(juce::Point<int>)> onShowCanvasMenu;
+  std::function<void(juce::Point<int>)> onToolPillDrag;
+  std::function<void(juce::Point<int>)> onToolPillRelease;
+  std::function<void()> onHideToolPill;
   // Option/Alt-double-click on empty space (VariAudio: zoom to show all).
   std::function<void()> onZoomFullRequested;
   std::function<void()> onUndoRequested;
@@ -412,7 +425,7 @@ private:
   // Runs a Restore action, records it, and reports it via
   // onHistoryActionApplied so it is processed like undo/redo.
   void applyRestoreAction(std::unique_ptr<UndoableAction> action);
-  void showResetMenu(Note &note);
+  void showResetMenu(Note &note, juce::Point<int> screenPoint = {});
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
@@ -630,6 +643,7 @@ private:
   // Set when a click only activated another region (its project was not
   // ready yet), so the rest of that gesture must not edit anything.
   bool swallowGestureUntilMouseUp = false;
+  bool toolPillGesture = false;
 
   // Re-applies the hover-button tooltips after a language change; the menus
   // and handle labels are built on demand, so they need nothing here.

@@ -1,5 +1,6 @@
 #include "PianoKeysRenderer.h"
 #include "PianoRollViewHelpers.h"
+#include "../Components/AppFont.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
 
@@ -48,16 +49,26 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     const auto toneState = pianoRollView::getScaleToneState(
         activeScaleMode, noteInOctave, activeScaleRootNote);
 
-    juce::Colour keyFill = juce::Colour(0xFF232323u);
+    juce::Colour keyFill = pianoRollView::isBlackKey(noteInOctave)
+                               ? juce::Colour(0xFF20242Au)
+                               : juce::Colour(0xFF3E444Eu);
     if (showScaleOverlay)
       keyFill = toneState == pianoRollView::ScaleToneState::OutOfScale
-                    ? juce::Colour(0xFF151515u)
-                    : juce::Colour(0xFF1C1C1Bu);
+                    ? keyFill.darker(0.25f)
+                    : keyFill.brighter(0.05f);
 
     g.setColour(keyFill);
     g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth),
                pixelsPerSemitone - 1);
-    g.setColour(juce::Colour(0xFF0D0B0Bu));
+    // A small black-key tongue on the left, so the strip reads as a keyboard
+    // instead of a list of labels.
+    if (pianoRollView::isBlackKey(noteInOctave))
+    {
+      g.setColour(juce::Colour(0xFF111317u));
+      g.fillRect(0.0f, y + 1.0f, pianoKeysWidth * 0.62f,
+                 juce::jmax(1.0f, pixelsPerSemitone - 2.0f));
+    }
+    g.setColour(juce::Colour(0xFF111317u).withAlpha(0.9f));
     g.fillRect(0.0f, y + pixelsPerSemitone - 1.0f,
                static_cast<float>(pianoKeysWidth), 1.0f);
 
@@ -65,14 +76,21 @@ void PianoKeysRenderer::draw(juce::Graphics &g,
     juce::String noteName =
         juce::String(noteNames[noteInOctave]) + juce::String(octave);
 
-    juce::Colour textColour = juce::Colour(0xFF9A9A9Au);
+    // C labels carry the octave; the rest stay unlabelled like Melodyne's
+    // keyboard. Small strips still show every row through the colour.
+    if (noteInOctave != 0)
+      noteName.clear();
+
+    juce::Colour textColour = pianoRollView::isBlackKey(noteInOctave)
+                                  ? juce::Colour(0xFFD7DBE2u)
+                                  : juce::Colour(0xFF15171Bu);
     if (showScaleOverlay)
     {
       if (toneState == pianoRollView::ScaleToneState::OutOfScale)
         textColour = textColour.withMultipliedAlpha(0.72f);
     }
     g.setColour(textColour);
-    g.setFont(13.0f);
+    g.setFont(AppFont::getBoldFont(10.5f));
     g.drawText(noteName, 0, static_cast<int>(y), pianoKeysWidth,
                static_cast<int>(pixelsPerSemitone),
                juce::Justification::centred);

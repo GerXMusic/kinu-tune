@@ -7,6 +7,8 @@
 #include "PianoRollComponent.h"
 #include "PianoRoll/OverviewPanel.h"
 #include "Workspace/RoundedCard.h"
+#include "ToolPill.h"
+#include "GuiTypes.h"
 #include <functional>
 
 class PianoRollWorkspaceView : public juce::Component, private juce::Timer {
@@ -35,6 +37,13 @@ public:
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
   std::function<void()> onAutoZoomRequested;
 
+  // Melodyne tool pill: shown on a right click over the canvas.
+  void showToolPillAt(juce::Point<int> screenPoint);
+  void hideToolPill();
+  void setCurrentTool(EditorTool tool);
+  void setEditorMode(EditorUiMode mode);
+  std::function<void(EditorTool)> onToolSelected;
+
 private:
   class FloatingZoomSliderLookAndFeel final : public juce::LookAndFeel_V4
   {
@@ -61,6 +70,8 @@ private:
   void updateOverviewAnimation();
   PianoRollComponent &pianoRoll;
   OverviewPanel overviewPanel;
+  ToolPill toolPill;
+  EditorUiMode editorMode = EditorUiMode::Basic;
 
   RoundedCard pianoCard;
   RoundedCard overviewCard;

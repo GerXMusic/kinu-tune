@@ -542,7 +542,10 @@ void PianoRollComponent::paint(juce::Graphics &g)
   {
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
-    drawBackgroundWaveform(g, mainArea);
+    // Melodyne carries the waveform inside each note, not as a full-canvas
+    // backdrop; drawing the take twice made the editor read as a waveform
+    // viewer. Keep the hook for the debug views, but off by default.
+    // drawBackgroundWaveform(g, mainArea);
   }
 
   // Draw scrolled content (grid lines, notes, pitch curves, handles)
@@ -1929,45 +1932,22 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
-    juce::PopupMenu menu;
-    menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
-    auto choice = std::make_shared<int>(0);
-    menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
-        choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
-        undoManager && undoManager->canRedo() && bool(onRedoRequested)));
-    juce::Component::SafePointer<PianoRollComponent> safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options()
-                          .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
-                              e.getScreenPosition()))
-                          .withDeletionCheck(*this),
-                      [safeThis, choice](int result)
+    if (auto *noteUnder = findNoteAt(adjustedX, adjustedY))
     {
-      if (safeThis == nullptr || !safeThis->project || result == 0)
-        return;
-      if (*choice == 1)
-      {
-        safeThis->project->selectAllNotes();
-        safeThis->updatePitchToolHandlesFromSelection();
-        safeThis->updatePreviewButtonBounds();
-        safeThis->repaint();
-      }
-      else if (*choice == 6 && safeThis->onUndoRequested)
-        safeThis->onUndoRequested();
-      else if (*choice == 7 && safeThis->onRedoRequested)
-        safeThis->onRedoRequested();
-      else if (*choice >= 2 && *choice <= 5)
-      {
-        const EditMode modes[] = { EditMode::Select, EditMode::Split,
-                                   EditMode::PitchDrawing, EditMode::Timing };
-        const auto mode = modes[*choice - 2];
-        if (safeThis->onEditModeRequested)
-          safeThis->onEditModeRequested(mode);
-        else
-          safeThis->setEditMode(mode);
-      }
-    });
+      showNoteMenuAt(*noteUnder, e.getScreenPosition());
+      return;
+    }
+    if (onShowToolPill)
+    {
+      toolPillGesture = true;
+      onShowToolPill(e.getScreenPosition());
+      return;
+    }
+    showCanvasMenuAt(e.getScreenPosition());
     return;
   }
+  if (onHideToolPill)
+    onHideToolPill();
 
   // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
   // (ruler or note area) to move the playback cursor, mirroring Reaper's
@@ -2162,8 +2142,55 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   }
 }
 
+void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint)
+{
+  juce::PopupMenu menu;
+  menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
+  auto choice = std::make_shared<int>(0);
+  menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
+      choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
+      undoManager && undoManager->canRedo() && bool(onRedoRequested)));
+  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+  menu.showMenuAsync(juce::PopupMenu::Options()
+                         .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
+                             screenPoint))
+                         .withDeletionCheck(*this),
+                     [safeThis, choice](int result)
+  {
+    if (safeThis == nullptr || !safeThis->project || result == 0)
+      return;
+    if (*choice == 1)
+    {
+      safeThis->project->selectAllNotes();
+      safeThis->updatePitchToolHandlesFromSelection();
+      safeThis->updatePreviewButtonBounds();
+      safeThis->repaint();
+    }
+    else if (*choice == 6 && safeThis->onUndoRequested)
+      safeThis->onUndoRequested();
+    else if (*choice == 7 && safeThis->onRedoRequested)
+      safeThis->onRedoRequested();
+    else if (*choice >= 2 && *choice <= 5)
+    {
+      const EditMode modes[] = {EditMode::Select, EditMode::Split,
+                                EditMode::PitchDrawing, EditMode::Timing};
+      const auto mode = modes[*choice - 2];
+      if (safeThis->onEditModeRequested)
+        safeThis->onEditModeRequested(mode);
+      else
+        safeThis->setEditMode(mode);
+    }
+  });
+}
+
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 {
+  if (toolPillGesture)
+  {
+    if (onToolPillDrag)
+      onToolPillDrag(e.getScreenPosition());
+    return;
+  }
   if (trackGestureActive) { updateTrackGesture(e); return; }
   if (e.mods.isPopupMenu())
     return;
@@ -2224,6 +2251,13 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 {
+  if (toolPillGesture)
+  {
+    toolPillGesture = false;
+    if (onToolPillRelease)
+      onToolPillRelease(e.getScreenPosition());
+    return;
+  }
   if (trackGestureActive) { finishTrackGesture(); return; }
   if (e.mods.isPopupMenu())
     return;
@@ -4631,7 +4665,94 @@ void PianoRollComponent::refreshLocalisedText()
   resetButton.setTooltip(TR("tooltip.restore_original"));
 }
 
-void PianoRollComponent::showResetMenu(Note &note)
+void PianoRollComponent::showNoteMenuAt(Note &note, juce::Point<int> screenPoint)
+{
+  juce::PopupMenu menu;
+  menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
+
+  const auto addItem = [&menu](int id, const juce::String& label, bool enabled)
+  {
+    juce::PopupMenu::Item item(label);
+    item.itemID = id;
+    item.isEnabled = enabled;
+    item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
+        label, false, std::function<void()>{}, false).release();
+    menu.addItem(std::move(item));
+  };
+
+  addItem(1, TR("menu.mute_note"), false);
+  addItem(2, TR("menu.unmute_note"), false);
+  addItem(3, TR("menu.delete_note"), false);
+  menu.addSeparator();
+
+  const auto targets = getResetTargetNotes(note);
+  const auto anyTarget = [&targets](bool (*predicate)(const Note&))
+  {
+    return std::any_of(targets.begin(), targets.end(),
+                       [predicate](const Note* n) { return n && predicate(*n); });
+  };
+  const bool pitchChanged = anyTarget(hasPitchEdits);
+  const bool formantChanged = anyTarget(hasFormantEdits);
+  const bool amplitudeChanged = anyTarget(hasAmplitudeEdits);
+  const bool timingChanged = anyTarget(hasTimingEdits);
+  const bool anyChanged =
+      pitchChanged || formantChanged || amplitudeChanged || timingChanged;
+
+  juce::PopupMenu reset;
+  {
+    const auto addReset = [&reset](int id, const juce::String& label, bool enabled)
+    {
+      juce::PopupMenu::Item item(label);
+      item.itemID = id;
+      item.isEnabled = enabled;
+      item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
+          label, false, std::function<void()>{}, false).release();
+      reset.addItem(std::move(item));
+    };
+    addReset(10, TR("restore.pitch"), pitchChanged);
+    addReset(11, TR("restore.formant"), formantChanged);
+    addReset(12, TR("restore.amplitude"), amplitudeChanged);
+    addReset(13, TR("restore.timing"), timingChanged);
+    reset.addSeparator();
+    addReset(14, TR("restore.all"), anyChanged);
+  }
+  menu.addSubMenu(TR("menu.restore"), reset);
+  menu.addSeparator();
+  addItem(20, TR("menu.canvas_tools"), true);
+
+  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
+  Note *notePtr = &note;
+  menu.showMenuAsync(
+      juce::PopupMenu::Options().withTargetScreenArea(
+          juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
+      [safeThis, notePtr](int result)
+      {
+        if (safeThis == nullptr || !safeThis->project || result == 0)
+          return;
+        auto &notes = safeThis->project->getNotes();
+        if (std::none_of(notes.begin(), notes.end(),
+                         [notePtr](const Note &candidate)
+                         { return &candidate == notePtr; }))
+          return;
+        if (result == 10)
+          safeThis->resetNoteEdits(*notePtr);
+        else if (result == 11)
+          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
+        else if (result == 12)
+          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
+        else if (result == 13)
+          safeThis->resetNoteTiming(*notePtr);
+        else if (result == 14)
+          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::All);
+        else if (result == 20)
+          safeThis->showCanvasMenuAt(juce::Desktop::getInstance()
+                                         .getMainMouseSource()
+                                         .getScreenPosition()
+                                         .roundToInt());
+      });
+}
+
+void PianoRollComponent::showResetMenu(Note &note, juce::Point<int> screenPoint)
 {
   juce::PopupMenu menu;
   menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
@@ -4666,7 +4787,11 @@ void PianoRollComponent::showResetMenu(Note &note)
 
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
   Note* notePtr = &note;
-  menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&resetButton),
+  auto options = juce::PopupMenu::Options().withTargetComponent(&resetButton);
+  if (!screenPoint.isOrigin())
+    options = juce::PopupMenu::Options().withTargetScreenArea(
+        juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1));
+  menu.showMenuAsync(options,
                      [safeThis, notePtr](int result)
   {
     if (safeThis == nullptr || !safeThis->project || result == 0)

@@ -239,6 +239,9 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("liveAuditionEnabled"))
           liveAuditionEnabled =
               static_cast<bool>(configObj->getProperty("liveAuditionEnabled"));
+        if (configObj->hasProperty("advancedEditorMode"))
+          advancedEditorMode =
+              static_cast<bool>(configObj->getProperty("advancedEditorMode"));
       }
     }
   }
@@ -291,6 +294,7 @@ void SettingsManager::saveConfig()
   config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
+  config->setProperty("advancedEditorMode", advancedEditorMode);
 
   if (exportSettings)
   {

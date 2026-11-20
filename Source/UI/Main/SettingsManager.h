@@ -90,6 +90,9 @@ public:
   }
   bool getLiveAuditionEnabled() const { return liveAuditionEnabled; }
   void setLiveAuditionEnabled(bool enabled) { liveAuditionEnabled = enabled; }
+  // Basic / Advanced editor mode (gui-decision.md §1). Persisted as "advanced".
+  bool getAdvancedEditorMode() const { return advancedEditorMode; }
+  void setAdvancedEditorMode(bool advanced) { advancedEditorMode = advanced; }
 
   const std::optional<ExportHelper::ExportSettings> &getExportSettings() const
   {
@@ -173,6 +176,7 @@ private:
   juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
   bool liveAuditionEnabled = false;
+  bool advancedEditorMode = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };
