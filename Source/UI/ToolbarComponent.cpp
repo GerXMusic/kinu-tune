@@ -25,7 +25,7 @@ class ModeButtonLook final : public juce::LookAndFeel_V4
 public:
     juce::Font getTextButtonFont(juce::TextButton&, int) override
     {
-        return AppFont::getFont(14.5f);
+        return AppFont::getFont(15.5f);
     }
 };
 
@@ -242,19 +242,25 @@ void ToolbarComponent::paint(juce::Graphics& g)
                     0, 0, logoImage.getWidth(), logoImage.getHeight());
     }
 
-    // Segmented Basic / Advanced control.
-    g.setColour(juce::Colour(0xFF101215u));
-    g.fillRoundedRectangle(modeSwitchBounds.toFloat(), 7.0f);
-    g.setColour(APP_COLOR_BORDER_SUBTLE);
-    g.drawRoundedRectangle(modeSwitchBounds.toFloat().reduced(0.5f), 7.0f, 1.0f);
-    const int half = modeSwitchBounds.getWidth() / 2;
-    const auto active = uiMode == EditorUiMode::Basic
-                            ? modeSwitchBounds.withWidth(half)
-                            : modeSwitchBounds.withTrimmedLeft(half);
-    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.22f));
-    g.fillRoundedRectangle(active.toFloat().reduced(2.0f), 5.5f);
-    g.setColour(APP_COLOR_PRIMARY);
-    g.fillRoundedRectangle(active.toFloat().reduced(2.0f).removeFromBottom(2.0f), 1.0f);
+    // Basic / Advanced: two independent buttons, each with its own frame.
+    auto drawModeButton = [&](juce::Rectangle<int> bounds, bool active)
+    {
+        g.setColour(juce::Colour(0xFF101215u));
+        g.fillRoundedRectangle(bounds.toFloat(), 7.0f);
+        if (active)
+        {
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.22f));
+            g.fillRoundedRectangle(bounds.toFloat().reduced(2.0f), 5.5f);
+            g.setColour(APP_COLOR_PRIMARY);
+            g.fillRoundedRectangle(bounds.toFloat().reduced(2.0f).removeFromBottom(2.0f),
+                                   1.0f);
+        }
+        g.setColour(active ? APP_COLOR_PRIMARY.withAlpha(0.55f)
+                           : APP_COLOR_BORDER_SUBTLE);
+        g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 7.0f, 1.0f);
+    };
+    drawModeButton(basicModeBounds, uiMode == EditorUiMode::Basic);
+    drawModeButton(advancedModeBounds, uiMode == EditorUiMode::Advanced);
 
     // Tool strip background.
     if (!toolContainerBounds.isEmpty())
@@ -288,13 +294,16 @@ void ToolbarComponent::resized()
     const int logoRight = 15 + (logoImage.isValid() ? (logoImage.getWidth() + 1) / 2 : 0);
     auto left = bounds.withTrimmedLeft(logoRight + 10);
 
-    // Basic / Advanced selector, top-left as decided in gui-decision.md.
-    const int modeWidth = (getWidth() < 1100) ? 150 : 162;
-    modeSwitchBounds = {left.getX(), centreY - 13, modeWidth, 26};
-    const int half = modeWidth / 2;
-    basicModeButton.setBounds(modeSwitchBounds.withWidth(half));
-    advancedModeButton.setBounds(modeSwitchBounds.withTrimmedLeft(half));
-    left.removeFromLeft(modeWidth + 12);
+    // Basic / Advanced: two separate buttons with a visible gap, top-left as
+    // decided in gui-decision.md.
+    const int modeButtonWidth = (getWidth() < 1100) ? 76 : 82;
+    constexpr int modeGap = 8;
+    basicModeBounds = {left.getX(), centreY - 13, modeButtonWidth, 26};
+    advancedModeBounds = {basicModeBounds.getRight() + modeGap, centreY - 13,
+                          modeButtonWidth, 26};
+    basicModeButton.setBounds(basicModeBounds);
+    advancedModeButton.setBounds(advancedModeBounds);
+    left.removeFromLeft(advancedModeBounds.getRight() - left.getX() + 12);
 
     // No transport strip: REAPER owns playback. The tools take the space
     // that the old play/stop/loop group used to reserve.

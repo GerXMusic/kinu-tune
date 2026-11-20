@@ -236,15 +236,20 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       const float noteRightPx =
           framesToSeconds(std::max(visualStartFrame, visualEndFrame)) *
           pixelsPerSecond;
-      const float rowTop =
-          coordMapper->midiToY(note.getAdjustedMidiNote());
+      // Each note's contour is clipped to its own horizontal span only. A real
+      // portamento can leave the note's semitone row by many semitones (the
+      // user saw it cut at the row); the row clip was also what made the drawn
+      // preview look like a broken F0. Vertical outliers are handled by the
+      // path break below, not by hiding the part of the curve outside the row.
+      const bool drawingPreview = params.midiCurveOverride != nullptr;
+      const auto canvasClip = g.getClipBounds();
+      const juce::Rectangle<int> curveClip(
+          static_cast<int>(std::floor(std::min(noteLeftPx, noteRightPx))) - 1,
+          canvasClip.getY(),
+          static_cast<int>(std::ceil(std::abs(noteRightPx - noteLeftPx))) + 2,
+          canvasClip.getHeight());
       juce::Graphics::ScopedSaveState noteClip(g);
-      g.reduceClipRegion(
-          juce::Rectangle<float>(noteLeftPx, rowTop,
-                                 std::max(1.0f, noteRightPx - noteLeftPx),
-                                 pixelsPerSemitone)
-              .expanded(1.0f, 0.0f)
-              .getSmallestIntegerContainer());
+      g.reduceClipRegion(curveClip);
 
       // Clip long notes to the viewport before constructing the path.
       const int sourceLength = std::max(1, endFrame - startFrame);
@@ -291,8 +296,9 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         {
           // A jump of most of a semitone between consecutive frames is a
           // detector outlier, not vibrato. Break the line instead of painting
-          // a tall vertical stroke inside the note.
-          if (pathStarted && previousFinalMidi > 0.0f &&
+          // a tall vertical stroke inside the note. A drawn preview is the
+          // user's own contour and must never be broken this way.
+          if (!drawingPreview && pathStarted && previousFinalMidi > 0.0f &&
               std::abs(finalMidi - previousFinalMidi) > 0.75f)
             strokeCurrentPath();
           previousFinalMidi = finalMidi;

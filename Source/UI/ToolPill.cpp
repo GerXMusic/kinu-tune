@@ -127,12 +127,12 @@ void ToolPill::paint(juce::Graphics& g)
 
     if (hovered >= 0 && hovered < count && hoverLabel.isNotEmpty())
     {
-        const auto labelFont = AppFont::getFont(12.0f);
+        const auto labelFont = AppFont::getFont(12.5f);
         const float width =
             static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
                 labelFont, hoverLabel)) + 14.0f;
         const auto tag = juce::Rectangle<float>(
-            bounds.getCentreX() - width * 0.5f, -23.0f, width, 19.0f);
+            bounds.getCentreX() - width * 0.5f, -25.0f, width, 21.0f);
         g.setColour(juce::Colour(0xF0202429u));
         g.fillRoundedRectangle(tag, 5.0f);
         g.setColour(APP_COLOR_TEXT_PRIMARY);

@@ -227,12 +227,12 @@ void TrackListPanel::paint(juce::Graphics& g)
 {
     // Switch label, wrapped to two lines if the panel is too narrow for one.
     // Same 14px as the switch labels DarkLookAndFeel draws in the right panel.
-    g.setFont(AppFont::getFont(14.0f));
+    g.setFont(AppFont::getFont(15.0f));
     g.setColour(APP_COLOR_TEXT_PRIMARY);
     g.drawFittedText(TR("panel.use_daw_track_color"), switchLabelBounds(),
                      juce::Justification::centredLeft, 2, 1.0f);
 
-    const auto font = AppFont::getFont(13.0f);
+    const auto font = AppFont::getFont(14.5f);
     g.setFont(font);
 
     if (tracks.empty())

@@ -17,9 +17,9 @@
 class AppFont
 {
 public:
-    // One place to grow the whole UI. 1.12 keeps the 60 px toolbar and the
-    // 300 px drawers intact while making 11-12 px captions legible.
-    static constexpr float kUiFontScale = 1.12f;
+    // One place to grow the whole UI. 1.18 keeps the 60 px toolbar and the
+    // 300 px drawers intact while making 11-13 px captions legible.
+    static constexpr float kUiFontScale = 1.18f;
 
     static void initialize()
     {

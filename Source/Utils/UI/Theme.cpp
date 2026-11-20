@@ -30,7 +30,7 @@ const juce::Colour APP_COLOR_PIANO_TEXT_DIM      = juce::Colour(0xFF818994u);  /
 
 // ── Text ──────────────────────────────────────────────────────────
 const juce::Colour APP_COLOR_TEXT_PRIMARY         = juce::Colour(0xFFE8EBF0u);  // High-contrast primary text
-const juce::Colour APP_COLOR_TEXT_MUTED           = juce::Colour(0xFF8A929Eu);  // Secondary / caption text
+const juce::Colour APP_COLOR_TEXT_MUTED           = juce::Colour(0xFFA6AEB8u);  // Secondary / caption text 
 
 // ── Pitch & notes ─────────────────────────────────────────────────
 const juce::Colour APP_COLOR_PITCH_CURVE          = juce::Colour(0xFFEAF6FFu);  // Pitch contour line

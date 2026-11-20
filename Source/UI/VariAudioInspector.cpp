@@ -16,14 +16,14 @@ constexpr int kPadY = 6;
 constexpr int kInnerPadX = 10;
 constexpr int kInnerPadY = 8;
 constexpr int kRowGap = 5;
-constexpr int kHeaderHeight = 22;
-constexpr int kMenuRowHeight = 26;
+constexpr int kHeaderHeight = 24;
+constexpr int kMenuRowHeight = 28;
 constexpr int kToggleHeight = 24;
-constexpr int kTargetLabelHeight = 18;
-constexpr int kEngineStatusHeight = 32;
-constexpr int kValueRowHeight = 34;
+constexpr int kTargetLabelHeight = 20;
+constexpr int kEngineStatusHeight = 34;
+constexpr int kValueRowHeight = 38;
 constexpr int kNumRows = 6;
-constexpr int kPlaceholderRowHeight = 30;
+constexpr int kPlaceholderRowHeight = 34;
 constexpr int kPlaceholderBoxHeight = 2 * kPlaceholderRowHeight + 4;
 constexpr int kActionRowHeight = 26;
 constexpr int kMacroRowHeight = 26;
@@ -121,7 +121,7 @@ void styleCombo(juce::ComboBox& box)
 class VariAudioInspector::ComboLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return AppFont::getFont(14.0f); }
+    juce::Font getComboBoxFont(juce::ComboBox&) override { return AppFont::getFont(15.0f); }
 
     void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override
     {
@@ -175,7 +175,7 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
     const float alpha = isEnabled() ? 1.0f : 0.4f;
 
     auto top = bounds.removeFromTop(bounds.getHeight() - 8.0f);
-    g.setFont(AppFont::getFont(13.0f));
+    g.setFont(AppFont::getFont(14.5f));
     g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
     g.drawText(caption, top, juce::Justification::centredLeft, true);
     g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(alpha));
@@ -203,7 +203,7 @@ void VariAudioInspector::DisabledRow::paint(juce::Graphics& g)
     auto bounds = getLocalBounds().toFloat().reduced(6.0f, 3.0f);
     const float alpha = 0.42f;
     auto top = bounds.removeFromTop(bounds.getHeight() - 7.0f);
-    g.setFont(AppFont::getFont(13.0f));
+    g.setFont(AppFont::getFont(14.5f));
     g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
     g.drawText(caption, top, juce::Justification::centredLeft, true);
     g.drawText(value, top, juce::Justification::centredRight, false);
@@ -240,13 +240,13 @@ VariAudioInspector::VariAudioInspector()
     viewport.setScrollBarThickness(kScrollBarThickness);
     addAndMakeVisible(viewport);
 
-    variAudioHeader.setFont(AppFont::getBoldFont(16.0f));
+    variAudioHeader.setFont(AppFont::getBoldFont(18.0f));
     variAudioHeader.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     content.addAndMakeVisible(variAudioHeader);
 
     for (auto* label : {&smartControlsLabel, &snapModeLabel, &engineLabel})
     {
-        label->setFont(AppFont::getFont(14.0f));
+        label->setFont(AppFont::getFont(15.0f));
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         content.addAndMakeVisible(*label);
     }
@@ -293,13 +293,13 @@ VariAudioInspector::VariAudioInspector()
 
     // D-185: never leave a refused pick unexplained. Shows the block's actual
     // engine and, only when there was a refusal, the requested one and why.
-    engineStatusLabel.setFont(AppFont::getFont(11.0f));
+    engineStatusLabel.setFont(AppFont::getFont(12.5f));
     engineStatusLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     engineStatusLabel.setJustificationType(juce::Justification::topLeft);
     engineStatusLabel.setMinimumHorizontalScale(0.85f);
     content.addAndMakeVisible(engineStatusLabel);
 
-    targetLabel.setFont(AppFont::getFont(12.0f));
+    targetLabel.setFont(AppFont::getFont(13.5f));
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     content.addAndMakeVisible(targetLabel);
 

@@ -212,7 +212,8 @@ private:
     juce::String tempoLabelText { "120.00" };
     juce::String gridLabelText { "1/4" };
     juce::String engineLabelText { "Classic" };
-    juce::Rectangle<int> modeSwitchBounds;
+    juce::Rectangle<int> basicModeBounds;
+    juce::Rectangle<int> advancedModeBounds;
     juce::Rectangle<int> rightGroupBounds;
     void showScaleMenu();
     void showGridMenu();

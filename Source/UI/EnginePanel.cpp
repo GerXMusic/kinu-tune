@@ -4,9 +4,9 @@
 namespace
 {
 constexpr int kPad = 12;
-constexpr int kRowHeight = 30;
-constexpr int kTitleHeight = 20;
-constexpr int kHintHeight = 30;
+constexpr int kRowHeight = 32;
+constexpr int kTitleHeight = 22;
+constexpr int kHintHeight = 32;
 constexpr int kCardPad = 10;
 
 juce::String engineName(SynthesisEngineType engine)
@@ -129,7 +129,7 @@ void EnginePanel::ChoiceList::paint(juce::Graphics& g)
 
         g.setColour((enabled ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_TEXT_MUTED)
                         .withMultipliedAlpha(enabled ? 1.0f : 0.55f));
-        g.setFont(AppFont::getFont(12.5f));
+        g.setFont(AppFont::getFont(14.0f));
         g.drawText(labels[i], row.withTrimmedLeft(26), juce::Justification::centredLeft,
                    true);
     }
@@ -144,12 +144,12 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
         label.setColour(juce::Label::textColourId, colour);
         addAndMakeVisible(label);
     };
-    setupLabel(engineTitle, 11.5f, true, APP_COLOR_TEXT_MUTED);
-    setupLabel(engineHint, 11.0f, false, APP_COLOR_TEXT_MUTED);
-    setupLabel(blockTitle, 11.5f, true, APP_COLOR_TEXT_MUTED);
-    setupLabel(blockHint, 11.0f, false, APP_COLOR_TEXT_MUTED);
-    setupLabel(blockStatus, 11.0f, false, APP_COLOR_TEXT_MUTED);
-    setupLabel(deviceTitle, 11.5f, true, APP_COLOR_TEXT_MUTED);
+    setupLabel(engineTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
+    setupLabel(engineHint, 12.5f, false, APP_COLOR_TEXT_MUTED);
+    setupLabel(blockTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
+    setupLabel(blockHint, 12.5f, false, APP_COLOR_TEXT_MUTED);
+    setupLabel(blockStatus, 12.5f, false, APP_COLOR_TEXT_MUTED);
+    setupLabel(deviceTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
     deviceTitle.setVisible(false);
 
     addAndMakeVisible(engineChoices);
@@ -321,7 +321,7 @@ void EnginePanel::paint(juce::Graphics& g)
     if (renderStatus.isNotEmpty())
     {
         g.setColour(APP_COLOR_TEXT_MUTED);
-        g.setFont(AppFont::getFont(11.0f));
+        g.setFont(AppFont::getFont(12.5f));
         g.drawText(renderStatus,
                    getLocalBounds().withTrimmedLeft(kPad).withTrimmedRight(kPad)
                        .removeFromBottom(30),

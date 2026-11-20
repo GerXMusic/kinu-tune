@@ -13,11 +13,11 @@ constexpr int kCardPadY = 6;
 constexpr int kInnerPadX = 10;
 constexpr int kInnerPadY = 8;
 constexpr int kRowGap = 5;
-constexpr int kSectionLabelHeight = 20;
-constexpr int kButtonRowHeight = 26;
-constexpr int kHintRowHeight = 18;
-constexpr int kStatusRowHeight = 18;
-constexpr int kLabelColumnWidth = 74;
+constexpr int kSectionLabelHeight = 22;
+constexpr int kButtonRowHeight = 28;
+constexpr int kHintRowHeight = 20;
+constexpr int kStatusRowHeight = 20;
+constexpr int kLabelColumnWidth = 80;
 constexpr int kNumRows = 5;
 
 constexpr int kPreferredHeight =
@@ -50,15 +50,15 @@ void styleButton(juce::TextButton& button)
 
 HarmonyPanel::HarmonyPanel()
 {
-    sectionLabel.setFont(AppFont::getBoldFont(16.0f));
+    sectionLabel.setFont(AppFont::getBoldFont(17.5f));
     sectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
     addAndMakeVisible(sectionLabel);
 
-    hintLabel.setFont(AppFont::getFont(12.0f));
+    hintLabel.setFont(AppFont::getFont(13.5f));
     hintLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     addAndMakeVisible(hintLabel);
 
-    statusLabel.setFont(AppFont::getFont(12.0f));
+    statusLabel.setFont(AppFont::getFont(13.5f));
     statusLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     addAndMakeVisible(statusLabel);
 
@@ -68,7 +68,7 @@ HarmonyPanel::HarmonyPanel()
         row.interval = kRowSpecs[i].interval;
         row.labelKey = kRowSpecs[i].labelKey;
 
-        row.label.setFont(AppFont::getFont(14.0f));
+        row.label.setFont(AppFont::getFont(15.0f));
         row.label.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         addAndMakeVisible(row.label);
 

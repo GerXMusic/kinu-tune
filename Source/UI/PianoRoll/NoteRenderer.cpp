@@ -776,7 +776,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const juce::String pitchName =
           juce::String(pitchNames[((midi % 12) + 12) % 12]) +
           juce::String(midi / 12 - 1);
-      const auto labelFont = AppFont::getBoldFont(12.0f);
+      const auto labelFont = AppFont::getBoldFont(13.0f);
       const float labelWidth =
           static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
               labelFont, pitchName)) + 10.0f;
@@ -869,7 +869,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         label = prefix + juce::String(deltaSemitones, 1) + " st";
       }
 
-      const auto labelFont = AppFont::getFont(12.0f);
+      const auto labelFont = AppFont::getFont(13.0f);
       const float labelWidth = std::max(
           60.0f, static_cast<float>(juce::GlyphArrangement::getStringWidthInt(
                      labelFont, label)) + 16.0f);
@@ -944,7 +944,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       g.setColour(juce::Colour(0xE6282828u));
       g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
       g.setColour(juce::Colour(0xFFF2F2F2u));
-      g.setFont(AppFont::getFont(11.0f));
+      g.setFont(AppFont::getFont(12.0f));
       g.drawFittedText(label, static_cast<int>(labelX),
                        static_cast<int>(labelY),
                        static_cast<int>(labelWidth),

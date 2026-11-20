@@ -36,7 +36,7 @@ MidiGuidePanel::MidiGuidePanel()
     };
     addAndMakeVisible(removeButton);
 
-    hint.setFont(AppFont::getFont(11.0f));
+    hint.setFont(AppFont::getFont(12.5f));
     hint.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     hint.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(hint);
@@ -63,7 +63,7 @@ void MidiGuidePanel::paint(juce::Graphics& g)
     if (guides.isEmpty())
     {
         g.setColour(APP_COLOR_TEXT_MUTED);
-        g.setFont(AppFont::getFont(11.5f));
+        g.setFont(AppFont::getFont(13.0f));
         g.drawFittedText(TR("midi.empty"), listBounds.reduced(14),
                          juce::Justification::centred, 2);
         return;
@@ -81,7 +81,7 @@ void MidiGuidePanel::paint(juce::Graphics& g)
         }
         g.setColour(i == selected ? APP_COLOR_PRIMARY_GLOW
                                   : APP_COLOR_TEXT_PRIMARY);
-        g.setFont(AppFont::getFont(12.0f));
+        g.setFont(AppFont::getFont(13.5f));
         g.drawText(guides[i], row.withTrimmedLeft(10),
                    juce::Justification::centredLeft, true);
     }
