@@ -848,13 +848,13 @@ MainComponent::MainComponent(bool enableAudioDevice)
   workspace.addRailPanel("notes", "panel.notes", GuiIcon::Notes,
                          &variAudioInspector, 300);
   workspace.addRailPanel("engine", "engine.title", GuiIcon::Engine,
-                         &enginePanel, 276);
+                         &enginePanel, 300);
   workspace.addRailPanel("tracks", "panel.tracks", GuiIcon::Tracks,
-                         &trackListPanel, 258);
+                         &trackListPanel, 300);
   workspace.addRailPanel("harmony", "harmony.title", GuiIcon::Harmony,
-                         &railHarmonyPanel, 258);
+                         &railHarmonyPanel, 300);
   workspace.addRailPanel("midi", "panel.midi_guides", GuiIcon::MidiGuide,
-                         &midiGuidePanel, 258);
+                         &midiGuidePanel, 300);
   workspace.setRailPanelAvailable("tracks", false); // ARA only
   workspace.getSideRail().onSettingsClicked = [this] { showSettings(); };
   midiGuidePanel.onImportRequested = [this]

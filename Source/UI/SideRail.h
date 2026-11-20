@@ -21,8 +21,8 @@
 class SideRail : public juce::Component
 {
 public:
-    static constexpr int railWidth = 46;
-    static constexpr int defaultDrawerWidth = 288;
+    static constexpr int railWidth = 92;
+    static constexpr int defaultDrawerWidth = 300;
     static constexpr int headerHeight = 34;
 
     SideRail();

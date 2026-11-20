@@ -416,40 +416,26 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
       if (segmentStyle)
       {
-        // Melodyne-style note: a rounded blob whose gradient carries the
-        // tuning colour, with the real amplitude envelope inside in white.
-        // The rectangle keeps its old geometry, so every hitbox and smart
-        // control is untouched.
+        // Melodyne-style note: the real amplitude envelope *is* the note. No
+        // rectangle, pill or frame is painted, so the blob reads as a
+        // waveform instead of a MIDI bar. The old rectangle still defines
+        // the hitbox and the smart controls, which are untouched.
         const auto segmentBounds =
             juce::Rectangle<float>(x, y + 1.0f, renderedWidth,
                                    std::max(2.0f, h - 2.0f))
                 .reduced(0.0f, 0.5f);
-        // Melodyne reads the segment as a soft pill, not a sharp rectangle:
-        // the corner radius grows with the row height.
-        const float rounding =
-            juce::jmin(9.0f, segmentBounds.getHeight() * 0.46f);
         const bool selected = note.isSelected();
+        const float centreY = segmentBounds.getCentreY();
+        const float waveHeight =
+            std::max(2.0f, segmentBounds.getHeight() - 2.0f);
+        const float left = segmentBounds.getX();
 
-        // A faint drop shadow lifts the blob off the semitone row.
-        g.setColour(juce::Colours::black.withAlpha(0.28f));
-        g.fillRoundedRectangle(segmentBounds.translated(0.0f, 1.0f)
-                                   .expanded(0.5f, 0.0f),
-                               rounding);
+        juce::Path wavePath;
+        bool hasWave = false;
 
-        setNoteGradientFill(g, segmentBounds, segmentBounds.getCentreY(), noteColours);
-        g.fillRoundedRectangle(segmentBounds, rounding);
-        if (selected)
+        if (!greyscale && samples && totalSamples > 0 &&
+            renderedWidth > 2.0f && endSample > startSample)
         {
-          g.setColour(APP_COLOR_ACCENT_SELECT.withAlpha(0.12f));
-          g.fillRoundedRectangle(segmentBounds, rounding);
-        }
-
-        // Real waveform, clipped to the blob, mirroring Melodyne's note body.
-        if (fillBodies && !greyscale && samples && totalSamples > 0 &&
-            renderedWidth > 6.0f && endSample > startSample)
-        {
-          const float centreY = segmentBounds.getCentreY();
-          const float waveHeight = std::max(2.0f, segmentBounds.getHeight() - 2.0f);
           const int pointCount = std::max(
               2, std::min(1024,
                           static_cast<int>(std::ceil(renderedWidth)) + 1));
@@ -460,10 +446,9 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                   : 1.0f);
 
           // The envelope is an absolute RMS, so on quiet material it shrinks
-          // to a couple of pixels and the blob reads as a plain MIDI bar.
-          // Lift each note up to a similar visual size (capped, so a silent
-          // segment is not blown up into noise) while keeping the relative
-          // shape inside the note.
+          // to a couple of pixels and the note reads as a plain bar. Lift
+          // each note to a similar visual size (capped, so a silent segment
+          // is not blown up into noise) while keeping its own shape.
           if (!waveValues.empty())
           {
             const float peak =
@@ -480,65 +465,99 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           const size_t numPoints = waveValues.size();
           if (numPoints >= 2)
           {
-            juce::Graphics::ScopedSaveState waveClip(g);
-            g.reduceClipRegion(segmentBounds.getSmallestIntegerContainer());
-            const float left = segmentBounds.getX();
-            const float step = renderedWidth / static_cast<float>(numPoints - 1);
-            juce::Path wavePath;
-            wavePath.startNewSubPath(left, centreY);
-            for (size_t i = 0; i < numPoints; ++i)
+            const float step =
+                renderedWidth / static_cast<float>(numPoints - 1);
+            // A silent note still leaves a thin blue ribbon rather than
+            // vanishing, so it can be found and clicked.
+            const auto amplitudeAt = [&](size_t index)
+            {
+              return std::max(0.10f, waveValues[index]);
+            };
+
+            wavePath.startNewSubPath(
+                left, centreY - amplitudeAt(0) * waveHeight * 0.5f);
+            for (size_t i = 1; i < numPoints; ++i)
               wavePath.lineTo(left + static_cast<float>(i) * step,
-                              centreY - waveValues[i] * waveHeight * 0.5f);
+                              centreY -
+                                  amplitudeAt(i) * waveHeight * 0.5f);
             for (int i = static_cast<int>(numPoints) - 1; i >= 0; --i)
-              wavePath.lineTo(left + static_cast<float>(i) * step,
-                              centreY + waveValues[static_cast<size_t>(i)] *
-                                            waveHeight * 0.5f);
+              wavePath.lineTo(
+                  left + static_cast<float>(i) * step,
+                  centreY + amplitudeAt(static_cast<size_t>(i)) *
+                                waveHeight * 0.5f);
             wavePath.closeSubPath();
-
-            // Blue waveform over the steel-blue blob, as the user asked: the
-            // tuning curve on top is white, so only the contour is white.
-            g.setColour(juce::Colour(0xFF0E2B4Au).withAlpha(selected ? 0.95f : 0.84f));
-            g.fillPath(wavePath);
-            g.setColour(juce::Colour(0xFF8FC6F5u).withAlpha(selected ? 0.55f : 0.38f));
-            g.drawLine(left, centreY, left + renderedWidth, centreY, 0.8f);
+            hasWave = true;
           }
         }
 
-        if (isPreviewPlaybackNote)
+        if (hasWave)
         {
-          const float previewProgressX =
-              static_cast<float>(previewCurrentTime * pixelsPerSecond);
-          const float clipRight = juce::jlimit(
-              segmentBounds.getX(), segmentBounds.getRight(), previewProgressX);
-          if (clipRight > segmentBounds.getX())
+          // Soft drop shadow under the silhouette, not under a rectangle.
+          g.setColour(juce::Colours::black.withAlpha(0.30f));
+          g.fillPath(wavePath, juce::AffineTransform::translation(0.0f, 1.2f));
+
+          // Dark at both edges, light in the middle, as the user asked: the
+          // highlight runs through the centre of the wave, not along the top.
+          setNoteGradientFill(g, segmentBounds, centreY, noteColours);
+          g.fillPath(wavePath);
+
+          if (selected)
           {
-            juce::Graphics::ScopedSaveState previewClip(g);
-            g.reduceClipRegion(segmentBounds.withRight(clipRight)
-                                   .getSmallestIntegerContainer());
-            g.setColour(juce::Colours::white.withAlpha(0.20f));
-            g.fillRoundedRectangle(segmentBounds, rounding);
+            g.setColour(juce::Colours::white.withAlpha(0.10f));
+            g.fillPath(wavePath);
+          }
+
+          if (isPreviewPlaybackNote)
+          {
+            const float previewProgressX =
+                static_cast<float>(previewCurrentTime * pixelsPerSecond);
+            const float clipRight =
+                juce::jlimit(left, segmentBounds.getRight(), previewProgressX);
+            if (clipRight > left)
+            {
+              juce::Graphics::ScopedSaveState previewClip(g);
+              g.reduceClipRegion(
+                  juce::Rectangle<float>(left, segmentBounds.getY(),
+                                         clipRight - left,
+                                         segmentBounds.getHeight())
+                      .getSmallestIntegerContainer());
+              g.setColour(juce::Colours::white.withAlpha(0.20f));
+              g.fillPath(wavePath);
+            }
+          }
+
+          noFill.reset();
+
+          // The contour follows the waveform. Selection is a brighter edge,
+          // never a frame around the note.
+          g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
+                               : juce::Colour(0xFF1E4C7Au).withAlpha(0.95f));
+          g.strokePath(wavePath, juce::PathStrokeType(selected ? 1.5f : 1.0f,
+                                                      juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
+          if (outlineColour.has_value())
+          {
+            g.setColour(*outlineColour);
+            g.strokePath(wavePath, juce::PathStrokeType(1.2f));
           }
         }
-
-        // Top highlight and border: one glance tells selected from normal.
-        noFill.reset();
-        g.setColour(juce::Colours::white.withAlpha(selected ? 0.30f : 0.13f));
-        g.fillRoundedRectangle(segmentBounds.reduced(1.0f, 0.5f)
-                                   .removeFromTop(1.0f),
-                               rounding * 0.5f);
-        g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
-                             : juce::Colour(0xFF2B7FD3u));
-        g.drawRoundedRectangle(segmentBounds.reduced(0.5f), rounding,
-                               selected ? 1.6f : 1.2f);
-        if (selected)
+        else
         {
-          g.setColour(APP_COLOR_ACCENT_SELECT.withAlpha(0.55f));
-          g.drawRoundedRectangle(segmentBounds.expanded(1.6f), rounding + 1.0f, 1.0f);
-        }
-        if (outlineColour.has_value())
-        {
-          g.setColour(*outlineColour);
-          g.drawRoundedRectangle(segmentBounds.expanded(1.0f), rounding, 1.0f);
+          // No waveform loaded: keep the note visible as a slim bar instead
+          // of an empty rectangle.
+          const auto bar = segmentBounds.withSizeKeepingCentre(
+              renderedWidth, std::min(segmentBounds.getHeight(), 8.0f));
+          setNoteGradientFill(g, bar, bar.getCentreY(), noteColours);
+          g.fillRoundedRectangle(bar, 3.0f);
+          noFill.reset();
+          g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
+                               : juce::Colour(0xFF1E4C7Au).withAlpha(0.95f));
+          g.drawRoundedRectangle(bar, 3.0f, selected ? 1.5f : 1.0f);
+          if (outlineColour.has_value())
+          {
+            g.setColour(*outlineColour);
+            g.drawRoundedRectangle(bar, 3.0f, 1.2f);
+          }
         }
       }
       else if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)

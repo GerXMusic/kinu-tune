@@ -222,14 +222,29 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       const float visualStartFrame = note.getVisualStartFrame();
       const float visualEndFrame = note.getVisualEndFrame();
       const int currentRegion = getRegionIndex(note);
-      // Melodyne draws one line per note. Joining contiguous notes turned
-      // every boundary into a tall vertical stroke once the view was zoomed
-      // out, which read as a waveform rather than a pitch contour.
-      const bool continuesPreviousPath = false;
+      // Melodyne draws one line per note, inside the note's own semitone row.
       juce::ignoreUnused(currentRegion);
 
-      if (!continuesPreviousPath)
-        strokeCurrentPath();
+      // Flush the previous note before changing the clip. The curve of each
+      // note is clipped to its own row: the composed pitch can jump octaves
+      // at boundaries and those spikes used to run across the whole canvas.
+      strokeCurrentPath();
+
+      const float noteLeftPx =
+          framesToSeconds(std::min(visualStartFrame, visualEndFrame)) *
+          pixelsPerSecond;
+      const float noteRightPx =
+          framesToSeconds(std::max(visualStartFrame, visualEndFrame)) *
+          pixelsPerSecond;
+      const float rowTop =
+          coordMapper->midiToY(note.getAdjustedMidiNote());
+      juce::Graphics::ScopedSaveState noteClip(g);
+      g.reduceClipRegion(
+          juce::Rectangle<float>(noteLeftPx, rowTop,
+                                 std::max(1.0f, noteRightPx - noteLeftPx),
+                                 pixelsPerSemitone)
+              .expanded(1.0f, 0.0f)
+              .getSmallestIntegerContainer());
 
       // Clip long notes to the viewport before constructing the path.
       const int sourceLength = std::max(1, endFrame - startFrame);
@@ -246,6 +261,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         lastVisible = std::min(endFrame, startFrame + static_cast<int>(
             std::ceil((right - visualStartFrame) / visualLength * sourceLength)) + 1);
       }
+      float previousFinalMidi = -1.0f;
       for (int i = firstVisible; i < lastVisible; ++i)
       {
         float finalMidi = 0.0f;
@@ -273,6 +289,14 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
 
         if (finalMidi > 0.0f)
         {
+          // A jump of most of a semitone between consecutive frames is a
+          // detector outlier, not vibrato. Break the line instead of painting
+          // a tall vertical stroke inside the note.
+          if (pathStarted && previousFinalMidi > 0.0f &&
+              std::abs(finalMidi - previousFinalMidi) > 0.75f)
+            strokeCurrentPath();
+          previousFinalMidi = finalMidi;
+
           const float position =
               (static_cast<float>(i - startFrame) + 0.5f) /
               static_cast<float>(sourceLength);
@@ -295,9 +319,11 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         else
         {
           strokeCurrentPath();
+          previousFinalMidi = -1.0f;
         }
       }
 
+      strokeCurrentPath();
       hasPreviousNote = true;
       previousVisualEndFrame = visualEndFrame;
       previousRegion = currentRegion;
