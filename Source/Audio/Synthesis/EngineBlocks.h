@@ -173,20 +173,13 @@ struct CommitRange {
  * Commit spans for a render pass (D-239).
  *
  * The dirty notes choose the spans; a dirty note outside [renderStartFrame,
- * renderEndFrame) belongs to another pass and is ignored. For PSOLA and the
- * classical core the span is the WHOLE engine block: their grain lattice
- * accumulates through the voiced run, so a note-sized splice mixes two phases.
- *
- * The neural vocoder is different. It rebuilds the region from mel and F0 and
- * has no lattice to carry; its output on an unedited note is a reconstruction
- * whose start depends on the model context of the edited neighbour. Writing
- * that note wholesale exposes a model artifact (heard as a click after the
- * edited note), so a vocoder span is the dirty note's own body: the neighbour
- * keeps the audio it already had. The base glide into the neighbour is not
- * rewritten for the vocoder; that is a declared engine difference.
+ * renderEndFrame) belongs to another pass and is ignored. The span is the WHOLE
+ * engine block for every engine: the block is the render unit, its edges are
+ * silences or padding, and a note-sized splice is what used to mix two phases
+ * (PSOLA/Pitchcore) or two vocoder generations inside a sounding run.
  *
  * When there is no dirty-note anchor (global pitch/formant, DAW automation,
- * timing undo) the F0 range selects whole blocks for every engine.
+ * timing undo) the F0 range selects whole blocks as well.
  */
 std::vector<CommitRange>
 commitRangesForNotes(const std::vector<Note> &notes,

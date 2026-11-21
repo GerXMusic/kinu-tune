@@ -322,12 +322,7 @@ commitRangesForNotes(const std::vector<Note> &notes,
     auto addBlocksFor = [&](const Note &note) {
         for (const auto &block : blocksToCommit(plan, note.getStartFrame(),
                                                 note.getEndFrame())) {
-            if (block.engine == SynthesisEngineType::Vocoder) {
-                addRange(std::max(block.startFrame, note.getStartFrame()),
-                         std::min(block.endFrame, note.getEndFrame()));
-            } else {
-                addRange(block.startFrame, block.endFrame);
-            }
+            addRange(block.startFrame, block.endFrame);
         }
     };
 
@@ -351,19 +346,7 @@ commitRangesForNotes(const std::vector<Note> &notes,
               [](const CommitRange &a, const CommitRange &b) {
                   return a.startFrame < b.startFrame;
               });
-
-    // Adjacent edited notes (a multi-selection, or two notes that touch) share
-    // one span: two touching ranges would each fade at the shared edge and the
-    // commit mask would only reach 50 % there.
-    std::vector<CommitRange> merged;
-    for (const auto &range : ranges) {
-        if (merged.empty() || range.startFrame > merged.back().endFrame)
-            merged.push_back(range);
-        else
-            merged.back().endFrame =
-                std::max(merged.back().endFrame, range.endFrame);
-    }
-    return merged;
+    return ranges;
 }
 
 }  // namespace engineBlocks

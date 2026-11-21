@@ -509,10 +509,9 @@ void testBlocksToCommitSelectsWholeBlocks() {
     CHECK(blocksToCommit({}, 0, 10).empty());
 }
 
-void testCommitRangesFollowTheEngine() {
-    // D-239: PSOLA/Pitchcore commit the whole block (the phase run); the
-    // neural vocoder commits only the edited note, because its reconstruction
-    // of an unedited note can carry a model artifact at the boundary.
+void testCommitRangesUseTheWholeBlockForEveryEngine() {
+    // D-239: PSOLA, Pitchcore and the vocoder all commit the whole engine
+    // block. The block is the render unit; no engine gets a note-sized splice.
     using engineBlocks::CommitRange;
     using engineBlocks::commitRangesForNotes;
     std::vector<engineBlocks::Block> plan = {
@@ -534,13 +533,13 @@ void testCommitRangesFollowTheEngine() {
     CHECK(ranges.size() == 2);
     if (ranges.size() == 2) {
         CHECK(ranges[0].startFrame == 0);
-        CHECK(ranges[0].endFrame == 100); // PSOLA whole block
-        CHECK(ranges[1].startFrame == 120);
-        CHECK(ranges[1].endFrame == 150); // vocoder note only
+        CHECK(ranges[0].endFrame == 100);
+        CHECK(ranges[1].startFrame == 100);
+        CHECK(ranges[1].endFrame == 200); // the vocoder block, not the note
     }
 
-    // Adjacent edited vocoder notes merge into one span, so the commit mask
-    // does not fade at the shared note boundary.
+    // Adjacent edited notes in the same block merge into one span, so the
+    // commit mask does not fade at the shared note boundary.
     std::vector<Note> adjacent;
     Note vocoderA(120, 150, 62.0f);
     vocoderA.markDirty();
@@ -552,8 +551,8 @@ void testCommitRangesFollowTheEngine() {
         commitRangesForNotes(adjacent, plan, true, -1, -1, 0, 300);
     CHECK(merged.size() == 1);
     if (!merged.empty()) {
-        CHECK(merged.front().startFrame == 120);
-        CHECK(merged.front().endFrame == 180);
+        CHECK(merged.front().startFrame == 100);
+        CHECK(merged.front().endFrame == 200);
     }
 
     // A dirty note outside this pass selects nothing; the F0 fallback is not
@@ -599,7 +598,7 @@ int main() {
     testPitchcoreRequestSurvivesALargeShift();
     testRefusalNamesTheNoteTheRequestAndTheCause();
     testBlocksToCommitSelectsWholeBlocks();
-    testCommitRangesFollowTheEngine();
+    testCommitRangesUseTheWholeBlockForEveryEngine();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;
