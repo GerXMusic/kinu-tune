@@ -908,6 +908,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
   const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
+  // D-251 (S4): identidad por edición. Solo se limpia lo que este pase
+  // renderizó; una edición que llega mientras el render está en vuelo no está
+  // en esta lista y conserva su dirty para el pase siguiente.
+  std::vector<int> passDirtyNotes;
+  for (int index = 0; index < static_cast<int>(project->getNotes().size());
+       ++index)
+    if (project->getNotes()[static_cast<size_t>(index)].isDirty())
+      passDirtyNotes.push_back(index);
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   if (hasRenderRangeOverride) {
@@ -1120,7 +1128,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   bool hasVoiced = std::any_of(blendMask.begin(), blendMask.end(),
                                [](float v) { return v > 0.0f; });
   if (!hasVoiced) {
-    project->clearAllDirty();
+    project->clearDirtyForPass(passDirtyNotes, f0DirtyStart, f0DirtyEnd);
     if (onComplete)
       onComplete(true);
     return;
@@ -1547,7 +1555,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
-       capturedNoteCount, commitFrameRanges = std::move(commitFrameRanges),
+       capturedNoteCount, passDirtyNotes,
+       commitFrameRanges = std::move(commitFrameRanges),
        blendMask = std::move(blendMask),
        originalSegment = std::move(originalSegment),
        audioMovePatches = std::move(audioMovePatches)](
@@ -1571,6 +1580,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      capturedStartFrame, capturedEndFrame, hopSize,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
+                     passDirtyNotes,
                      commitFrameRanges, blendMask, originalSegment,
                      audioMovePatches, formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
@@ -2211,8 +2221,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           isBusy = false;
           juce::MessageManager::callAsync(
-              [capturedProject, onComplete]() {
-                capturedProject->clearAllDirty();
+              [capturedProject, onComplete, passDirtyNotes, f0DirtyStart,
+               f0DirtyEnd]() {
+                capturedProject->clearDirtyForPass(
+                    passDirtyNotes, f0DirtyStart, f0DirtyEnd);
                 if (onComplete) onComplete(true);
               });
         }).detach();

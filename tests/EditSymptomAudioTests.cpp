@@ -332,6 +332,138 @@ void testS6ResetOneBlock() {
   CHECK(block2 <= 1.0e-7f);
 }
 
+// ---------------- S6 (dos anclas) ----------------
+// Criterio escrito antes de medir (T2): con anclas sucias en los DOS bloques,
+// restablecer solo A debe devolver A a la fuente (<=1e-6) y dejar B intacto
+// fuera de su propio commit (<=1e-7): el cuerpo de B conserva lo que ya sonaba
+// y el silencio entre frases no se toca.
+void testS6ResetOneBlockWithTwoDirtyAnchors() {
+  Project project = makeProject(NoteEngine::Psola);
+  auto &notes = project.getNotes();
+  for (int i = 0; i < 4; ++i) {
+    notes[static_cast<size_t>(i)].setPitchOffset(i % 2 == 0 ? 1.0f : -1.0f);
+    notes[static_cast<size_t>(i)].markDirty();
+    notes[static_cast<size_t>(i)].markSynthDirty();
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN0a, kN3b);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S6b editado"));
+
+  juce::AudioBuffer<float> editedState;
+  editedState.makeCopyOf(project.getAudioData().waveform);
+
+  // Restablecer SOLO A; las notas de B siguen sucias (anclas en A y B).
+  for (int i = 0; i < 2; ++i)
+    resetNoteToFactory(notes[static_cast<size_t>(i)]);
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  for (int i = 0; i < 4; ++i)
+    notes[static_cast<size_t>(i)].markDirty();
+  project.markNoteEditDirtyRange(kN0a, kN3b);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S6b anclas"));
+
+  const auto &out = project.getAudioData().waveform;
+  const auto &source = project.getAudioData().originalWaveform;
+  const float blockA = maxAbsDiff(out, source, kN0a + 5, kN1b - 5);
+  // Fuera del commit de B: la mitad derecha del silencio (A commitea hasta el
+  // punto medio; el fade del commit no llega más allá de un frame). Es la
+  // comprobación de que dos anclas no hacen que un commit cruce al vecino.
+  const float between = maxAbsDiff(out, editedState, kN1b + 22, kN2a - 2);
+
+  // B se commitearon con su estado final: debe coincidir con el render completo
+  // de ese estado (no con el de la pasada anterior, que tenía A editado).
+  Project reference = makeProject(NoteEngine::Psola);
+  auto &refNotes = reference.getNotes();
+  for (int i = 0; i < 4; ++i)
+    if (i >= 2)
+      refNotes[static_cast<size_t>(i)].setPitchOffset(i % 2 == 0 ? 1.0f : -1.0f);
+  PitchCurveProcessor::rebuildBaseFromNotes(reference);
+  Project full = fullRender(reference, SynthesisEngineType::Psola, "S6b completo");
+  const float blockB = maxAbsDiff(out, full.getAudioData().waveform, kN2a + 5,
+                                  kN3b - 5);
+
+  std::printf("S6b A vs fuente %.8f (lim 1e-6) | B vs completo %.6f (lim "
+              "2e-3) | silencio %.8f (lim 1e-7)\n",
+              blockA, blockB, between);
+  CHECK(blockA <= 1.0e-6f);
+  CHECK(blockB <= 2.0e-3f);
+  CHECK(between <= 1.0e-7f);
+}
+
+// ---------------- S4: edicion durante el render ----------------
+// Criterio escrito antes de medir (T3): una edición que llega mientras hay un
+// render en vuelo conserva su dirty tras el merge, se renderiza en el pase
+// siguiente y el audio final coincide con el render completo del estado final
+// (<=2e-3 en PSOLA).
+void testS4EditDuringRender() {
+  Project project = makeProject(NoteEngine::Psola);
+  auto &notes = project.getNotes();
+  for (int i = 0; i < 4; ++i) {
+    notes[static_cast<size_t>(i)].setPitchOffset(i % 2 == 0 ? 1.0f : -1.0f);
+    notes[static_cast<size_t>(i)].markDirty();
+    notes[static_cast<size_t>(i)].markSynthDirty();
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN0a, kN3b);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S4 inicial"));
+
+  // Edición A: nota 0. Se marca y se lanza el render.
+  notes[0].setPitchOffset(1.5f);
+  notes[0].markDirty();
+  notes[0].markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN0a, kN0b);
+
+  IncrementalSynthesizer synthesizer;
+  synthesizer.setProject(&project);
+  synthesizer.setSynthesisEngine(SynthesisEngineType::Psola);
+  std::atomic<bool> finished{false};
+  std::atomic<bool> success{false};
+  synthesizer.synthesizeRegion(nullptr, [&](bool ok) {
+    success.store(ok);
+    finished.store(true);
+  });
+
+  // Edición B mientras el render de A está en vuelo (después de capturar A).
+  notes[2].setPitchOffset(-1.5f);
+  notes[2].markDirty();
+  notes[2].markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN2a, kN2b);
+
+  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+  while (!finished.load() &&
+         juce::Time::getMillisecondCounterHiRes() < deadline)
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+  CHECK(finished.load());
+  CHECK(success.load());
+
+  const bool keptDirty = project.getNotes()[2].isDirty();
+  const bool f0Kept = project.hasF0DirtyRange();
+  std::printf("S4 edicion en vuelo: nota 2 dirty %d (esperado 1) | f0 dirty "
+              "%d (esperado 1)\n",
+              keptDirty ? 1 : 0, f0Kept ? 1 : 0);
+  CHECK(keptDirty);
+  CHECK(f0Kept);
+
+  // Pase siguiente: la edición B se renderiza.
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S4 segundo pase"));
+
+  Project reference = makeProject(NoteEngine::Psola);
+  auto &refNotes = reference.getNotes();
+  refNotes[0].setPitchOffset(1.5f);
+  refNotes[1].setPitchOffset(-1.0f);
+  refNotes[2].setPitchOffset(-1.5f);
+  refNotes[3].setPitchOffset(-1.0f);
+  PitchCurveProcessor::rebuildBaseFromNotes(reference);
+  Project full = fullRender(reference, SynthesisEngineType::Psola, "S4 completo");
+
+  const float diff = maxAbsDiff(project.getAudioData().waveform,
+                                full.getAudioData().waveform, kN2a + 5,
+                                kN3b - 5);
+  std::printf("S4 final vs render completo: bloque B %.6f (lim 2e-3)\n", diff);
+  CHECK(diff <= 2.0e-3f);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -345,11 +477,17 @@ int main(int argc, char **argv) {
     testS3NeighbourUntouched();
   } else if (group == "s6") {
     testS6ResetOneBlock();
+  } else if (group == "s6b") {
+    testS6ResetOneBlockWithTwoDirtyAnchors();
+  } else if (group == "s4") {
+    testS4EditDuringRender();
   } else {
     testS1ResetAll();
     testS2EngineChange();
     testS3NeighbourUntouched();
     testS6ResetOneBlock();
+    testS6ResetOneBlockWithTwoDirtyAnchors();
+    testS4EditDuringRender();
   }
   std::printf("EditSymptomAudioTests [%s]: en verde\n", group.c_str());
   return 0;

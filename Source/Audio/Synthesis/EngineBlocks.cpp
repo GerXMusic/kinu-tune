@@ -320,21 +320,100 @@ commitRangesForNotes(const std::vector<Note> &notes,
             ranges.push_back({start, end});
     };
 
-    auto addBlocksFor = [&](const Note &note) {
-        for (const auto &block : blocksToCommit(plan, note.getStartFrame(),
-                                                note.getEndFrame())) {
-            addRange(block.startFrame, block.endFrame);
+    // D-250: the commit unit is the note phrase inside the engine block, not
+    // the whole block. An engine block only breaks where the engine changes, so
+    // a phrase separated from the next one by silence lives in the SAME block;
+    // committing the whole block rewrote the neighbouring phrase with a
+    // different grain phase (S6: 0.6068 of difference in the block nobody
+    // edited). Silence inside a block is still a phase boundary, so the commit
+    // of an anchor stops at the middle of the silence around its phrase: the
+    // splice stays inaudible and untouched phrases stay bit for bit.
+    constexpr int kPhraseGapToleranceFrames = 1;
+    std::vector<size_t> sortedNotes;
+    sortedNotes.reserve(notes.size());
+    for (size_t i = 0; i < notes.size(); ++i)
+        if (!notes[i].isRest())
+            sortedNotes.push_back(i);
+    std::stable_sort(sortedNotes.begin(), sortedNotes.end(),
+                     [&](size_t a, size_t b) {
+                         return notes[a].getStartFrame() <
+                                notes[b].getStartFrame();
+                     });
+    auto sortedPosition = [&](size_t noteIndex) {
+        for (size_t i = 0; i < sortedNotes.size(); ++i)
+            if (sortedNotes[i] == noteIndex)
+                return i;
+        return sortedNotes.size();
+    };
+
+    // Commits the phrase that owns @p noteIndex, clipped to its engine block.
+    auto addPhraseFor = [&](size_t noteIndex) {
+        const auto &note = notes[noteIndex];
+        const auto blocks = blocksToCommit(plan, note.getStartFrame(),
+                                           note.getEndFrame());
+        if (blocks.empty())
+            return;
+        const Block *block = &blocks.front();
+        for (const auto &candidate : blocks) {
+            if (candidate.startFrame <= note.getStartFrame() &&
+                note.getStartFrame() < candidate.endFrame) {
+                block = &candidate;
+                break;
+            }
         }
+
+        size_t position = sortedPosition(noteIndex);
+        if (position >= sortedNotes.size())
+            return;
+        size_t first = position;
+        size_t last = position;
+        while (first > 0) {
+            const auto &previous = notes[sortedNotes[first - 1]];
+            const auto &current = notes[sortedNotes[first]];
+            if (current.getStartFrame() - previous.getEndFrame() >
+                kPhraseGapToleranceFrames)
+                break;
+            --first;
+        }
+        while (last + 1 < sortedNotes.size()) {
+            const auto &current = notes[sortedNotes[last]];
+            const auto &next = notes[sortedNotes[last + 1]];
+            if (next.getStartFrame() - current.getEndFrame() >
+                kPhraseGapToleranceFrames)
+                break;
+            ++last;
+        }
+
+        int start = notes[sortedNotes[first]].getStartFrame();
+        int end = notes[sortedNotes[last]].getEndFrame();
+        if (first == 0 ||
+            notes[sortedNotes[first - 1]].getEndFrame() <= block->startFrame) {
+            start = block->startFrame;
+        } else {
+            start = std::max(
+                block->startFrame,
+                (notes[sortedNotes[first - 1]].getEndFrame() + start) / 2);
+        }
+        if (last + 1 >= sortedNotes.size() ||
+            notes[sortedNotes[last + 1]].getStartFrame() >= block->endFrame) {
+            end = block->endFrame;
+        } else {
+            end = std::min(
+                block->endFrame,
+                (end + notes[sortedNotes[last + 1]].getStartFrame()) / 2);
+        }
+        addRange(start, end);
     };
 
     if (hasDirtyNoteAnchors) {
-        for (const auto &note : notes) {
+        for (size_t index = 0; index < notes.size(); ++index) {
+            const auto &note = notes[index];
             if (note.isRest() || !note.isDirty())
                 continue;
             if (note.getEndFrame() <= renderStartFrame ||
                 note.getStartFrame() >= renderEndFrame)
                 continue;
-            addBlocksFor(note);
+            addPhraseFor(index);
         }
     }
     if (!hasDirtyNoteAnchors && f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {

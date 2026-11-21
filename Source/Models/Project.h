@@ -214,6 +214,13 @@ public:
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
     void clearAllDirty();
+    // D-251 (S4): limpia solo lo que este pase renderizó. Una edición que
+    // llega mientras el render está en vuelo no estaba en @p dirtyNotes y
+    // conserva su dirty; el rango F0 solo se limpia si nadie lo extendió
+    // (setF0DirtyRange solo crece), así que una edición nueva lo deja puesto
+    // para el pase siguiente.
+    void clearDirtyForPass(const std::vector<int> &dirtyNotes, int f0Start,
+                           int f0End);
 
     // Global settings
     float getGlobalPitchOffset() const { return globalPitchOffset; }

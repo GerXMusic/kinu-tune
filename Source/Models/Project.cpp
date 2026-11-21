@@ -197,6 +197,23 @@ void Project::clearAllDirty()
     f0DirtyEnd = -1;
 }
 
+void Project::clearDirtyForPass(const std::vector<int> &dirtyNotes,
+                                int f0Start, int f0End)
+{
+    for (int index : dirtyNotes)
+    {
+        if (index < 0 || index >= static_cast<int>(notes.size()))
+            continue;
+        notes[static_cast<size_t>(index)].clearDirty();
+    }
+    if (f0Start >= 0 && f0End >= 0 && f0DirtyStart == f0Start &&
+        f0DirtyEnd == f0End)
+    {
+        f0DirtyStart = -1;
+        f0DirtyEnd = -1;
+    }
+}
+
 int Project::markEditedNotesDirty()
 {
     editedBlockRanges.clear();
