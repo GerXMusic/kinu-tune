@@ -135,6 +135,8 @@ bool hasTimingEdit(const Note &note) {
 // differs from the position already represented in the composite waveform.
 // A note can remain timing-edited after that render, so comparing against the
 // immutable source bounds here would incorrectly broaden later pitch commits.
+// (Kept for the audio-move patches: they need the same "has this move already
+// been rendered?" question.)
 bool hasPendingTimingPositionChange(const Note &note) {
   // Which position this note's audio currently occupies in the composite.
   //
@@ -355,84 +357,61 @@ void applyPreservedTimingToF0(const Project &project, int rangeStart,
   }
 }
 
-std::vector<CommitFrameRange>
-collectCommitFrameRanges(const Project &project, bool hasDirtyNoteAnchors,
-                         int f0DirtyStart, int f0DirtyEnd) {
+// D-239: the unit that is rendered and committed is the engine block.
+//
+// PSOLA and the classical core anchor their grain lattice once per voiced run
+// and accumulate the output position from there, so any pitch change inside a
+// run shifts every later grain of that run. A note-sized commit therefore
+// splices new audio against old audio with a different phase, which is the
+// "small cut" heard between an edited note and its neighbours. Committing the
+// whole block writes the run as one piece; the splices land on the block
+// edges, which are silences (D-129) or the render padding, where the blend
+// mask is already original audio.
+//
+// The block is selected from the dirty notes themselves, not from the ±60
+// padded dirty range: the padding crosses into the neighbouring block and
+// would rewrite a block nobody edited (it would break D-125 b).
+std::vector<CommitFrameRange> commitRangesForDirtyNotes(
+    const Project &project, const std::vector<engineBlocks::Block> &plan,
+    bool hasDirtyNoteAnchors, int f0DirtyStart, int f0DirtyEnd,
+    int renderStartFrame, int renderEndFrame) {
   std::vector<CommitFrameRange> ranges;
-  bool needsF0RangeCommit = !hasDirtyNoteAnchors;
+
+  auto addBlocks = [&](int start, int end) {
+    for (const auto &block : engineBlocks::blocksToCommit(plan, start, end)) {
+      const bool duplicate =
+          std::any_of(ranges.begin(), ranges.end(),
+                      [&](const CommitFrameRange &range) {
+                        return range.start == block.startFrame &&
+                               range.end == block.endFrame;
+                      });
+      if (!duplicate)
+        ranges.push_back({block.startFrame, block.endFrame});
+    }
+  };
 
   if (hasDirtyNoteAnchors) {
     for (const auto &note : project.getNotes()) {
       if (note.isRest() || !note.isDirty())
         continue;
-
-      int start = note.getStartFrame();
-      int end = note.getEndFrame();
-
-      // Timing moves need their old and new output positions committed. A
-      // previously rendered timing edit is not a pending move, so a later
-      // pitch edit on that note keeps its waveform commit local.
-      if (hasPendingTimingPositionChange(note)) {
-        needsF0RangeCommit = true;
-        start = std::min(
-            {start, note.getSrcStartFrame(), note.getRenderedStartFrame()});
-        end = std::max(
-            {end, note.getSrcEndFrame(), note.getRenderedEndFrame()});
-        for (const auto &span : getPreservedTimingSpans(project, note)) {
-          start = std::min({start, span.sourceStart, span.destinationStart});
-          end = std::max({end, span.sourceEnd, span.destinationEnd});
-        }
-      }
-
-      if (end > start) {
-        // D-226: a user transition is symmetric around the boundary, so half
-        // of its ramp lives in the neighbouring note. Committing only
-        // [start, end) writes half a ramp and the splice fade at the boundary
-        // brings the old audio back. Grow the range with every transition
-        // window it crosses; outside those windows nothing changes. (The D-205
-        // pass-1 window is not expanded: at commit time it is not
-        // identifiable, see DECISIONES D-226.)
-        PitchCurveProcessor::expandRangeForJoinSmoothing(project, start, end);
-        ranges.push_back({start, end});
-      }
+      // D-197 renders one edited block per pass: a dirty note from another
+      // block is not part of this pass's plan and must not select a block.
+      if (note.getEndFrame() <= renderStartFrame ||
+          note.getStartFrame() >= renderEndFrame)
+        continue;
+      addBlocks(note.getStartFrame(), note.getEndFrame());
     }
   }
-
-  // F0-only tools have no dirty-note anchor, so their edited curve range is
-  // the commit range. Timing undo/reset also needs it to restore a vacated
-  // destination. Ordinary pitch drags use this range only as render context;
-  // committing it would replace neighboring notes' waveform.
-  if (needsF0RangeCommit && f0DirtyStart >= 0 &&
-      f0DirtyEnd > f0DirtyStart) {
-    int start = f0DirtyStart;
-    int end = f0DirtyEnd;
-    PitchCurveProcessor::expandRangeForJoinSmoothing(project, start, end);
-    ranges.push_back({start, end});
-  }
-
-  // D-230: spans recorded by a transition change (the union of its old and
-  // new values). Without them, setting a transition to 0 has no window for
-  // the expansion above to see and the right note's old ramp is left in place.
-  for (const auto &[hintStart, hintEnd] : project.getTransitionCommitRanges()) {
-    if (hintStart < 0 || hintEnd <= hintStart)
-      continue;
-    ranges.push_back({hintStart, hintEnd});
-  }
+  // F0-only tools (global pitch offset, DAW automation) and timing undo have
+  // no dirty-note anchor; their range is the unit.
+  if (ranges.empty() && f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart)
+    addBlocks(f0DirtyStart, f0DirtyEnd);
 
   std::sort(ranges.begin(), ranges.end(),
             [](const CommitFrameRange &a, const CommitFrameRange &b) {
               return a.start < b.start;
             });
-
-  std::vector<CommitFrameRange> merged;
-  for (const auto &range : ranges) {
-    if (merged.empty() || range.start > merged.back().end) {
-      merged.push_back(range);
-    } else {
-      merged.back().end = std::max(merged.back().end, range.end);
-    }
-  }
-  return merged;
+  return ranges;
 }
 
 int findBestSpliceCenter(const float *existing,
@@ -913,59 +892,31 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
 
   if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
-      !project->hasF0DirtyRange() && !project->hasTransitionCommitRanges()) {
+      !project->hasF0DirtyRange()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
-  // D-230: a transition change records the whole-note span it must rewrite,
-  // computed from the union of its old and new values. Removing a transition
-  // leaves no active window for the commit expansion to find, so this span is
-  // the only thing that brings the neighbouring note's old ramp into the
-  // render and commit ranges.
-  for (const auto &[hintStart, hintEnd] : project->getTransitionCommitRanges()) {
-    if (hintEnd <= hintStart)
-      continue;
-    dirtyStart = dirtyStart < 0 ? hintStart : std::min(dirtyStart, hintStart);
-    dirtyEnd = dirtyEnd < 0 ? hintEnd : std::max(dirtyEnd, hintEnd);
-  }
   const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
-  std::vector<CommitFrameRange> commitFrameRanges;
   if (hasRenderRangeOverride) {
-    // D-197: this pass covers one edited block. All notes stay dirty; only
-    // this window is committed, so the gap between distant edits is untouched.
+    // D-197: this pass covers one edited block. All notes stay dirty; the
+    // override narrows which block this pass renders.
     dirtyStart = renderRangeOverrideStart;
     dirtyEnd = renderRangeOverrideEnd;
-    commitFrameRanges.push_back({dirtyStart, dirtyEnd});
-    // D-230: keep a recorded transition span inside the block that is being
-    // rendered. Clamped, never widened past the override.
-    for (const auto &[hintStart, hintEnd] : project->getTransitionCommitRanges()) {
-      const int first = std::max(dirtyStart, hintStart);
-      const int last = std::min(dirtyEnd, hintEnd);
-      if (last > first)
-        commitFrameRanges.push_back({first, last});
-    }
   } else {
     if (editedClusters.startFrame >= 0)
       dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
     if (editedClusters.endFrame >= 0)
       dirtyEnd = std::max(dirtyEnd, editedClusters.endFrame);
-    commitFrameRanges = collectCommitFrameRanges(
-        *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   }
   const int rawDirtyStart = dirtyStart;
   const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
-    if (onComplete)
-      onComplete(false);
-    return;
-  }
-  if (commitFrameRanges.empty()) {
     if (onComplete)
       onComplete(false);
     return;
@@ -1004,6 +955,22 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       engineBlocks::buildPlan(project->getNotes(), startFrame, endFrame,
                               synthesisEngine, silenceSource,
                               audioData.sampleRate, hopSize);
+
+  // D-239: the output is committed by block, not by note. The block is the
+  // smallest span the engine's phase depends on, and its edges are silences.
+  // In the D-197 walk the pass's unit is the override, not the whole context:
+  // committing a context block nobody edited would break D-125 b.
+  const int selectionStart = hasRenderRangeOverride ? rawDirtyStart : startFrame;
+  const int selectionEnd = hasRenderRangeOverride ? rawDirtyEnd : endFrame;
+  auto commitFrameRanges = commitRangesForDirtyNotes(
+      *project, enginePlan, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
+      selectionStart, selectionEnd);
+  if (commitFrameRanges.empty()) {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+
   const bool needsVocoder =
       std::any_of(enginePlan.begin(), enginePlan.end(),
                   [](const engineBlocks::Block &block) {
@@ -1034,11 +1001,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   //
   // One line per synthesis pass. Two ranges matter and they are easy to
   // confuse: `commit` is what actually replaces waveform, `render` is only
-  // the context handed to the engine and is expected to be far wider. If a
-  // single note edit ever shows a commit spanning more than that note, the
-  // discriminator is `noteAnchors` - `no` means the F0 branch of
-  // collectCommitFrameRanges fired and committed the whole edited curve
-  // range instead of one note.
+  // the context handed to the engine. Since D-239 the commit is the engine
+  // block (the whole voiced phrase), so it may legitimately be much wider than
+  // the dirty note; that is the rule, not a leak. A commit narrower than the
+  // block would splice inside a sounding run.
   {
     const double framesToSeconds =
         static_cast<double>(hopSize) /
@@ -1074,7 +1040,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      2) + "s");
     LOG(juce::String("  commit=") + commitText + " " +
         juce::String(static_cast<double>(committedFrames) * framesToSeconds,
-                     2) + "s");
+                     2) + "s  (engine block, D-239)");
     if (enginePlan.size() > 1) {
       juce::String planText;
       for (const auto &block : enginePlan)
@@ -1094,9 +1060,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 #endif
 
 #if PITCHNET_SYNTH_NOTE_DIAGNOSTICS
-    // The exact inputs to collectCommitFrameRanges' branch, per dirty note.
-    // pendingTiming=YES on an edit that moved nothing is the false positive
-    // that promotes the commit from one note to the whole F0 dirty range.
+    // The inputs to the commit selection, per dirty note. Since D-239 the
+    // commit unit is the block, so these notes only choose the block.
     const auto &allNotes = project->getNotes();
     for (size_t i = 0; i < allNotes.size(); ++i) {
       const auto &note = allNotes[i];
@@ -1847,11 +1812,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          // Commit only the edited interval. Preserve the 1024-sample
-          // smoothstep fade (~23 ms at 44.1 kHz), allowing a conservative
-          // displacement of at most 128 samples (~2.9 ms) when agreement
-          // across the full overlap meaningfully improves.
-          constexpr int kCommitFadeHalfSamples = 512;
+          // Commit only the block. The fade sits at the block edges, which are
+          // silences (D-129) or the render padding. 384 samples half (≈8 ms at
+          // 48 kHz) keeps the whole 16 ms fade inside the smallest silence the
+          // block rule accepts (20 ms), so it never reaches sounding material.
+          constexpr int kCommitFadeHalfSamples = 384;
           constexpr int kSpliceSearchRadiusSamples = 128;
           std::vector<float> commitMask(static_cast<size_t>(samplesToWrite),
                                         0.0f);

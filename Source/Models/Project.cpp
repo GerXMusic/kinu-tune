@@ -188,28 +188,6 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
-    // D-230: the transition commit hint belongs to the same render.
-    transitionCommitRanges.clear();
-    // D-231: same lifetime as the commit hints.
-    pass1JoinWindows.clear();
-}
-
-// D-231: keep one entry per join window (rebuilds repeat the same window).
-void Project::addPass1JoinWindow(int startFrame, int endFrame)
-{
-    if (startFrame < 0 || endFrame < startFrame)
-        return;
-    for (const auto &existing : pass1JoinWindows)
-        if (existing.first == startFrame && existing.second == endFrame)
-            return;
-    pass1JoinWindows.emplace_back(startFrame, endFrame);
-}
-
-void Project::addTransitionCommitRange(int startFrame, int endFrame)
-{
-    if (startFrame < 0 || endFrame <= startFrame)
-        return;
-    transitionCommitRanges.emplace_back(startFrame, endFrame);
 }
 
 int Project::markEditedNotesDirty()

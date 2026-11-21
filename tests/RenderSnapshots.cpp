@@ -96,7 +96,6 @@ int main(int argc, char* argv[])
         return std::pair<int, bool>{static_cast<int>(targets.size()),
                                     !targets.empty() && targets.front()->isSelected()};
     };
-    inspector.getHarmonyPanel().refreshProject();
     inspector.refresh();
     inspector.setSize(VariAudioInspector::preferredWidth, 760);
 

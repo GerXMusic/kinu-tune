@@ -104,8 +104,7 @@ bool canChangeEngineAfter(const Note &previous, const Note &note,
 std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
                              int endFrame, SynthesisEngineType globalEngine,
                              const juce::AudioBuffer<float> &source,
-                             int sampleRate, int hopSize) {
-    std::vector<Block> blocks;
+                             int sampleRate, int hopSize) {    std::vector<Block> blocks;
     if (endFrame <= startFrame)
         return blocks;
 
@@ -265,6 +264,41 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
     }
 
     return plan;
+}
+
+std::vector<Block> blocksToCommit(const std::vector<Block> &plan,
+                                  int dirtyStart, int dirtyEnd) {
+    std::vector<Block> selected;
+    if (plan.empty())
+        return selected;
+
+    const int first = std::min(dirtyStart, dirtyEnd);
+    const int last = std::max(dirtyStart, dirtyEnd);
+    const bool isPoint = (first == last);
+
+    for (const auto &block : plan) {
+        const bool intersects =
+            isPoint ? (block.startFrame <= first && first < block.endFrame)
+                    : (block.startFrame < last && block.endFrame > first);
+        if (intersects)
+            selected.push_back(block);
+    }
+
+    if (selected.empty()) {
+        // The dirty range sits outside the plan (clamped override, a range
+        // before the first block): commit the block that owns its start, or
+        // the first one. Never return nothing when there is a plan to write.
+        for (const auto &block : plan) {
+            if (block.startFrame <= first && first < block.endFrame) {
+                selected.push_back(block);
+                break;
+            }
+        }
+        if (selected.empty())
+            selected.push_back(plan.front());
+    }
+
+    return selected;
 }
 
 }  // namespace engineBlocks

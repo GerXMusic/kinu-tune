@@ -143,4 +143,24 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
                              const juce::AudioBuffer<float> &source,
                              int sampleRate, int hopSize);
 
+/**
+ * The render unit that owns a dirty span (D-239).
+ *
+ * The block is the unit that is both rendered and committed: an engine's
+ * output depends on the whole voiced run it belongs to (PSOLA and the
+ * classical core anchor their grain lattice once per run), so splicing a
+ * note-sized piece of a new render against old audio leaves the two phases
+ * mismatched. Committing the whole block moves every splice to a silence
+ * boundary, where it is inaudible, and keeps untouched blocks bit for bit
+ * unchanged (D-125 b).
+ *
+ * Returns every block that intersects [dirtyStart, dirtyEnd), so a range that
+ * crosses a block boundary commits both blocks (conservative: the boundary is
+ * a silence, nothing sounding is rewritten twice). When the range falls
+ * outside the plan, the block containing @p dirtyStart is returned; an empty
+ * plan returns empty.
+ */
+std::vector<Block> blocksToCommit(const std::vector<Block> &plan,
+                                  int dirtyStart, int dirtyEnd);
+
 }  // namespace engineBlocks

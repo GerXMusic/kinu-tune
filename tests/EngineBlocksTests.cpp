@@ -469,6 +469,46 @@ void testRefusalNamesTheNoteTheRequestAndTheCause() {
     CHECK(accepted.refusals.empty());
 }
 
+void testBlocksToCommitSelectsWholeBlocks() {
+    // D-239: the commit unit is the engine block. A dirty note inside one
+    // block selects that whole block; a range that crosses a boundary selects
+    // both; a point selects its own block; an empty plan selects nothing.
+    using engineBlocks::Block;
+    using engineBlocks::blocksToCommit;
+    std::vector<Block> plan = {
+        {0, 100, SynthesisEngineType::Psola},
+        {100, 200, SynthesisEngineType::Pitchcore},
+        {200, 300, SynthesisEngineType::Psola},
+    };
+
+    auto inside = blocksToCommit(plan, 120, 150);
+    CHECK(inside.size() == 1);
+    if (!inside.empty()) {
+        CHECK(inside.front().startFrame == 100);
+        CHECK(inside.front().endFrame == 200);
+        CHECK(inside.front().engine == SynthesisEngineType::Pitchcore);
+    }
+
+    auto crossing = blocksToCommit(plan, 90, 110);
+    CHECK(crossing.size() == 2);
+    if (crossing.size() == 2) {
+        CHECK(crossing[0].startFrame == 0);
+        CHECK(crossing[1].startFrame == 100);
+    }
+
+    auto point = blocksToCommit(plan, 250, 250);
+    CHECK(point.size() == 1);
+    if (!point.empty())
+        CHECK(point.front().startFrame == 200);
+
+    auto outside = blocksToCommit(plan, 400, 450);
+    CHECK(outside.size() == 1);
+    if (!outside.empty())
+        CHECK(outside.front().startFrame == 0);
+
+    CHECK(blocksToCommit({}, 0, 10).empty());
+}
+
 }  // namespace
 
 int main() {
@@ -493,6 +533,7 @@ int main() {
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
     testPitchcoreRequestSurvivesALargeShift();
     testRefusalNamesTheNoteTheRequestAndTheCause();
+    testBlocksToCommitSelectsWholeBlocks();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;

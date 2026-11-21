@@ -1,4 +1,4 @@
-﻿# Unit tests.
+# Unit tests.
 #
 # Each test is a standalone executable with its own main(), matching the style
 # the files were already written in. They link pitchnet_core, which exposes the
@@ -24,6 +24,7 @@ set(PITCHNET_TEST_SOURCES
     SingleWindowPolicyTests.cpp
     DocumentEngineTests.cpp
     EngineBlocksTests.cpp
+    CommitSeamTests.cpp
     D197BlockDirtyTests.cpp
     FormantRetirementTests.cpp
     FormantShiftTests.cpp
@@ -44,7 +45,6 @@ set(PITCHNET_TEST_SOURCES
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
-    ProjectModificationRangeTests.cpp
     SynthesisEngineShareTests.cpp
     TimelineCoordinateTests.cpp
     VisualWaveformEnvelopeTests.cpp)
