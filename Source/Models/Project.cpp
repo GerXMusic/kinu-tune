@@ -197,17 +197,23 @@ void Project::clearAllDirty()
     f0DirtyEnd = -1;
 }
 
-void Project::clearDirtyForPass(const std::vector<int> &dirtyNotes,
-                                int f0Start, int f0End)
+void Project::clearDirtyForPass(
+    const std::vector<std::pair<int, std::uint64_t>> &dirtyNotes, int f0Start,
+    int f0End, std::uint64_t f0Revision)
 {
-    for (int index : dirtyNotes)
+    for (const auto &[index, revision] : dirtyNotes)
     {
         if (index < 0 || index >= static_cast<int>(notes.size()))
             continue;
-        notes[static_cast<size_t>(index)].clearDirty();
+        auto &note = notes[static_cast<size_t>(index)];
+        // D-253: solo se limpia la nota si su revisión es la que se renderizó.
+        // Una segunda edición sobre la misma nota sube la revisión y conserva
+        // el dirty para el pase siguiente.
+        if (note.getDirtyRevision() == revision)
+            note.clearDirty();
     }
-    if (f0Start >= 0 && f0End >= 0 && f0DirtyStart == f0Start &&
-        f0DirtyEnd == f0End)
+    // D-253: el rango F0 se limpia solo si nadie marcó después del snapshot.
+    if (f0Start >= 0 && f0End >= 0 && f0DirtyRevision == f0Revision)
     {
         f0DirtyStart = -1;
         f0DirtyEnd = -1;
@@ -366,6 +372,7 @@ void Project::setF0DirtyRange(int startFrame, int endFrame)
         f0DirtyStart = startFrame;
     if (f0DirtyEnd < 0 || endFrame > f0DirtyEnd)
         f0DirtyEnd = endFrame;
+    ++f0DirtyRevision;
 }
 
 void Project::markNoteEditDirtyRange(int startFrame, int endFrame)

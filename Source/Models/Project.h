@@ -219,8 +219,10 @@ public:
     // conserva su dirty; el rango F0 solo se limpia si nadie lo extendió
     // (setF0DirtyRange solo crece), así que una edición nueva lo deja puesto
     // para el pase siguiente.
-    void clearDirtyForPass(const std::vector<int> &dirtyNotes, int f0Start,
-                           int f0End);
+    void clearDirtyForPass(const std::vector<std::pair<int, std::uint64_t>>
+                               &dirtyNotes,
+                           int f0Start, int f0End,
+                           std::uint64_t f0Revision);
 
     // Global settings
     float getGlobalPitchOffset() const { return globalPitchOffset; }
@@ -307,6 +309,7 @@ public:
     void clearF0DirtyRange();
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
+    std::uint64_t getF0DirtyRevision() const { return f0DirtyRevision; }
 
     // Modified state
     bool isModified() const { return modified; }
@@ -389,6 +392,8 @@ private:
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
+    // D-253: revisión del rango F0 para el cierre por pase.
+    std::uint64_t f0DirtyRevision = 0;
 
     // D-197 edited-note block walk (padded frame spans, not note flags).
     std::vector<std::pair<int, int>> editedBlockRanges;

@@ -472,6 +472,85 @@ void testS4EditDuringRender() {
   CHECK(diff <= 2.0e-3f);
 }
 
+// ---------------- S4c: segunda edicion de la misma nota en vuelo ----------------
+// Criterio escrito antes de medir (D-253): con un render en vuelo sobre la nota
+// N, una segunda edición sobre la MISMA nota conserva dirty = 1 y su revisión
+// es la de la segunda edición; el pase siguiente la renderiza y el bloque
+// coincide con el render completo del estado final (max|diff| = 0, lím. 1e-7).
+void testS4cSameNoteSecondEditDuringRender() {
+  Project project = makeProject(NoteEngine::Psola);
+  auto &notes = project.getNotes();
+  for (int i = 0; i < 4; ++i) {
+    notes[static_cast<size_t>(i)].setPitchOffset(i % 2 == 0 ? 1.0f : -1.0f);
+    notes[static_cast<size_t>(i)].markDirty();
+    notes[static_cast<size_t>(i)].markSynthDirty();
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN0a, kN3b);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S4c inicial"));
+
+  // Primera edición de la nota 2; se lanza el render.
+  notes[2].setPitchOffset(-1.5f);
+  notes[2].markDirty();
+  notes[2].markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN2a, kN2b);
+
+  IncrementalSynthesizer synthesizer;
+  synthesizer.setProject(&project);
+  synthesizer.setSynthesisEngine(SynthesisEngineType::Psola);
+  std::atomic<bool> finished{false};
+  std::atomic<bool> success{false};
+  synthesizer.synthesizeRegion(nullptr, [&](bool ok) {
+    success.store(ok);
+    finished.store(true);
+  });
+
+  // Segunda edición de la MISMA nota 2 mientras el render está en vuelo.
+  notes[2].setPitchOffset(-1.7f);
+  notes[2].markDirty();
+  notes[2].markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kN2a, kN2b);
+  const auto secondRevision = notes[2].getDirtyRevision();
+
+  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+  while (!finished.load() &&
+         juce::Time::getMillisecondCounterHiRes() < deadline)
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+  CHECK(finished.load());
+  CHECK(success.load());
+
+  const auto &afterMerge = project.getNotes()[2];
+  const bool keptDirty = afterMerge.isDirty();
+  const bool revisionMatches =
+      afterMerge.getDirtyRevision() == secondRevision;
+  std::printf("S4c segunda edicion en vuelo: nota 2 dirty %d (esperado 1) | "
+              "revision %s (esperado la de la segunda edicion)\n",
+              keptDirty ? 1 : 0, revisionMatches ? "coincide" : "NO coincide");
+  CHECK(keptDirty);
+  CHECK(revisionMatches);
+
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S4c segundo pase"));
+
+  Project reference = makeProject(NoteEngine::Psola);
+  auto &refNotes = reference.getNotes();
+  refNotes[0].setPitchOffset(1.0f);
+  refNotes[1].setPitchOffset(-1.0f);
+  refNotes[2].setPitchOffset(-1.7f);
+  refNotes[3].setPitchOffset(-1.0f);
+  PitchCurveProcessor::rebuildBaseFromNotes(reference);
+  Project full = fullRender(reference, SynthesisEngineType::Psola, "S4c completo");
+
+  const float diff = maxAbsDiff(project.getAudioData().waveform,
+                                full.getAudioData().waveform, kN2a + 5,
+                                kN3b - 5);
+  std::printf("S4c final vs render completo: bloque B %.8f (lim 1e-7) | "
+              "offset %.3f\n",
+              diff, project.getNotes()[2].getPitchOffset());
+  CHECK(diff <= 1.0e-7f);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -489,6 +568,8 @@ int main(int argc, char **argv) {
     testS6ResetOneBlockWithTwoDirtyAnchors();
   } else if (group == "s4") {
     testS4EditDuringRender();
+  } else if (group == "s4c") {
+    testS4cSameNoteSecondEditDuringRender();
   } else {
     testS1ResetAll();
     testS2EngineChange();
@@ -496,6 +577,7 @@ int main(int argc, char **argv) {
     testS6ResetOneBlock();
     testS6ResetOneBlockWithTwoDirtyAnchors();
     testS4EditDuringRender();
+    testS4cSameNoteSecondEditDuringRender();
   }
   std::printf("EditSymptomAudioTests [%s]: en verde\n", group.c_str());
   return 0;

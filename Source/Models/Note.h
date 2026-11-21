@@ -286,8 +286,15 @@ public:
     // Dirty flag (for incremental synthesis)
     bool isDirty() const { return dirty; }
     void setDirty(bool d) { dirty = d; }
-    void markDirty() { dirty = true; }
+    // D-253: cada marca sube la revisión. El cierre de un render limpia una
+    // nota solo si su revisión es la del snapshot: una segunda edición sobre la
+    // misma nota mientras el render está en vuelo no se pierde.
+    void markDirty() {
+        dirty = true;
+        ++dirtyRevision;
+    }
     void clearDirty() { dirty = false; }
+    std::uint64_t getDirtyRevision() const { return dirtyRevision; }
 
     // Rest note (no pitch, just a placeholder for silence)
     bool isRest() const { return rest; }
@@ -358,6 +365,8 @@ private:
     int renderedEndFrame = 0;
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
+    // D-253: revisión monotónica de la marca sucia (identidad por edición).
+    std::uint64_t dirtyRevision = 0;
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
     bool rest = false;        // Rest note (silence placeholder)
     // Per-note engine; Inherit means "use the global engine" (D-125).

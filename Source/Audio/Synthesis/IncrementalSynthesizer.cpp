@@ -911,11 +911,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // D-251 (S4): identidad por edición. Solo se limpia lo que este pase
   // renderizó; una edición que llega mientras el render está en vuelo no está
   // en esta lista y conserva su dirty para el pase siguiente.
-  std::vector<int> passDirtyNotes;
+  std::vector<std::pair<int, std::uint64_t>> passDirtyNotes;
+  const std::uint64_t passF0Revision = project->getF0DirtyRevision();
   for (int index = 0; index < static_cast<int>(project->getNotes().size());
        ++index)
-    if (project->getNotes()[static_cast<size_t>(index)].isDirty())
-      passDirtyNotes.push_back(index);
+  {
+    const auto &note = project->getNotes()[static_cast<size_t>(index)];
+    if (note.isDirty())
+      passDirtyNotes.emplace_back(index, note.getDirtyRevision());
+  }
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
   if (hasRenderRangeOverride) {
@@ -1128,7 +1132,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   bool hasVoiced = std::any_of(blendMask.begin(), blendMask.end(),
                                [](float v) { return v > 0.0f; });
   if (!hasVoiced) {
-    project->clearDirtyForPass(passDirtyNotes, f0DirtyStart, f0DirtyEnd);
+    project->clearDirtyForPass(passDirtyNotes, f0DirtyStart, f0DirtyEnd,
+                               passF0Revision);
     if (onComplete)
       onComplete(true);
     return;
@@ -1555,7 +1560,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
-       capturedNoteCount, passDirtyNotes,
+       capturedNoteCount, passDirtyNotes, passF0Revision,
        commitFrameRanges = std::move(commitFrameRanges),
        blendMask = std::move(blendMask),
        originalSegment = std::move(originalSegment),
@@ -1580,7 +1585,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      capturedStartFrame, capturedEndFrame, hopSize,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
-                     passDirtyNotes,
+                     passDirtyNotes, passF0Revision,
                      commitFrameRanges, blendMask, originalSegment,
                      audioMovePatches, formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
@@ -2222,9 +2227,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           isBusy = false;
           juce::MessageManager::callAsync(
               [capturedProject, onComplete, passDirtyNotes, f0DirtyStart,
-               f0DirtyEnd]() {
+               f0DirtyEnd, passF0Revision]() {
                 capturedProject->clearDirtyForPass(
-                    passDirtyNotes, f0DirtyStart, f0DirtyEnd);
+                    passDirtyNotes, f0DirtyStart, f0DirtyEnd, passF0Revision);
                 if (onComplete) onComplete(true);
               });
         }).detach();
