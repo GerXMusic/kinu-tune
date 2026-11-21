@@ -77,6 +77,8 @@ public:
     // M4 v1 (D-242): cuantizacion de tiempo con la fuerza elegida (0..100).
     std::function<void(int)> onQuantizeTimeMacro;
     std::function<void()> onPitchCenterMacro;
+    // M5 v1 (D-245): silenciar o reactivar las notas seleccionadas.
+    std::function<void()> onMuteNotesMacro;
 
     // D-185: what the note renders with, and — when the last request was
     // refused by D-129 — what was asked. Transparency only; the rule does not

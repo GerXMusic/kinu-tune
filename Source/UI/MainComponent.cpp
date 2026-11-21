@@ -822,6 +822,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // M4 v1 (D-242): la fuerza la elige el menu del boton Cuantizar tiempo.
   variAudioInspector.onQuantizeTimeMacro = [this](int strengthPercent)
   { pianoRoll.quantizeTimeSelection(strengthPercent); };
+  // M5 v1 (D-245): silenciar/reactivar la seleccion (o la nota del menu).
+  variAudioInspector.onMuteNotesMacro = [this]
+  { pianoRoll.muteSelection(); };
   variAudioInspector.onSnapModeChanged =
       [this](VariAudioInspector::SnapMode mode)
   {

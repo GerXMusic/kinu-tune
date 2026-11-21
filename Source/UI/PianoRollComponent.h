@@ -109,6 +109,15 @@ public:
   // rejilla o el resultado colapsaria una nota o crearia un solape nuevo.
   bool quantizeTimeSelection(int strengthPercent);
 
+  // M5 v1 (D-245): silencia o reactiva las notas seleccionadas. Si todas ya
+  // estaban silenciadas, las reactiva. Es undoable y vuelve a renderizar por
+  // bloque. Devuelve false si no hay proyecto o no hay seleccion.
+  bool muteSelection();
+
+  // M5 v1 (D-245): fija el estado de silencio de una lista explicita de notas
+  // (menu de nota, seleccion). Undoable y con re-render por bloque.
+  bool setMutedForNotes(const std::vector<Note *> &notes, bool muted);
+
   void paint(juce::Graphics &g) override;
   void resized() override;
   void mouseDown(const juce::MouseEvent &e) override;

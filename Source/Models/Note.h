@@ -174,6 +174,11 @@ public:
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
+    // M5 v1 / D-245: silenciar la nota sin tocar su ganancia guardada. El
+    // render la trata como ganancia 0 (fade suave del mismo NoteGainCurve).
+    bool isMuted() const { return muted; }
+    void setMuted(bool m) { muted = m; }
+
     // RMS of pristine source audio; gain edits are applied separately.
     float getSourceAmplitude() const { return sourceAmplitude; }
     void setSourceAmplitude(float rms) { sourceAmplitude = rms; }
@@ -326,6 +331,7 @@ private:
     float formantShift = 0.0f; // Semitones, independent of F0
     float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
+    bool muted = false;    // M5 v1: nota silenciada (no toca volumeDb)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
     std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)

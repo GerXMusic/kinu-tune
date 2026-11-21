@@ -40,6 +40,8 @@ set(PITCHNET_TEST_SOURCES
     D205StraightenContinuityTests.cpp
     TransitionJoinTests.cpp
     TimingQuantizeTests.cpp
+    TimingAudioTests.cpp
+    NoteMuteTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
     # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
     # aplanado audible en D-214; el criterio de 1 c/ms queda descartado.
@@ -72,6 +74,17 @@ endforeach()
 # The capture state machine belongs to the plug-in rather than pitchnet_core.
 target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
+
+# TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
+target_compile_definitions(TimingAudioTests PRIVATE
+    TIMING_TEST_MODELS_DIR="${CMAKE_SOURCE_DIR}/Resources/models")
+if(WIN32 AND ONNXRUNTIME_DLLS)
+    foreach(DLL ${ONNXRUNTIME_DLLS})
+        add_custom_command(TARGET TimingAudioTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DLL}" "$<TARGET_FILE_DIR:TimingAudioTests>")
+    endforeach()
+endif()
 
 # P1b (render al Play): deferred dirty blocks and the mark-only triggers.
 # P1b fase 3: el borde de Play del host.

@@ -18,6 +18,7 @@
 #include "../Utils/TimingRegionUtils.h"
 #include "../Utils/TimingQuantize.h"
 #include "../Undo/TimingAction.h"
+#include "../Undo/NoteMuteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -3762,6 +3763,59 @@ bool PianoRollComponent::quantizeTimeSelection(int strengthPercent)
   return true;
 }
 
+bool PianoRollComponent::setMutedForNotes(const std::vector<Note *> &notes,
+                                          bool muted)
+{
+  if (project == nullptr || notes.empty())
+    return false;
+
+  std::vector<NoteMuteAction::Entry> entries;
+  entries.reserve(notes.size());
+  int dirtyStart = notes.front()->getStartFrame();
+  int dirtyEnd = notes.front()->getEndFrame();
+  for (auto *note : notes)
+  {
+    if (note == nullptr || note->isMuted() == muted)
+      continue;
+    entries.push_back({note, note->isMuted(), muted});
+    note->setMuted(muted);
+    note->markDirty();
+    note->markSynthDirty();
+    dirtyStart = std::min(dirtyStart, note->getStartFrame());
+    dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
+  }
+  if (entries.empty())
+    return false;
+
+  const int frameCount = project->getAudioData().getNumFrames();
+  project->setF0DirtyRange(std::max(0, dirtyStart - 24),
+                           std::min(frameCount, dirtyEnd + 24));
+  project->setModified(true);
+
+  if (undoManager)
+    undoManager->addAction(
+        std::make_unique<NoteMuteAction>(*project, std::move(entries)));
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
+  return true;
+}
+
+bool PianoRollComponent::muteSelection()
+{
+  if (project == nullptr)
+    return false;
+
+  auto selected = getSelectedNotes();
+  if (selected.empty())
+    return false;
+
+  bool allMuted = true;
+  for (const auto *note : selected)
+    allMuted = allMuted && note->isMuted();
+  return setMutedForNotes(selected, ! allMuted);
+}
+
 HarmonyUtils::Result PianoRollComponent::applyHarmonyInterval(
     HarmonyUtils::Interval interval, bool up)
 {
@@ -4740,8 +4794,8 @@ void PianoRollComponent::showNoteMenuAt(Note &note, juce::Point<int> screenPoint
     menu.addItem(std::move(item));
   };
 
-  addItem(1, TR("menu.mute_note"), false);
-  addItem(2, TR("menu.unmute_note"), false);
+  addItem(1, TR("menu.mute_note"), !note.isMuted());
+  addItem(2, TR("menu.unmute_note"), note.isMuted());
   addItem(3, TR("menu.delete_note"), false);
   menu.addSeparator();
 
@@ -4794,7 +4848,29 @@ void PianoRollComponent::showNoteMenuAt(Note &note, juce::Point<int> screenPoint
                          [notePtr](const Note &candidate)
                          { return &candidate == notePtr; }))
           return;
-        if (result == 10)
+        if (result == 1)
+        {
+          // D-245: si la nota forma parte de la seleccion, se silencia la
+          // seleccion; si no, solo esta nota.
+          auto selected = safeThis->getSelectedNotes();
+          const bool inSelection =
+              std::find(selected.begin(), selected.end(), notePtr) !=
+              selected.end();
+          if (!inSelection)
+            selected.assign(1, notePtr);
+          safeThis->setMutedForNotes(selected, true);
+        }
+        else if (result == 2)
+        {
+          auto selected = safeThis->getSelectedNotes();
+          const bool inSelection =
+              std::find(selected.begin(), selected.end(), notePtr) !=
+              selected.end();
+          if (!inSelection)
+            selected.assign(1, notePtr);
+          safeThis->setMutedForNotes(selected, false);
+        }
+        else if (result == 10)
           safeThis->resetNoteEdits(*notePtr);
         else if (result == 11)
           safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);

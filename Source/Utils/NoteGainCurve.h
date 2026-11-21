@@ -8,6 +8,10 @@ namespace NoteGainCurve
 {
 struct Region { int start; int end; float db; };
 
+// M5 v1 (D-245): ganancia de una nota silenciada. -96 dB es inaudible y deja
+// el mismo camino reversible/fade que cualquier edicion de volumen.
+constexpr float kMuteDb = -96.0f;
+
 // Keep the -60 dB endpoint finite so gain edits remain reversible.
 inline float linearGain(float db) { return std::pow(10.0f, db / 20.0f); }
 

@@ -228,6 +228,33 @@ void retimeMelInterval(const std::vector<std::vector<float>> &sourceMel,
     melRange[static_cast<size_t>(frame - rangeStart)] =
         interpolateMelFrame(sourceMel, sourceFrame);
   }
+
+  // D-244: los frames que la nota deja libres al mover una frontera hacia
+  // dentro reproducen el material que hay JUSTO FUERA de la nota, no una copia
+  // de su propio ataque o cola. Sin esto, cuantizar un inicio hacia delante
+  // deja el ataque original sonando en el hueco (y al reves con el fin).
+  const int startDelta = destinationStart - sourceStart;
+  const int endDelta = sourceEnd - destinationEnd; // > 0: fin movido antes
+  if (startDelta > 0) {
+    const int from = std::max(rangeStart, sourceStart);
+    const int to = std::min(rangeEnd, destinationStart);
+    for (int frame = from; frame < to; ++frame) {
+      const int sourceFrame = std::max(0, frame - startDelta);
+      if (sourceFrame < static_cast<int>(sourceMel.size()))
+        melRange[static_cast<size_t>(frame - rangeStart)] =
+            sourceMel[static_cast<size_t>(sourceFrame)];
+    }
+  }
+  if (endDelta > 0) {
+    const int from = std::max(rangeStart, destinationEnd);
+    const int to = std::min(rangeEnd, sourceEnd);
+    for (int frame = from; frame < to; ++frame) {
+      const int sourceFrame = frame + endDelta;
+      if (sourceFrame < static_cast<int>(sourceMel.size()))
+        melRange[static_cast<size_t>(frame - rangeStart)] =
+            sourceMel[static_cast<size_t>(sourceFrame)];
+    }
+  }
 }
 
 void moveMelInterval(const std::vector<std::vector<float>> &sourceMel,
@@ -288,6 +315,26 @@ void retimeSourceFrameInterval(int sourceStart, int sourceEnd,
         static_cast<double>(destinationLength);
     sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
         static_cast<double>(sourceStart) + normalized * sourceLength - 0.5;
+  }
+
+  // D-244: el hueco que la nota deja al mover una frontera hacia dentro lee el
+  // material de justo fuera de la nota (identidad desplazada), no el ataque o
+  // la cola de la nota. Antes el mapa caia a identidad y repetia ese ataque.
+  const int startDelta = destinationStart - sourceStart;
+  const int endDelta = sourceEnd - destinationEnd; // > 0: fin movido antes
+  if (startDelta > 0) {
+    const int from = std::max(rangeStart, sourceStart);
+    const int to = std::min(rangeEnd, destinationStart);
+    for (int frame = from; frame < to; ++frame)
+      sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
+          static_cast<double>(std::max(0, frame - startDelta));
+  }
+  if (endDelta > 0) {
+    const int from = std::max(rangeStart, destinationEnd);
+    const int to = std::min(rangeEnd, sourceEnd);
+    for (int frame = from; frame < to; ++frame)
+      sourceFrameMap[static_cast<size_t>(frame - rangeStart)] =
+          static_cast<double>(frame + endDelta);
   }
 }
 
@@ -1631,11 +1678,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           // Use the same gain envelope as direct amplitude edits.
+          // D-245: una nota silenciada usa el mismo camino con ganancia 0, asi
+          // que el fade de NoteGainCurve evita el clic del corte.
           std::vector<NoteGainCurve::Region> gainRegions;
           for (const auto& note : capturedProject->getNotes())
             if (!note.isRest())
               gainRegions.push_back({note.getStartFrame() * hopSize,
-                                     note.getEndFrame() * hopSize, note.getVolumeDb()});
+                                     note.getEndFrame() * hopSize,
+                                     note.isMuted() ? NoteGainCurve::kMuteDb
+                                                    : note.getVolumeDb()});
           const auto sampleGain = NoteGainCurve::build(
               gainRegions, startSample, samplesToWrite,
               audioData.waveform.getNumSamples(), hopSize);

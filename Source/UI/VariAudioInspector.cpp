@@ -358,6 +358,15 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(*b);
     }
 
+    // M5 v1 (D-245): silenciar/reactivar ya funciona; eliminar nota no.
+    muteButton.setEnabled(true);
+    muteButton.setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+    muteButton.onClick = [this]
+    {
+        if (onMuteNotesMacro)
+            onMuteNotesMacro();
+    };
+
     auto setupMacro = [this](juce::TextButton& button, bool enabled)
     {
         button.setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
@@ -502,6 +511,7 @@ void VariAudioInspector::refreshLocalisedText()
     placeholderRows[0]->caption = TR("inspector.sibilant");
     placeholderRows[1]->caption = TR("inspector.attack_speed");
     muteButton.setButtonText(TR("inspector.mute_note"));
+    muteButton.setTooltip(TR("menu.mute_note") + " / " + TR("menu.unmute_note"));
     deleteButton.setButtonText(TR("inspector.delete_note"));
     correctPitchButton.setButtonText(TR("macro.correct_pitch"));
     quantizeButton.setButtonText(TR("macro.quantize_time"));
