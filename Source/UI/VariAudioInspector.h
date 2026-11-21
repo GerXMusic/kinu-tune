@@ -74,6 +74,8 @@ public:
     std::function<void(NoteEngine)> onNoteEngineChanged;
     // Macros (Melodyne's Correct Pitch / Quantize Time / Leveling row).
     std::function<void()> onCorrectPitchMacro;
+    // M4 v1 (D-242): cuantizacion de tiempo con la fuerza elegida (0..100).
+    std::function<void(int)> onQuantizeTimeMacro;
     std::function<void()> onPitchCenterMacro;
 
     // D-185: what the note renders with, and — when the last request was
@@ -157,6 +159,8 @@ private:
     juce::TextButton levelingButton;
     juce::Rectangle<int> macrosCardBounds;
     bool editingRow = false;
+    // D-242: last strength picked in the Quantize Time menu (100 % default).
+    int quantizeStrengthPercent = 100;
     EditorUiMode editorMode = EditorUiMode::Basic;
     bool absoluteSelected = true; // Absolute unless the user picks Relative
     juce::Rectangle<int> variAudioCardBounds;

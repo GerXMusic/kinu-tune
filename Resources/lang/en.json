@@ -367,6 +367,7 @@
   "menu.canvas_tools": "Tools…",
   "macro.correct_pitch": "Correct Pitch",
   "macro.quantize_time": "Quantize Time",
+  "macro.quantize_time_hint": "Moves note boundaries to the grid (25-100 % strength).",
   "macro.leveling": "Leveling",
   "macro.correct_pitch_hint": "Brings every target note to its nearest semitone.",
   "macro.not_implemented": "Not implemented yet."

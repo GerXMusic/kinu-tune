@@ -367,12 +367,32 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(button);
     };
     setupMacro(correctPitchButton, true);
-    setupMacro(quantizeButton, false);
+    setupMacro(quantizeButton, true);
     setupMacro(levelingButton, false);
     correctPitchButton.onClick = [this]
     {
         if (onCorrectPitchMacro)
             onCorrectPitchMacro();
+    };
+    // D-242: la fuerza es parte del criterio, asi que el clic abre la eleccion
+    // en vez de aplicar 100 % a ciegas. 100 % va primero.
+    quantizeButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        for (const int percent : {100, 75, 50, 25})
+            menu.addItem(percent, juce::String(percent) + " %", true,
+                         percent == quantizeStrengthPercent);
+        juce::Component::SafePointer<VariAudioInspector> safe(this);
+        menu.showMenuAsync(
+            juce::PopupMenu::Options().withTargetComponent(&quantizeButton),
+            [safe](int result)
+            {
+                if (safe == nullptr || result <= 0)
+                    return;
+                safe->quantizeStrengthPercent = result;
+                if (safe->onQuantizeTimeMacro)
+                    safe->onQuantizeTimeMacro(result);
+            });
     };
 
     useProjectKeyToggle.onClick = [this]
@@ -487,7 +507,7 @@ void VariAudioInspector::refreshLocalisedText()
     quantizeButton.setButtonText(TR("macro.quantize_time"));
     levelingButton.setButtonText(TR("macro.leveling"));
     correctPitchButton.setTooltip(TR("macro.correct_pitch_hint"));
-    quantizeButton.setTooltip(TR("macro.not_implemented"));
+    quantizeButton.setTooltip(TR("macro.quantize_time_hint"));
     levelingButton.setTooltip(TR("macro.not_implemented"));
     for (auto& row : rows)
         row->repaint();

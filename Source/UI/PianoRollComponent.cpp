@@ -16,6 +16,8 @@
 #include "../Utils/NotePitch.h"
 #include "../Utils/HarmonyUtils.h"
 #include "../Utils/TimingRegionUtils.h"
+#include "../Utils/TimingQuantize.h"
+#include "../Undo/TimingAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -3698,6 +3700,66 @@ void PianoRollComponent::selectFollowingSamePitch(Note &note)
       other.setSelected(true);
   updatePitchToolHandlesFromSelection();
   repaint();
+}
+
+bool PianoRollComponent::quantizeTimeSelection(int strengthPercent)
+{
+  if (project == nullptr)
+    return false;
+
+  // The visible grid is the reference: tempo, beat signature and subdivision
+  // already come from the host (updateHostTimelineState).
+  const double gridSeconds = getTimelineGridSeconds();
+  if (gridSeconds <= 1.0e-9)
+    return false;
+
+  // An empty selection means "every note", the same convention the harmony
+  // macros use.
+  auto selected = getSelectedNotes();
+  std::unordered_set<const Note *> selectedSet(selected.begin(), selected.end());
+
+  auto &notes = project->getNotes();
+  std::vector<timingQuantize::Span> spans;
+  spans.reserve(notes.size());
+  for (auto &note : notes)
+    spans.push_back({note.getStartFrame(), note.getEndFrame(),
+                     !note.isRest() && !selectedSet.empty() &&
+                         selectedSet.count(&note) > 0});
+
+  if (selectedSet.empty())
+    for (size_t i = 0; i < notes.size(); ++i)
+      spans[i].selected = !notes[i].isRest();
+
+  const double gridFrames =
+      gridSeconds * static_cast<double>(SAMPLE_RATE) / static_cast<double>(HOP_SIZE);
+  std::vector<timingQuantize::Span> quantized;
+  if (!timingQuantize::quantizeSpans(spans, gridFrames, strengthPercent,
+                                     quantized))
+    return false;
+
+  std::vector<NoteTimingState> before;
+  std::vector<NoteTimingState> after;
+  for (size_t i = 0; i < notes.size(); ++i)
+  {
+    if (spans[i].startFrame == quantized[i].startFrame &&
+        spans[i].endFrame == quantized[i].endFrame)
+      continue;
+    before.push_back(NoteTimingState::capture(notes[i]));
+    after.push_back({&notes[i], quantized[i].startFrame, quantized[i].endFrame});
+  }
+
+  if (before.empty())
+    return false;
+
+  applyNoteTimingStates(*project, after);
+  invalidateBasePitchCache();
+  if (undoManager)
+    undoManager->addAction(
+        std::make_unique<TimingAction>(*project, before, after));
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
+  return true;
 }
 
 HarmonyUtils::Result PianoRollComponent::applyHarmonyInterval(

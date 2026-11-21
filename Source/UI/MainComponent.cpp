@@ -819,6 +819,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
     pianoRoll.setInspectorEditValue(100.0f);
     pianoRoll.endInspectorEdit();
   };
+  // M4 v1 (D-242): la fuerza la elige el menu del boton Cuantizar tiempo.
+  variAudioInspector.onQuantizeTimeMacro = [this](int strengthPercent)
+  { pianoRoll.quantizeTimeSelection(strengthPercent); };
   variAudioInspector.onSnapModeChanged =
       [this](VariAudioInspector::SnapMode mode)
   {

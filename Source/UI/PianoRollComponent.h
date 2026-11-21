@@ -103,6 +103,12 @@ public:
   HarmonyUtils::Result applyHarmonyInterval(HarmonyUtils::Interval interval,
                                             bool up);
 
+  // M4 v1 (D-242): cuantiza las fronteras de las notas seleccionadas (o de
+  // todas) a la rejilla visible del host, con fuerza 0..100, como un paso
+  // undoable. Fuerza 0 no toca nada. Devuelve false si no hay proyecto, no hay
+  // rejilla o el resultado colapsaria una nota o crearia un solape nuevo.
+  bool quantizeTimeSelection(int strengthPercent);
+
   void paint(juce::Graphics &g) override;
   void resized() override;
   void mouseDown(const juce::MouseEvent &e) override;

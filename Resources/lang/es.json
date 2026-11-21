@@ -316,6 +316,7 @@
   "menu.canvas_tools": "Herramientas…",
   "macro.correct_pitch": "Corregir afinación",
   "macro.quantize_time": "Cuantizar tiempo",
+  "macro.quantize_time_hint": "Mueve las fronteras de las notas a la rejilla (fuerza 25-100 %).",
   "macro.leveling": "Nivelar",
   "macro.correct_pitch_hint": "Lleva cada nota objetivo a su semitono más cercano.",
   "macro.not_implemented": "Todavía no implementado.",
