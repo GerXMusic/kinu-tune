@@ -4264,6 +4264,12 @@ void MainComponent::rerenderEditedNotes()
     return;
 
   markRenderDirty();
+  // D-247: este camino lo usan los cambios de motor del documento/bloque. En
+  // modo plugin tiene que pedir el render como cualquier edicion: si solo se
+  // marca sucio, la modificacion queda con render pendiente y ARA silencia la
+  // region (a proposito) hasta que se recarga el documento.
+  if (isPluginMode() && onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
@@ -4387,16 +4393,50 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
           {&notes[static_cast<size_t>(edit.noteIndex)], edit.previous,
            edit.next});
 
+    // D-247: solo hay que re-renderizar si cambia el motor EFECTIVO. Elegir
+    // «Heredar» cuando el motor global ya es el mismo solo borra el override
+    // guardado: el sonido no cambia y marcar la region sucia dejaba el ARA en
+    // silencio esperando un render que no hacía falta.
+    const auto effectiveOf = [globalEngine](NoteEngine engine)
+    {
+      if (const auto mapped = noteEngineToSynthesisEngine(engine))
+        return *mapped;
+      return globalEngine;
+    };
+    bool soundChanges = false;
+    for (const auto &edit : plan.edits)
+      if (effectiveOf(edit.next) != effectiveOf(edit.previous))
+      {
+        soundChanges = true;
+        break;
+      }
+
     auto action = std::make_unique<NoteEngineAction>(
         std::move(changes), [this] { pianoRoll.repaint(); });
     action->redo();
     if (undoManager)
       undoManager->addAction(std::move(action));
 
-    // The engine decides how the audio is produced, so the affected notes have
-    // to be rendered again; the action left them dirty and synth-dirty.
-    markRenderDirty();
-    notifyProjectDataChanged();
+    if (soundChanges)
+    {
+      // The engine decides how the audio is produced, so the affected notes
+      // have to be rendered again; the action left them dirty and synth-dirty.
+      markRenderDirty();
+      notifyProjectDataChanged();
+      // D-247: en modo plugin el render lo dispara este callback, igual que en
+      // cualquier otra edicion de nota.
+      if (isPluginMode() && onPitchEditFinished)
+        onPitchEditFinished();
+    }
+    else
+    {
+      // El sonido no cambia (solo se borra el override guardado). Se descarta
+      // la suciedad que la accion marco para que el publish no deje el ARA en
+      // silencio esperando un render que no hace falta.
+      for (const auto &edit : plan.edits)
+        notes[static_cast<size_t>(edit.noteIndex)].clearDirty();
+      notifyProjectDataChanged();
+    }
   }
 
   variAudioInspector.refresh();
@@ -4548,6 +4588,11 @@ void MainComponent::afterHistoryChange(bool requiresResynthesis)
     // Don't mark all notes as dirty - the action marked the notes it changed
     // and set any F0 dirty range. This avoids synthesizing the entire project.
     markRenderDirty();
+    // D-247: mismo motivo que en el cambio de motor por nota. Un undo/redo en
+    // modo plugin tiene que pedir el render de verdad; marcar sucio no llega
+    // al renderer del host.
+    if (isPluginMode() && onPitchEditFinished)
+      onPitchEditFinished();
   }
 
   // Update command states (undo/redo availability changed)
