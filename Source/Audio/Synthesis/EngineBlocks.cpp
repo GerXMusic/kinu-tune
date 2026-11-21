@@ -301,4 +301,69 @@ std::vector<Block> blocksToCommit(const std::vector<Block> &plan,
     return selected;
 }
 
+std::vector<CommitRange>
+commitRangesForNotes(const std::vector<Note> &notes,
+                     const std::vector<Block> &plan, bool hasDirtyNoteAnchors,
+                     int f0DirtyStart, int f0DirtyEnd, int renderStartFrame,
+                     int renderEndFrame) {
+    std::vector<CommitRange> ranges;
+
+    auto addRange = [&](int start, int end) {
+        if (end <= start)
+            return;
+        const bool duplicate = std::any_of(
+            ranges.begin(), ranges.end(), [&](const CommitRange &range) {
+                return range.startFrame == start && range.endFrame == end;
+            });
+        if (!duplicate)
+            ranges.push_back({start, end});
+    };
+
+    auto addBlocksFor = [&](const Note &note) {
+        for (const auto &block : blocksToCommit(plan, note.getStartFrame(),
+                                                note.getEndFrame())) {
+            if (block.engine == SynthesisEngineType::Vocoder) {
+                addRange(std::max(block.startFrame, note.getStartFrame()),
+                         std::min(block.endFrame, note.getEndFrame()));
+            } else {
+                addRange(block.startFrame, block.endFrame);
+            }
+        }
+    };
+
+    if (hasDirtyNoteAnchors) {
+        for (const auto &note : notes) {
+            if (note.isRest() || !note.isDirty())
+                continue;
+            if (note.getEndFrame() <= renderStartFrame ||
+                note.getStartFrame() >= renderEndFrame)
+                continue;
+            addBlocksFor(note);
+        }
+    }
+    if (!hasDirtyNoteAnchors && f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart) {
+        for (const auto &block :
+             blocksToCommit(plan, f0DirtyStart, f0DirtyEnd))
+            addRange(block.startFrame, block.endFrame);
+    }
+
+    std::sort(ranges.begin(), ranges.end(),
+              [](const CommitRange &a, const CommitRange &b) {
+                  return a.startFrame < b.startFrame;
+              });
+
+    // Adjacent edited notes (a multi-selection, or two notes that touch) share
+    // one span: two touching ranges would each fade at the shared edge and the
+    // commit mask would only reach 50 % there.
+    std::vector<CommitRange> merged;
+    for (const auto &range : ranges) {
+        if (merged.empty() || range.startFrame > merged.back().endFrame)
+            merged.push_back(range);
+        else
+            merged.back().endFrame =
+                std::max(merged.back().endFrame, range.endFrame);
+    }
+    return merged;
+}
+
 }  // namespace engineBlocks

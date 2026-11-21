@@ -357,61 +357,21 @@ void applyPreservedTimingToF0(const Project &project, int rangeStart,
   }
 }
 
-// D-239: the unit that is rendered and committed is the engine block.
-//
-// PSOLA and the classical core anchor their grain lattice once per voiced run
-// and accumulate the output position from there, so any pitch change inside a
-// run shifts every later grain of that run. A note-sized commit therefore
-// splices new audio against old audio with a different phase, which is the
-// "small cut" heard between an edited note and its neighbours. Committing the
-// whole block writes the run as one piece; the splices land on the block
-// edges, which are silences (D-129) or the render padding, where the blend
-// mask is already original audio.
-//
-// The block is selected from the dirty notes themselves, not from the ±60
-// padded dirty range: the padding crosses into the neighbouring block and
-// would rewrite a block nobody edited (it would break D-125 b).
+// D-239: the commit spans live in EngineBlocks so the renderer and the tests
+// read the same rule: PSOLA/Pitchcore commit the engine block, the vocoder
+// commits the dirty note body. See engineBlocks::commitRangesForNotes.
 std::vector<CommitFrameRange> commitRangesForDirtyNotes(
     const Project &project, const std::vector<engineBlocks::Block> &plan,
     bool hasDirtyNoteAnchors, int f0DirtyStart, int f0DirtyEnd,
     int renderStartFrame, int renderEndFrame) {
-  std::vector<CommitFrameRange> ranges;
-
-  auto addBlocks = [&](int start, int end) {
-    for (const auto &block : engineBlocks::blocksToCommit(plan, start, end)) {
-      const bool duplicate =
-          std::any_of(ranges.begin(), ranges.end(),
-                      [&](const CommitFrameRange &range) {
-                        return range.start == block.startFrame &&
-                               range.end == block.endFrame;
-                      });
-      if (!duplicate)
-        ranges.push_back({block.startFrame, block.endFrame});
-    }
-  };
-
-  if (hasDirtyNoteAnchors) {
-    for (const auto &note : project.getNotes()) {
-      if (note.isRest() || !note.isDirty())
-        continue;
-      // D-197 renders one edited block per pass: a dirty note from another
-      // block is not part of this pass's plan and must not select a block.
-      if (note.getEndFrame() <= renderStartFrame ||
-          note.getStartFrame() >= renderEndFrame)
-        continue;
-      addBlocks(note.getStartFrame(), note.getEndFrame());
-    }
-  }
-  // F0-only tools (global pitch offset, DAW automation) and timing undo have
-  // no dirty-note anchor; their range is the unit.
-  if (ranges.empty() && f0DirtyStart >= 0 && f0DirtyEnd > f0DirtyStart)
-    addBlocks(f0DirtyStart, f0DirtyEnd);
-
-  std::sort(ranges.begin(), ranges.end(),
-            [](const CommitFrameRange &a, const CommitFrameRange &b) {
-              return a.start < b.start;
-            });
-  return ranges;
+  const auto ranges = engineBlocks::commitRangesForNotes(
+      project.getNotes(), plan, hasDirtyNoteAnchors, f0DirtyStart,
+      f0DirtyEnd, renderStartFrame, renderEndFrame);
+  std::vector<CommitFrameRange> out;
+  out.reserve(ranges.size());
+  for (const auto &range : ranges)
+    out.push_back({range.startFrame, range.endFrame});
+  return out;
 }
 
 int findBestSpliceCenter(const float *existing,
@@ -1813,7 +1773,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           // Commit only the block. The fade sits at the block edges, which are
-          // silences (D-129) or the render padding. 384 samples half (≈8 ms at
+          // silences (D-129) or the render padding. 384 samples half (â‰ˆ8 ms at
           // 48 kHz) keeps the whole 16 ms fade inside the smallest silence the
           // block rule accepts (20 ms), so it never reaches sounding material.
           constexpr int kCommitFadeHalfSamples = 384;

@@ -509,6 +509,71 @@ void testBlocksToCommitSelectsWholeBlocks() {
     CHECK(blocksToCommit({}, 0, 10).empty());
 }
 
+void testCommitRangesFollowTheEngine() {
+    // D-239: PSOLA/Pitchcore commit the whole block (the phase run); the
+    // neural vocoder commits only the edited note, because its reconstruction
+    // of an unedited note can carry a model artifact at the boundary.
+    using engineBlocks::CommitRange;
+    using engineBlocks::commitRangesForNotes;
+    std::vector<engineBlocks::Block> plan = {
+        {0, 100, SynthesisEngineType::Psola},
+        {100, 200, SynthesisEngineType::Vocoder},
+        {200, 300, SynthesisEngineType::Psola},
+    };
+
+    std::vector<Note> notes;
+    Note psolaNote(20, 40, 60.0f);
+    psolaNote.markDirty();
+    Note vocoderNote(120, 150, 62.0f);
+    vocoderNote.markDirty();
+    notes.push_back(psolaNote);
+    notes.push_back(vocoderNote);
+
+    const auto ranges =
+        commitRangesForNotes(notes, plan, true, -1, -1, 0, 300);
+    CHECK(ranges.size() == 2);
+    if (ranges.size() == 2) {
+        CHECK(ranges[0].startFrame == 0);
+        CHECK(ranges[0].endFrame == 100); // PSOLA whole block
+        CHECK(ranges[1].startFrame == 120);
+        CHECK(ranges[1].endFrame == 150); // vocoder note only
+    }
+
+    // Adjacent edited vocoder notes merge into one span, so the commit mask
+    // does not fade at the shared note boundary.
+    std::vector<Note> adjacent;
+    Note vocoderA(120, 150, 62.0f);
+    vocoderA.markDirty();
+    Note vocoderB(150, 180, 64.0f);
+    vocoderB.markDirty();
+    adjacent.push_back(vocoderA);
+    adjacent.push_back(vocoderB);
+    const auto merged =
+        commitRangesForNotes(adjacent, plan, true, -1, -1, 0, 300);
+    CHECK(merged.size() == 1);
+    if (!merged.empty()) {
+        CHECK(merged.front().startFrame == 120);
+        CHECK(merged.front().endFrame == 180);
+    }
+
+    // A dirty note outside this pass selects nothing; the F0 fallback is not
+    // used while there is a dirty anchor.
+    Note outside(400, 420, 60.0f);
+    outside.markDirty();
+    const auto none =
+        commitRangesForNotes({outside}, plan, true, 0, 300, 0, 300);
+    CHECK(none.empty());
+
+    // No dirty anchor: the F0 range selects whole blocks for every engine.
+    const auto f0 =
+        commitRangesForNotes({}, plan, false, 120, 150, 0, 300);
+    CHECK(f0.size() == 1);
+    if (!f0.empty()) {
+        CHECK(f0.front().startFrame == 100);
+        CHECK(f0.front().endFrame == 200);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -534,6 +599,7 @@ int main() {
     testPitchcoreRequestSurvivesALargeShift();
     testRefusalNamesTheNoteTheRequestAndTheCause();
     testBlocksToCommitSelectsWholeBlocks();
+    testCommitRangesFollowTheEngine();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;
