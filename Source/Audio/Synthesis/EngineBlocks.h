@@ -156,9 +156,10 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
  *
  * Returns every block that intersects [dirtyStart, dirtyEnd), so a range that
  * crosses a block boundary commits both blocks (conservative: the boundary is
- * a silence, nothing sounding is rewritten twice). When the range falls
- * outside the plan, the block containing @p dirtyStart is returned; an empty
- * plan returns empty.
+ * a silence, nothing sounding is rewritten twice). A point selects the block
+ * that contains it. When the range falls outside the plan, the block
+ * containing @p dirtyStart is returned, or the first block if none does; an
+ * empty plan returns empty.
  */
 std::vector<Block> blocksToCommit(const std::vector<Block> &plan,
                                   int dirtyStart, int dirtyEnd);

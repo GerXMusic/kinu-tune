@@ -104,7 +104,8 @@ bool canChangeEngineAfter(const Note &previous, const Note &note,
 std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
                              int endFrame, SynthesisEngineType globalEngine,
                              const juce::AudioBuffer<float> &source,
-                             int sampleRate, int hopSize) {    std::vector<Block> blocks;
+                             int sampleRate, int hopSize) {
+    std::vector<Block> blocks;
     if (endFrame <= startFrame)
         return blocks;
 

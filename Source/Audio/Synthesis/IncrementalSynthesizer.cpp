@@ -358,8 +358,8 @@ void applyPreservedTimingToF0(const Project &project, int rangeStart,
 }
 
 // D-239: the commit spans live in EngineBlocks so the renderer and the tests
-// read the same rule: PSOLA/Pitchcore commit the engine block, the vocoder
-// commits the dirty note body. See engineBlocks::commitRangesForNotes.
+// read the same rule: every engine commits its whole block. See
+// engineBlocks::commitRangesForNotes.
 std::vector<CommitFrameRange> commitRangesForDirtyNotes(
     const Project &project, const std::vector<engineBlocks::Block> &plan,
     bool hasDirtyNoteAnchors, int f0DirtyStart, int f0DirtyEnd,
@@ -1773,7 +1773,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           // Commit only the block. The fade sits at the block edges, which are
-          // silences (D-129) or the render padding. 384 samples half (â‰ˆ8 ms at
+          // silences (D-129) or the render padding. 384 samples half (≈8 ms at
           // 48 kHz) keeps the whole 16 ms fade inside the smallest silence the
           // block rule accepts (20 ms), so it never reaches sounding material.
           constexpr int kCommitFadeHalfSamples = 384;
