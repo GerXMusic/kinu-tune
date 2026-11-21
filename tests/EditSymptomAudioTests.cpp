@@ -315,6 +315,10 @@ void testS6ResetOneBlock() {
   project.markNoteEditDirtyRange(kN0a, kN1b);
   CHECK(renderAndWait(project, SynthesisEngineType::Psola, "S6 editado"));
 
+  // Estado JUSTO ANTES de restablecer: es contra el que se juzga el bloque B.
+  juce::AudioBuffer<float> beforeReset;
+  beforeReset.makeCopyOf(project.getAudioData().waveform);
+
   // Restablecer SOLO el bloque 1.
   for (int i = 0; i < 2; ++i)
     resetNoteToFactory(notes[static_cast<size_t>(i)]);
@@ -326,9 +330,13 @@ void testS6ResetOneBlock() {
   const auto &source = project.getAudioData().originalWaveform;
   const float block1 = maxAbsDiff(out, source, kN0a + 5, kN1b - 5);
   const float block2 = maxAbsDiff(out, originalBlock2, kN2a + 5, kN3b - 5);
-  std::printf("S6 bloque1 vs fuente %.8f (lim 1e-6) | bloque2 intacto %.8f (lim 1e-7)\n",
-              block1, block2);
+  const float block2BeforeReset =
+      maxAbsDiff(out, beforeReset, kN2a + 5, kN3b - 5);
+  std::printf("S6 bloque1 vs fuente %.8f (lim 1e-6) | bloque2 vs previo al "
+              "restablecer %.8f (lim 1e-7) | bloque2 vs original %.8f\n",
+              block1, block2BeforeReset, block2);
   CHECK(block1 <= 1.0e-6f);
+  CHECK(block2BeforeReset <= 1.0e-7f);
   CHECK(block2 <= 1.0e-7f);
 }
 
