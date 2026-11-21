@@ -4070,6 +4070,8 @@ void MainComponent::resynthesizeIncremental()
 
   mcpRenderPending = true;
   ++mcpRenderGeneration;
+  pushSweepState();
+  pianoRoll.repaint();
 
   toolbar.showProgress(TR("progress.synthesizing"));
   toolbar.setProgress(-1.0f);
@@ -4104,6 +4106,7 @@ void MainComponent::resynthesizeIncremental()
           return;
 
         safeThis->mcpRenderPending = false;
+        safeThis->pushSweepState();
 
         safeThis->setToolGroupEnabled(true);
         safeThis->toolbar.hideProgress();
@@ -4177,10 +4180,12 @@ void MainComponent::markRenderDirty()
   pianoRoll.repaint();
 }
 
-// P1b fase 6: el barrido se alimenta de la cola, no del proyecto.
+// P1b fase 6: el barrido se alimenta de la cola, no del proyecto. Solo se
+// muestra mientras hay un render en curso; con bloques sucios esperando a
+// Play no se dibuja nada (el progreso vive en la barra superior).
 void MainComponent::pushSweepState()
 {
-  const auto state = sweep::fromQueue(deferredRenders);
+  const auto state = sweep::fromQueue(deferredRenders, mcpRenderPending);
   pianoRoll.setSweepState(state.active, state.blockStart, state.blockEnd,
                           state.remaining);
 }
@@ -4625,6 +4630,7 @@ void MainComponent::hideAnalysisProgress()
 void MainComponent::finishBackendRender(bool success)
 {
   mcpRenderPending = false;
+  pushSweepState();
   setToolGroupEnabled(true);
   toolbar.hideProgress();
   showRenderStatus(success ? ParameterPanel::RenderStatus::Done

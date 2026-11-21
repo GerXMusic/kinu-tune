@@ -90,13 +90,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       const float x1 =
           static_cast<float>((endSeconds - viewStart) * pps - scroll);
       const float width = x1 > x0 ? x1 - x0 : 0.0f;
-      const float height = static_cast<float>(g.getClipBounds().getHeight());
+      // Full pitch height, never the repaint clip: a partial repaint made the
+      // sweep a box and a line cut mid-canvas. Only the bright edge is drawn;
+      // the old 10 % fill read as a stray translucent rectangle over the notes.
+      const float height =
+          static_cast<float>(MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) *
+          coordMapper->getPixelsPerSemitone();
       const double elapsed =
           (juce::Time::getMillisecondCounterHiRes() - sweepStartMs) * 0.001;
       const float barX = x0 + width * sweep::phaseAt(elapsed);
 
-      g.setColour(juce::Colours::white.withAlpha(0.10f));
-      g.fillRect(x0, 0.0f, width, height);
       g.setColour(juce::Colours::white.withAlpha(0.55f));
       g.fillRect(barX, 0.0f, 2.0f, height);
     }

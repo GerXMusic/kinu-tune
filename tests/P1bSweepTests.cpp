@@ -1,10 +1,11 @@
 // P1b fase 6 - indicador de barrido.
 //
 // El barrido se dibuja desde la cola de bloques pendientes: que bloque se esta
-// renderizando y cuantos quedan. Sin cola no hay barrido. El estado vive en
-// sweep::fromQueue (Source/UI/Main/DeferredRenderQueue.h) y el renderer del
-// blob (NoteRenderer) lo recibe ya resuelto; el invariante comprueba ademas
-// que MainComponent tiene la cola como miembro y que la alimenta al marcar.
+// renderizando y cuantos quedan. Sin cola, o con la cola llena pero sin render
+// en curso, no hay barrido. El estado vive en sweep::fromQueue (Source/UI/Main/
+// DeferredRenderQueue.h) y el renderer del blob (NoteRenderer) lo recibe ya
+// resuelto; el invariante comprueba ademas que MainComponent tiene la cola como
+// miembro y que la alimenta al marcar.
 #include "../Source/UI/Main/DeferredRenderQueue.h"
 #include "TestAssert.h"
 #include <fstream>
@@ -24,21 +25,32 @@ std::string readFile(const std::string &path) {
 // Sin bloques pendientes: el indicador no se dibuja.
 void testNoQueueNoSweep() {
   DeferredRenderQueue queue;
-  const auto state = sweep::fromQueue(queue);
+  const auto state = sweep::fromQueue(queue, true);
   CHECK(!state.active);
   CHECK(state.remaining == 0);
   CHECK(state.blockEnd == state.blockStart);
 }
 
-// Con un bloque pendiente: barrido activo, con ese bloque y 1 restante.
+// Con un bloque pendiente y un render en curso: barrido activo, con ese bloque
+// y 1 restante.
 void testPendingBlockIsSwept() {
   DeferredRenderQueue queue;
   queue.markBlock(120, 260);
-  const auto state = sweep::fromQueue(queue);
+  const auto state = sweep::fromQueue(queue, true);
   CHECK(state.active);
   CHECK(state.remaining == 1);
   CHECK(state.blockStart == 120);
   CHECK(state.blockEnd == 260);
+}
+
+// Un bloque sucio esperando a Play no es actividad: no hay barrido sobre las
+// notas aunque la cola tenga bloques.
+void testPendingWithoutRenderNoSweep() {
+  DeferredRenderQueue queue;
+  queue.markBlock(120, 260);
+  const auto state = sweep::fromQueue(queue, false);
+  CHECK(!state.active);
+  CHECK(state.remaining == 1);
 }
 
 // Varios bloques: se barre el primero de la cola y se cuenta el resto.
@@ -47,7 +59,7 @@ void testRemainingCount() {
   queue.markBlock(0, 80);
   queue.markBlock(400, 480);
   queue.markBlock(900, 980);
-  auto state = sweep::fromQueue(queue);
+  auto state = sweep::fromQueue(queue, true);
   CHECK(state.active);
   CHECK(state.remaining == 3);
   CHECK(state.blockStart == 0);
@@ -57,7 +69,7 @@ void testRemainingCount() {
   int rendered = 0;
   queue.flush([&rendered](int, int) { ++rendered; });
   CHECK(rendered == 3);
-  state = sweep::fromQueue(queue);
+  state = sweep::fromQueue(queue, true);
   CHECK(!state.active);
   CHECK(state.remaining == 0);
 }
@@ -92,11 +104,11 @@ void testWiring() {
   const std::string mainSource =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
   const std::string mark =
-      windowAfter(mainSource, "void MainComponent::markRenderDirty()", 900);
+      windowAfter(mainSource, "void MainComponent::markRenderDirty()", 1200);
   CHECK(!mark.empty());
   std::cout << "markRenderDirty: " << mark.substr(0, 260) << "\n";
   CHECK(mark.find("deferredRenders.markBlock(") != std::string::npos);
-  CHECK(mark.find("setSweepState(") != std::string::npos);
+  CHECK(mark.find("pushSweepState(") != std::string::npos);
 
   const std::string noteRenderer =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/PianoRoll/NoteRenderer.h");
@@ -118,6 +130,7 @@ int main() {
   std::cout << std::unitbuf;
   testNoQueueNoSweep();
   testPendingBlockIsSwept();
+  testPendingWithoutRenderNoSweep();
   testRemainingCount();
   testPhaseCycles();
   testWiring();
