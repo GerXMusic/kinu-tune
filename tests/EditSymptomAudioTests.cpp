@@ -377,8 +377,9 @@ void testS6ResetOneBlockWithTwoDirtyAnchors() {
   // comprobación de que dos anclas no hacen que un commit cruce al vecino.
   const float between = maxAbsDiff(out, editedState, kN1b + 22, kN2a - 2);
 
-  // B se commitearon con su estado final: debe coincidir con el render completo
-  // de ese estado (no con el de la pasada anterior, que tenía A editado).
+  // B tiene anclas sucias: se re-renderiza con su estado final y se compara con
+  // el render completo de ese estado. El criterio "B vs su estado previo" solo
+  // aplica cuando B NO está sucio (S6, una sola ancla; D-252).
   Project reference = makeProject(NoteEngine::Psola);
   auto &refNotes = reference.getNotes();
   for (int i = 0; i < 4; ++i)
@@ -389,8 +390,8 @@ void testS6ResetOneBlockWithTwoDirtyAnchors() {
   const float blockB = maxAbsDiff(out, full.getAudioData().waveform, kN2a + 5,
                                   kN3b - 5);
 
-  std::printf("S6b A vs fuente %.8f (lim 1e-6) | B vs completo %.6f (lim "
-              "2e-3) | silencio %.8f (lim 1e-7)\n",
+  std::printf("S6b A vs fuente %.8f (lim 1e-6) | B (con anclas) vs completo "
+              "%.6f (lim 2e-3) | silencio %.8f (lim 1e-7)\n",
               blockA, blockB, between);
   CHECK(blockA <= 1.0e-6f);
   CHECK(blockB <= 2.0e-3f);
