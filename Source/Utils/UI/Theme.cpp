@@ -18,8 +18,8 @@ const juce::Colour APP_COLOR_BORDER_SUBTLE       = juce::Colour(0xFF22252Bu);  /
 const juce::Colour APP_COLOR_BORDER_HIGHLIGHT    = juce::Colour(0xFF3E454Fu);  // Focus / active border
 
 // ── Piano roll grid & timeline ────────────────────────────────────
-const juce::Colour APP_COLOR_GRID                = juce::Colour(0xFF22252Bu);  // Subdivision lines
-const juce::Colour APP_COLOR_GRID_BAR            = juce::Colour(0xFF313640u);  // Bar / beat lines
+const juce::Colour APP_COLOR_GRID                = juce::Colour(0xFF2C3038u);  // Subdivision lines
+const juce::Colour APP_COLOR_GRID_BAR            = juce::Colour(0xFF3E454Fu);  // Bar / beat lines
 const juce::Colour APP_COLOR_TIMELINE            = juce::Colour(0xFF1E2127u);  // Timeline ruler background
 
 // ── Piano keys ────────────────────────────────────────────────────

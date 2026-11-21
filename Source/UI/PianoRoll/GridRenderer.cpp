@@ -171,7 +171,7 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
         }
         else
         {
-          g.setColour(APP_COLOR_GRID.darker(0.2f));
+          g.setColour(APP_COLOR_GRID.darker(0.10f));
         }
         if (isBarLine)
           g.fillRect(x - 0.5f, visibleTopY, 2.0f,
