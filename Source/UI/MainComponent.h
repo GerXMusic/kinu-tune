@@ -337,6 +337,14 @@ private:
   // P1b (render al Play): an edit, an undo/redo, an engine change, an MCP
   // command or DAW automation only marks. Nothing renders until Play.
   void markRenderDirty();
+  // D-249 (politica A): soltar la edicion agenda el render. markRenderDirty()
+  // agenda siempre (la regla D-247 pasa a ser estructural); el servicio del
+  // timer lo coalesce y lo lanza pasado el debounce, si el transporte no esta
+  // ya esperando un flush.
+  void serviceEditRender();
+  double editRenderRequestedAtMs = 0.0;
+  bool editRenderScheduled = false;
+  bool editRenderInFlight = false;
   // P1b: renders the dirty blocks, one per pass, and only then starts the
   // transport. The cursor waits for the last block.
   void flushDirtyBlocks();

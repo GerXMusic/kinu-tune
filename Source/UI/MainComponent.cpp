@@ -2664,6 +2664,7 @@ void MainComponent::timerCallback()
     latencyTrace.layoutScrollGuardActive = false;
 
   pollMcpControl();
+  serviceEditRender();
   dispatchPendingDragAudition();
 
   // Handle throttled cursor updates (30Hz max)
@@ -4182,8 +4183,42 @@ void MainComponent::markRenderDirty()
       juce::String(range.second) + ")");
 
   deferredRenderPending = true;
+  // D-249 (politica A): toda edicion pide su render; el timer lo coalesce.
+  editRenderScheduled = true;
+  editRenderRequestedAtMs = juce::Time::getMillisecondCounterHiRes();
   pushSweepState();
   pianoRoll.repaint();
+}
+
+// D-249: un render al soltar la edicion, con debounce y coalescing. Se sirve
+// desde el timer de la UI (nunca desde el hilo de audio). Mientras haya un
+// render en vuelo o una cadena de Play activa no se lanza otro: al terminar,
+// finishBackendRender re-renderiza si la revision cambio.
+void MainComponent::serviceEditRender()
+{
+  if (!editRenderScheduled || editRenderInFlight)
+    return;
+  if (flushChainActive || mcpRenderPending)
+    return;
+
+  constexpr double kDebounceMs = 120.0;
+  if (juce::Time::getMillisecondCounterHiRes() - editRenderRequestedAtMs <
+      kDebounceMs)
+    return;
+
+  editRenderScheduled = false;
+
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return;
+  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange())
+    return;
+
+  LOG("P1b: edit render rev=" + juce::String(dirtyRevision) +
+      " dirtyNotes=" + juce::String(project->hasDirtyNotes() ? 1 : 0) +
+      " f0Dirty=" + juce::String(project->hasF0DirtyRange() ? 1 : 0));
+  editRenderInFlight = true;
+  resynthesizeIncremental();
 }
 
 // P1b fase 6: el barrido se alimenta de la cola, no del proyecto. Solo se
@@ -4689,7 +4724,12 @@ void MainComponent::finishBackendRender(bool success)
 
   // P1b: el flush de Play acabo; se limpian los bloques renderizados (misma
   // operacion que la ruta standalone), se baja la cadena y se arranca.
-  if (success && flushChainActive)
+  // D-249: el render al soltar la edicion (politica A) usa el mismo cierre,
+  // sin tocar el transporte. Asi el estado sucio del editor no puede quedarse
+  // puesto (que es lo que deja la region muda por renderPending).
+  const bool fromEditRender = editRenderInFlight;
+  editRenderInFlight = false;
+  if (success && (flushChainActive || fromEditRender))
   {
     auto *doneProject = getProject();
     const bool newerEdits =
@@ -4712,14 +4752,17 @@ void MainComponent::finishBackendRender(bool success)
     if (doneProject != nullptr)
       doneProject->clearAllDirty();
     deferredRenders.clear();
-    flushChainActive = false;
-    // Solo se reanuda si este flush fue quien paro el transporte.
-    if (playAfterFlush)
+    if (flushChainActive)
     {
-      playAfterFlush = false;
-      if (onRequestHostSeek)
-        onRequestHostSeek(flushResumePosition);
-      play();
+      flushChainActive = false;
+      // Solo se reanuda si este flush fue quien paro el transporte.
+      if (playAfterFlush)
+      {
+        playAfterFlush = false;
+        if (onRequestHostSeek)
+          onRequestHostSeek(flushResumePosition);
+        play();
+      }
     }
   }
 

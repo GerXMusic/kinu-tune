@@ -199,6 +199,11 @@ public:
     // choice changes what should be rendered. Otherwise the neutral reset
     // would overwrite the very synthesis the edit asked for.
     bool shouldResetNeutralNoteToOriginal(const Note &note) const;
+    // D-248: predicado unico de "esta nota tiene una edicion audible". Lo usan
+    // hasRegionEdits, markEditedNotesDirty y el reset. El motor explicito y el
+    // mute cuentan: antes solo se miraba isNeutralForOriginalWaveform() (que no
+    // conoce el motor) y un cambio solo de motor no marcaba nada.
+    static bool noteHasAudioRelevantEdit(const Note &note);
     // True when the project's audio differs from the raw ARA source and must
     // therefore be published with the region. It is the inverse of "every
     // note is neutral", extended with the edits that live outside a note's

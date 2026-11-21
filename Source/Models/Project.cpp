@@ -163,6 +163,17 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     return note.isNeutralForOriginalWaveform();
 }
 
+bool Project::noteHasAudioRelevantEdit(const Note &note)
+{
+    if (note.isRest())
+        return false;
+    if (note.isMuted())
+        return true;
+    if (note.getEngine() != NoteEngine::Inherit)
+        return true;
+    return !note.isNeutralForOriginalWaveform();
+}
+
 bool Project::hasRegionEdits() const
 {
     if (globalPitchOffset != 0.0f || formantShift != 0.0f)
@@ -170,11 +181,7 @@ bool Project::hasRegionEdits() const
 
     for (const auto &note : notes)
     {
-        if (note.isRest())
-            continue;
-        if (note.getEngine() != NoteEngine::Inherit)
-            return true;
-        if (!note.isNeutralForOriginalWaveform())
+        if (noteHasAudioRelevantEdit(note))
             return true;
     }
 
@@ -209,7 +216,7 @@ int Project::markEditedNotesDirty()
         auto &note = notes[static_cast<size_t>(i)];
         if (note.isRest())
             continue;
-        if (!wholeProjectEdited && note.isNeutralForOriginalWaveform())
+        if (!wholeProjectEdited && !noteHasAudioRelevantEdit(note))
             continue;
         note.markDirty();
         ++marked;
@@ -241,14 +248,17 @@ int Project::markEditedNotesDirty()
     int blockEnd = -1;
     int previousEnd = -1;
 
+    struct BlockSpan
+    {
+        int first;
+        int last;
+    };
+    std::vector<BlockSpan> blocks;
+
     auto flushBlock = [&]() {
         if (blockNotes.empty())
             return;
-        const int rangedStart = std::max(0, blockStart - 60);
-        const int rangedEnd = frameCount > 0 ? std::min(frameCount, blockEnd + 60)
-                                             : blockEnd + 60;
-        if (rangedEnd > rangedStart)
-            editedBlockRanges.emplace_back(rangedStart, rangedEnd);
+        blocks.push_back({blockStart, blockEnd});
         blockNotes.clear();
     };
 
@@ -279,6 +289,28 @@ int Project::markEditedNotesDirty()
         previousEnd = note.getEndFrame();
     }
     flushBlock();
+
+    // D-248: el padding de 60 frames da contexto dentro del bloque, pero no
+    // puede cruzar el silencio hacia el bloque vecino. Antes, un bloque cuyo
+    // borde quedaba a menos de 60 frames del siguiente (silencio minimo de
+    // D-129 = 20 ms) extendia su rango de commit DENTRO del bloque vecino y
+    // reescribia su ataque con otra fase de grano (medido: S6, 0,607 de
+    // diferencia en el bloque que no se edito). Se recorta en el punto medio
+    // entre bloques, que por construccion cae en silencio.
+    for (size_t i = 0; i < blocks.size(); ++i)
+    {
+        int rangedStart = std::max(0, blocks[i].first - 60);
+        int rangedEnd = frameCount > 0 ? std::min(frameCount, blocks[i].last + 60)
+                                       : blocks[i].last + 60;
+        if (i > 0)
+            rangedStart = std::max(
+                rangedStart, (blocks[i - 1].last + blocks[i].first) / 2);
+        if (i + 1 < blocks.size())
+            rangedEnd = std::min(
+                rangedEnd, (blocks[i].last + blocks[i + 1].first) / 2);
+        if (rangedEnd > rangedStart)
+            editedBlockRanges.emplace_back(rangedStart, rangedEnd);
+    }
 
     return marked;
 }

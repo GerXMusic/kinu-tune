@@ -128,8 +128,9 @@ void testSourceWiring() {
             << " resynthesizeIncremental()=" << renders << "\n";
   CHECK(marks >= 7);
   // D-227 adds the third: the flush chain re-renders when an edit arrived
-  // while the requested render was in flight.
-  CHECK(renders == 3);
+  // while the requested render was in flight. D-249 (politica A) adds the
+  // fourth: the debounced edit render served from the UI timer.
+  CHECK(renders == 4);
 
   // D-227: an edit during a render bumps the revision, and the completion
   // re-renders instead of clearing the newer dirty state.
