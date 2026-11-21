@@ -182,6 +182,12 @@ target_link_libraries(AuditionHandoffTests PRIVATE pitchnet_ui)
 target_compile_features(AuditionHandoffTests PRIVATE cxx_std_17)
 add_test(NAME AuditionHandoffTests COMMAND AuditionHandoffTests)
 
+# S4d (D-254): el cierre del render del plugin limpia por revision, no todo.
+add_executable(EditRenderCloseTests EditRenderCloseTests.cpp)
+target_link_libraries(EditRenderCloseTests PRIVATE pitchnet_ui)
+target_compile_features(EditRenderCloseTests PRIVATE cxx_std_17)
+add_test(NAME EditRenderCloseTests COMMAND EditRenderCloseTests)
+
 add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
 target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)
 target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)

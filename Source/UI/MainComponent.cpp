@@ -4091,9 +4091,26 @@ void MainComponent::resynthesizeIncremental()
     // before it completes, finishBackendRender re-renders instead of clearing
     // the newer dirty state.
     flushRenderRevision = dirtyRevision;
+    // D-254: instantanea de lo que este pase incluye, por revision de nota y
+    // del rango F0. Es lo unico que su cierre limpiara.
+    flushDirtyNoteSnapshot.clear();
+    const auto &notes = project->getNotes();
+    for (int index = 0; index < static_cast<int>(notes.size()); ++index)
+    {
+      const auto &note = notes[static_cast<size_t>(index)];
+      if (note.isDirty())
+        flushDirtyNoteSnapshot.emplace_back(index, note.getDirtyRevision());
+    }
+    const auto f0Range = project->getF0DirtyRange();
+    flushF0SnapshotStart = f0Range.first;
+    flushF0SnapshotEnd = f0Range.second;
+    flushF0SnapshotRevision = project->getF0DirtyRevision();
+    flushSnapshotValid = true;
     onRequestBackendRender(*project);
     return;
   }
+
+  flushSnapshotValid = false;
 
   juce::Component::SafePointer<MainComponent> safeThis(this);
   editorController->resynthesizeIncrementalAsync(
@@ -4727,30 +4744,37 @@ void MainComponent::finishBackendRender(bool success)
   // D-249: el render al soltar la edicion (politica A) usa el mismo cierre,
   // sin tocar el transporte. Asi el estado sucio del editor no puede quedarse
   // puesto (que es lo que deja la region muda por renderPending).
-  const bool fromEditRender = editRenderInFlight;
   editRenderInFlight = false;
-  if (success && (flushChainActive || fromEditRender))
+  if (success && flushSnapshotValid)
   {
     auto *doneProject = getProject();
-    const bool newerEdits =
-        doneProject != nullptr && dirtyRevision != flushRenderRevision;
+    if (doneProject != nullptr)
+    {
+      // D-254: se limpia solo lo que este pase renderizo, por revision. Lo que
+      // llego despues conserva su dirty (D-227 no borra la edicion nueva) y se
+      // pide su propio pase aqui abajo.
+      doneProject->clearDirtyForPass(flushDirtyNoteSnapshot, flushF0SnapshotStart,
+                                     flushF0SnapshotEnd,
+                                     flushF0SnapshotRevision);
+    }
+    flushDirtyNoteSnapshot.clear();
+    flushSnapshotValid = false;
+    const bool stillDirty =
+        doneProject != nullptr &&
+        (doneProject->hasDirtyNotes() || doneProject->hasF0DirtyRange());
     LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
         " requestRev=" + juce::String(flushRenderRevision) +
-        " newerEdits=" + juce::String(newerEdits ? 1 : 0));
-    if (newerEdits)
+        " stillDirty=" + juce::String(stillDirty ? 1 : 0));
+    if (stillDirty)
     {
-      // D-227: this render was requested before an edit. Clearing the dirty
-      // state here would wipe that edit and the next Play would have nothing
-      // to render (the reported "sometimes it does not smooth"). Render the
-      // newer state first; the transport keeps waiting.
+      // D-227/D-254: el estado nuevo se renderiza ya; su cierre limpiara su
+      // propia instantanea (antes quedaba sucio para siempre, porque el
+      // re-render se cerraba sin pasar por la rama de limpieza).
+      if (!flushChainActive)
+        editRenderInFlight = true;
       resynthesizeIncremental();
       return;
     }
-    // La ruta standalone limpia estos estados en el proyecto del render
-    // (IncrementalSynthesizer::clearAllDirty); en plugin el editor conserva su
-    // copia, asi que se limpia aqui antes de arrancar.
-    if (doneProject != nullptr)
-      doneProject->clearAllDirty();
     deferredRenders.clear();
     if (flushChainActive)
     {

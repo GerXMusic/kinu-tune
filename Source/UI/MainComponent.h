@@ -365,6 +365,15 @@ private:
   // the "sometimes it does not smooth" report).
   std::uint64_t dirtyRevision = 0;
   std::uint64_t flushRenderRevision = 0;
+  // D-254: lo que el render en vuelo incluyo, por revision. El cierre limpia
+  // solo eso (Project::clearDirtyForPass); una edicion que llega despues
+  // conserva su dirty y pide su propio pase. Sustituye el barrido global
+  // (clearAllDirty), que borraba tambien lo que el render no habia visto.
+  std::vector<std::pair<int, std::uint64_t>> flushDirtyNoteSnapshot;
+  int flushF0SnapshotStart = -1;
+  int flushF0SnapshotEnd = -1;
+  std::uint64_t flushF0SnapshotRevision = 0;
+  bool flushSnapshotValid = false;
   double lastHostPlaybackSeconds = 0.0;
   double flushResumePosition = 0.0;
   // P1b fase 4: el guardado espera al flush y se reanuda cuando este termina.

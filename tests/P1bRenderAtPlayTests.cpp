@@ -132,18 +132,21 @@ void testSourceWiring() {
   // fourth: the debounced edit render served from the UI timer.
   CHECK(renders == 4);
 
-  // D-227: an edit during a render bumps the revision, and the completion
-  // re-renders instead of clearing the newer dirty state.
+  // D-227/D-254: un cierre limpia solo la instantanea del pase (por revision);
+  // lo que llego despues conserva su dirty y se renderiza en su propio pase.
   CHECK(mainComponent.find("++dirtyRevision;") != std::string::npos);
   const auto finishHook =
       mainComponent.find("void MainComponent::finishBackendRender");
   CHECK(finishHook != std::string::npos);
-  const auto newerGuard = mainComponent.find("if (newerEdits)", finishHook);
-  const auto clearDirty =
-      mainComponent.find("doneProject->clearAllDirty();", finishHook);
-  CHECK(newerGuard != std::string::npos);
-  CHECK(clearDirty != std::string::npos);
-  CHECK(newerGuard < clearDirty);
+  const auto perPassClear =
+      mainComponent.find("doneProject->clearDirtyForPass(", finishHook);
+  const auto stillGuard = mainComponent.find("if (stillDirty)", finishHook);
+  CHECK(perPassClear != std::string::npos);
+  CHECK(stillGuard != std::string::npos);
+  CHECK(perPassClear < stillGuard);
+  // El barrido global ya no puede volver en el cierre del plugin.
+  CHECK(mainComponent.find("doneProject->clearAllDirty();", finishHook) ==
+        std::string::npos);
 
   // Phase 2: the UI Play flushes the dirty blocks before starting playback.
   const auto playHook = mainComponent.find("toolbar.onPlay");
