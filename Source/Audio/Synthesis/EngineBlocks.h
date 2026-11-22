@@ -125,6 +125,37 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
                                int sampleRate, int hopSize);
 
 /**
+ * D-257/D-258: one engine change applied to a whole engine block.
+ *
+ * The unit of the gesture is the block `buildPlan` gives for the anchor note:
+ * all its non-rest notes store @p requested explicitly, and nothing outside it
+ * changes. @p overwritten counts the notes whose *effective* engine changes;
+ * @p outOfBenefitRange lists the notes whose target pitch is outside
+ * [-1.5, +2.5] semitones from their source (the user's Vocoder-benefit range,
+ * informational when choosing the classic engine).
+ */
+struct BlockEngineEdit {
+    std::vector<EngineEdit> edits;
+    std::vector<int> blockNotes;
+    int overwritten = 0;
+    std::vector<int> outOfBenefitRange;
+    bool changesSound = false;
+};
+
+/**
+ * Works out the block-wide engine change for the note at @p anchorIndex.
+ * Returns an empty plan when the anchor is invalid, a rest, or outside every
+ * block. See D-258.
+ */
+BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
+                                    int anchorIndex, NoteEngine requested,
+                                    SynthesisEngineType globalEngine,
+                                    const juce::AudioBuffer<float> &source,
+                                    int sampleRate, int hopSize,
+                                    float benefitMinSemitones = -1.5f,
+                                    float benefitMaxSemitones = 2.5f);
+
+/**
  * Blocks covering exactly [startFrame, endFrame), in order and contiguous.
  *
  * - Notes are the ones overlapping the range; rests do not carry an engine.

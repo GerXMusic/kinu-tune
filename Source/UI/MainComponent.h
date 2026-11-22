@@ -399,6 +399,15 @@ private:
   int applyNoteEngineToIndices(const std::vector<int> &indices,
                                NoteEngine engine);
   std::optional<NoteEngine> getSelectionNoteEngine() const;
+  // D-258: resumen del ultimo cambio de motor por bloque, para la UI y el canal
+  // de control (cuantas notas se sobrescriben y cuales quedan fuera del rango
+  // de beneficio del Vocoder).
+  int lastBlockEngineOverwritten = 0;
+  std::vector<int> lastBlockEngineOutOfRange;
+  // D-258: aviso del ultimo cambio de motor por bloque (texto para la UI).
+  // No se usa un dialogo modal dentro del plugin: el reporter de REAPER
+  // convirtio ese callback en un cierre (c000041d).
+  juce::String lastEngineBlockMessage;
   // D-185: note index -> engine that the last gesture asked for and D-129
   // refused. Session state only; the stored engine is already the block's.
   std::unordered_map<int, NoteEngine> lastRefusedEngineRequests;

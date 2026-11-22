@@ -91,14 +91,24 @@ bool canChangeEngineAfter(const Note &previous, const Note &note,
                           int sampleRate, int hopSize) {
     if (hopSize <= 0)
         return false;
-    const int gapStart = previous.getEndFrame() * hopSize;
-    const int gapEnd = note.getStartFrame() * hopSize;
-    if (gapEnd <= gapStart)
+    // D-262 (T8): the silence that decides the engine is measured on the
+    // SOURCE coordinates. A timing edit moves the note in the timeline but
+    // does not change the audio that separates the two source spans, so moving
+    // a boundary across an engine limit must not change the engine on its own.
+    const int sourceGapStart = previous.getSrcEndFrame() * hopSize;
+    const int sourceGapEnd = note.getSrcStartFrame() * hopSize;
+    if (sourceGapEnd <= sourceGapStart)
         return false;
-    if (static_cast<double>(gapEnd - gapStart) * 1000.0 / sampleRate <
+    if (static_cast<double>(sourceGapEnd - sourceGapStart) * 1000.0 /
+            sampleRate <
         kSilenceMinMs)
         return false;
-    return findSilenceRun(source, sampleRate, gapStart, gapEnd).has_value();
+    // The notes must still be separated in the timeline: an engine boundary
+    // is only usable where the output has somewhere to splice.
+    if (note.getStartFrame() <= previous.getEndFrame())
+        return false;
+    return findSilenceRun(source, sampleRate, sourceGapStart, sourceGapEnd)
+        .has_value();
 }
 
 std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
@@ -151,15 +161,25 @@ std::vector<Block> buildPlan(const std::vector<Note> &notes, int startFrame,
 
         const auto gapStart = previous->getEndFrame() * hopSize;
         const auto gapEnd = note.getStartFrame() * hopSize;
-        const auto run = findSilenceRun(source, sampleRate, gapStart, gapEnd);
+        // D-262 (T8): locate the silence in the SOURCE span, then map its
+        // midpoint into the timeline gap (they are identical when the notes
+        // were not retimed).
+        const int sourceGapStart = previous->getSrcEndFrame() * hopSize;
+        const int sourceGapEnd = note.getSrcStartFrame() * hopSize;
+        const auto run =
+            findSilenceRun(source, sampleRate, sourceGapStart, sourceGapEnd);
         int boundaryFrame = (previous->getEndFrame() + note.getStartFrame()) / 2;
-        if (run) {
-            const int midSample =
-                (run->startSample + run->endSample) / 2;
-            boundaryFrame =
-                hopSize > 0 ? static_cast<int>(std::lround(
-                                 static_cast<double>(midSample) / hopSize))
-                            : boundaryFrame;
+        if (run && sourceGapEnd > sourceGapStart) {
+            const int midSample = (run->startSample + run->endSample) / 2;
+            const double proportion =
+                static_cast<double>(midSample - sourceGapStart) /
+                static_cast<double>(sourceGapEnd - sourceGapStart);
+            boundaryFrame = static_cast<int>(std::lround(
+                static_cast<double>(gapStart) +
+                proportion * static_cast<double>(gapEnd - gapStart)));
+            if (hopSize > 0)
+                boundaryFrame = static_cast<int>(std::lround(
+                    static_cast<double>(boundaryFrame) / hopSize));
         }
         boundaryFrame =
             std::clamp(boundaryFrame, previous->getEndFrame(),
@@ -264,6 +284,83 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
         previous = &note;
     }
 
+    return plan;
+}
+
+BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
+                                    int anchorIndex, NoteEngine requested,
+                                    SynthesisEngineType globalEngine,
+                                    const juce::AudioBuffer<float> &source,
+                                    int sampleRate, int hopSize,
+                                    float benefitMinSemitones,
+                                    float benefitMaxSemitones) {
+    BlockEngineEdit plan;
+    if (anchorIndex < 0 || anchorIndex >= static_cast<int>(notes.size()))
+        return plan;
+    const auto &anchor = notes[static_cast<size_t>(anchorIndex)];
+    if (anchor.isRest())
+        return plan;
+
+    int lastEnd = 0;
+    for (const auto &note : notes)
+        if (!note.isRest())
+            lastEnd = std::max(lastEnd, note.getEndFrame());
+    if (lastEnd <= 0)
+        return plan;
+    (void)lastEnd;
+
+    // D-258: the unit is the silence-delimited phrase that contains the anchor
+    // (D-129), not the engine run: two phrases with the same engine share an
+    // engine block, and choosing an engine may not reach across silence.
+    std::vector<size_t> order;
+    order.reserve(notes.size());
+    for (size_t i = 0; i < notes.size(); ++i)
+        if (!notes[i].isRest())
+            order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return notes[a].getStartFrame() < notes[b].getStartFrame();
+    });
+    auto position = order.size();
+    for (size_t i = 0; i < order.size(); ++i)
+        if (order[i] == static_cast<size_t>(anchorIndex)) {
+            position = i;
+            break;
+        }
+    if (position >= order.size())
+        return plan;
+
+    size_t first = position;
+    size_t last = position;
+    while (first > 0 &&
+           !canChangeEngineAfter(notes[order[first - 1]], notes[order[first]],
+                                 source, sampleRate, hopSize))
+        --first;
+    while (last + 1 < order.size() &&
+           !canChangeEngineAfter(notes[order[last]], notes[order[last + 1]],
+                                 source, sampleRate, hopSize))
+        ++last;
+
+    SynthesisEngineType wanted = globalEngine;
+    if (const auto mapped = noteEngineToSynthesisEngine(requested))
+        wanted = *mapped;
+
+    for (size_t i = first; i <= last; ++i) {
+        const int index = static_cast<int>(order[i]);
+        const auto &note = notes[static_cast<size_t>(index)];
+
+        plan.blockNotes.push_back(index);
+        const auto before = effectiveEngine(note, globalEngine);
+        if (before != wanted) {
+            ++plan.overwritten;
+            plan.changesSound = true;
+        }
+        if (note.getEngine() != requested)
+            plan.edits.push_back({index, note.getEngine(), requested});
+
+        const float shift = note.getAdjustedMidiNote() - note.getOriginalMidiNote();
+        if (shift < benefitMinSemitones || shift > benefitMaxSemitones)
+            plan.outOfBenefitRange.push_back(index);
+    }
     return plan;
 }
 

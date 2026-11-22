@@ -130,6 +130,9 @@ void resetAll(Project &project) {
     note.setDeltaPitch(note.getOriginalDeltaPitch());
     note.setStartFrame(note.getSrcStartFrame());
     note.setEndFrame(note.getSrcEndFrame());
+    note.setMuted(false);
+    note.setEngine(NoteEngine::Inherit);
+    note.setBlockEngineOverride(NoteEngine::Inherit);
     note.markDirty();
     note.markSynthDirty();
   }
@@ -214,6 +217,32 @@ int main() {
   std::printf("motor explicito: pico %.6f, vs fuente max |diff| %.6f\n", peak,
               engineDiff);
   CHECK(peak > 0.01f);
+
+  // 4. T6 / D-258: motor elegido YA renderizado + mute. Restablecer tiene que
+  //    limpiar las dos cosas y devolver la fuente exacta (caso C). Antes el
+  //    reset dejo motor y mute sin limpiar.
+  Project resetCase = makeProject();
+  resetCase.getNotes()[0].setEngine(NoteEngine::Psola);
+  resetCase.getNotes()[0].setMuted(true);
+  for (auto &note : resetCase.getNotes()) {
+    note.markDirty();
+    note.markSynthDirty();
+  }
+  resetCase.markNoteEditDirtyRange(kNote0Start, kNote1End);
+  CHECK(renderAndWait(resetCase, "motor renderizado + mute"));
+  CHECK(resetCase.getNotes()[0].hasRenderedEdit());
+
+  resetAll(resetCase);
+  CHECK(!resetCase.getNotes()[0].isMuted());
+  CHECK(resetCase.getNotes()[0].getEngine() == NoteEngine::Inherit);
+  CHECK(renderAndWait(resetCase, "reset tras motor + mute"));
+  const float resetCaseDiff = maxAbsDiff(
+      resetCase.getAudioData().waveform,
+      resetCase.getAudioData().originalWaveform, kNote0Start + 5,
+      kNote1End - 5);
+  std::printf("T6 reset tras motor renderizado + mute: vs fuente %.8f\n",
+              resetCaseDiff);
+  CHECK(resetCaseDiff <= 1.0e-7f);
 
   std::printf("NoteResetTests: restablecer original devuelve la fuente\n");
   return 0;

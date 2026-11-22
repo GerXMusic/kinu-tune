@@ -27,12 +27,14 @@
 #include "../Source/Utils/Constants.h"
 #include "../Source/Utils/NotePitch.h"
 #include "../Source/Utils/PitchCurveProcessor.h"
+#include "../Source/Utils/ScaleUtils.h"
 #include "TestAssert.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -552,6 +554,286 @@ void testS4cSameNoteSecondEditDuringRender() {
   CHECK(diff <= 1.0e-7f);
 }
 
+// ---------------- sintoma C: macro Correct Pitch al 0 % ----------------
+// Criterio escrito ANTES de medir (D-256): con notas desafinadas, afinar al
+// 100 % por el camino de produccion de la macro y luego bajarla al 0 % debe
+// dejar la region **bit a bit** igual a la fuente (max|diff| = 0, lim. 1e-7),
+// con el paso muestra-a-muestra <= el de la fuente x 1,05.
+
+// Camino de la macro del inspector (PianoRollComponent::beginInspectorEdit +
+// setInspectorEditValue + endInspectorEdit), sin la parte de undo.
+void applyCorrectPitchMacro(Project &project, float percent) {
+  std::vector<Note *> notes;
+  for (auto &note : project.getNotes())
+    notes.push_back(&note);
+  if (notes.empty())
+    return;
+  std::vector<float> source;
+  source.reserve(notes.size());
+  for (auto *note : notes)
+    source.push_back(note->getLastNonMacroMidiNote());
+
+  int minFrame = std::numeric_limits<int>::max();
+  int maxFrame = std::numeric_limits<int>::min();
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const float target = ScaleUtils::correctionTargetFor(
+        project, source[i], project.getPitchReferenceHz());
+    NotePitch::applyCorrection(
+        *notes[i], target + (source[i] - target) * (1.0f - percent / 100.0f));
+    notes[i]->markDirty();
+    minFrame = std::min(minFrame, notes[i]->getStartFrame());
+    maxFrame = std::max(maxFrame, notes[i]->getEndFrame());
+  }
+  PitchCurveProcessor::rebuildDeltaForNotes(project, notes);
+  project.markNoteEditDirtyRange(minFrame, maxFrame);
+
+  for (auto *note : notes)
+    note->markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(minFrame, maxFrame);
+}
+
+// Desafina la frase del fixture (las notas quedan 0,35 st sobre su tono).
+juce::AudioBuffer<float> makeDetunedPhrase(float detune) {
+  juce::AudioBuffer<float> buffer(1, kTotalFrames * kHop);
+  double phase = 0.0;
+  for (int i = 0; i < buffer.getNumSamples(); ++i) {
+    const int frame = i / kHop;
+    float value = 0.0f;
+    float midi = 0.0f;
+    if (frame >= kN0a && frame < kN0b)      midi = 57.0f + detune;
+    else if (frame >= kN1a && frame < kN1b) midi = 59.0f + detune;
+    else if (frame >= kN2a && frame < kN2b) midi = 62.0f + detune;
+    else if (frame >= kN3a && frame < kN3b) midi = 64.0f + detune;
+    if (midi > 0.0f) {
+      phase += 2.0 * 3.14159265358979323846 * midiHz(midi) / kSampleRate;
+      value = 0.30f * static_cast<float>(std::sin(phase)) +
+              0.12f * static_cast<float>(std::sin(2.0 * phase));
+    } else {
+      phase = 0.0;
+    }
+    buffer.setSample(0, i, value);
+  }
+  return buffer;
+}
+
+Project makeDetunedProject(float detune, NoteEngine engine) {
+  Project project;
+  auto &audio = project.getAudioData();
+  audio.sampleRate = kSampleRate;
+  const auto phrase = makeDetunedPhrase(detune);
+  audio.originalWaveform.makeCopyOf(phrase);
+  audio.waveform.makeCopyOf(phrase);
+  audio.melSpectrogram.assign(static_cast<size_t>(kTotalFrames),
+                              std::vector<float>(NUM_MELS, 1.0f));
+  audio.denseF0.assign(static_cast<size_t>(kTotalFrames), 0.0f);
+  audio.voicedMask.assign(static_cast<size_t>(kTotalFrames), false);
+  const std::pair<int, int> spans[] = {{kN0a, kN0b}, {kN1a, kN1b},
+                                       {kN2a, kN2b}, {kN3a, kN3b}};
+  const float midis[] = {57.0f, 59.0f, 62.0f, 64.0f};
+  for (int i = 0; i < 4; ++i) {
+    const float midi = midis[i] + detune;
+    for (int f = spans[i].first; f < spans[i].second; ++f) {
+      audio.voicedMask[static_cast<size_t>(f)] = true;
+      audio.denseF0[static_cast<size_t>(f)] = midiHz(midi);
+    }
+    Note note(spans[i].first, spans[i].second, midi);
+    note.setOriginalMidiNote(midi);
+    note.setEngine(engine);
+    note.setOriginalDeltaPitch(
+        std::vector<float>(spans[i].second - spans[i].first, 0.0f));
+    project.addNote(note);
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  return project;
+}
+
+void testScMacroZeroRestoresSource(NoteEngine engine, const char *variant) {
+  Project project = makeDetunedProject(0.35f, engine);
+  const juce::AudioBuffer<float> source =
+      project.getAudioData().originalWaveform;
+
+  applyCorrectPitchMacro(project, 100.0f);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "C afinado"));
+  const float tunedDiff =
+      maxAbsDiff(project.getAudioData().waveform, source, kN0a, kN1b);
+  std::printf("C[%s] afinado al 100%%: vs fuente %.8f (debe ser > 0,001)\n",
+              variant, tunedDiff);
+  CHECK(tunedDiff > 1.0e-3f);
+
+  applyCorrectPitchMacro(project, 0.0f);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "C macro 0"));
+
+  const auto &out = project.getAudioData().waveform;
+  const float diff = maxAbsDiff(out, source, 0, kTotalFrames);
+  const float diffRegion = maxAbsDiff(out, source, kN0a, kN1b);
+  const float stepOut = maxStep(out, 0, kTotalFrames);
+  const float stepSource = maxStep(source, 0, kTotalFrames);
+  std::printf("C[%s] macro 0%%: vs fuente max|diff| %.8f (lim 1e-7) | region "
+              "%.8f | paso %.8f vs %.8f\n",
+              variant, diff, diffRegion, stepOut, stepSource);
+  CHECK(diff <= 1.0e-7f);
+  CHECK(diffRegion <= 1.0e-7f);
+  CHECK(stepOut <= stepSource * 1.05f);
+}
+
+// ---------------- sintoma B: empalme en las dos fronteras ----------------
+// Criterio escrito ANTES de medir (D-255): en cada frontera del rango
+// commiteado, el salto muestra-a-muestra en +-1 ms debe ser <= max(salto de la
+// fuente en esa ventana, 1e-3). La frontera cae en el silencio D-129.
+constexpr int kThreeA0 = 40, kThreeA1 = 120;
+constexpr int kThreeB0 = 170, kThreeB1 = 250;
+constexpr int kThreeC0 = 300, kThreeC1 = 380;
+constexpr int kThreeTotalFrames = 440;
+
+juce::AudioBuffer<float> makeThreePhraseSignal() {
+  juce::AudioBuffer<float> buffer(1, kThreeTotalFrames * kHop);
+  double phase = 0.0;
+  for (int i = 0; i < buffer.getNumSamples(); ++i) {
+    const int frame = i / kHop;
+    float value = 0.0f;
+    float midi = 0.0f;
+    if (frame >= kThreeA0 && frame < kThreeA1)      midi = 57.0f;
+    else if (frame >= kThreeB0 && frame < kThreeB1) midi = 59.0f;
+    else if (frame >= kThreeC0 && frame < kThreeC1) midi = 62.0f;
+    if (midi > 0.0f) {
+      phase += 2.0 * 3.14159265358979323846 * midiHz(midi) / kSampleRate;
+      value = 0.30f * static_cast<float>(std::sin(phase)) +
+              0.12f * static_cast<float>(std::sin(2.0 * phase));
+    } else {
+      phase = 0.0;
+    }
+    buffer.setSample(0, i, value);
+  }
+  return buffer;
+}
+
+Project makeThreePhraseProject(NoteEngine engine) {
+  Project project;
+  auto &audio = project.getAudioData();
+  audio.sampleRate = kSampleRate;
+  const auto phrase = makeThreePhraseSignal();
+  audio.originalWaveform.makeCopyOf(phrase);
+  audio.waveform.makeCopyOf(phrase);
+  audio.melSpectrogram.assign(static_cast<size_t>(kThreeTotalFrames),
+                              std::vector<float>(NUM_MELS, 1.0f));
+  audio.denseF0.assign(static_cast<size_t>(kThreeTotalFrames), 0.0f);
+  audio.voicedMask.assign(static_cast<size_t>(kThreeTotalFrames), false);
+  const std::pair<int, int> spans[] = {
+      {kThreeA0, kThreeA1}, {kThreeB0, kThreeB1}, {kThreeC0, kThreeC1}};
+  const float midis[] = {57.0f, 59.0f, 62.0f};
+  for (int i = 0; i < 3; ++i) {
+    for (int f = spans[i].first; f < spans[i].second; ++f) {
+      audio.voicedMask[static_cast<size_t>(f)] = true;
+      audio.denseF0[static_cast<size_t>(f)] = midiHz(midis[i]);
+    }
+    Note note(spans[i].first, spans[i].second, midis[i]);
+    note.setOriginalMidiNote(midis[i]);
+    note.setEngine(engine);
+    note.setOriginalDeltaPitch(
+        std::vector<float>(spans[i].second - spans[i].first, 0.0f));
+    project.addNote(note);
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  return project;
+}
+
+// Salto muestra-a-muestra maximo en +-halfWindowSamples alrededor de la muestra
+// boundaryFrame*kHop (una ventana de 1 ms = 48 muestras).
+float maxStepWindow(const juce::AudioBuffer<float> &a, int boundaryFrame,
+                    int halfWindowSamples = 48) {
+  const int center = boundaryFrame * kHop;
+  const int first = std::max(1, center - halfWindowSamples);
+  const int last = std::min(a.getNumSamples(), center + halfWindowSamples);
+  float worst = 0.0f;
+  for (int i = first; i < last; ++i)
+    worst = std::max(worst, std::abs(a.getSample(0, i) - a.getSample(0, i - 1)));
+  return worst;
+}
+
+// RMS de una ventana de 16 ms (768 muestras a 48 kHz) centrada en la frontera
+// (D-259). El fade de commit entero entra en la ventana.
+float rmsWindow(const juce::AudioBuffer<float> &a, int boundaryFrame,
+                int halfWindowSamples = 384) {
+  const int center = boundaryFrame * kHop;
+  const int first = std::max(0, center - halfWindowSamples);
+  const int last = std::min(a.getNumSamples(), center + halfWindowSamples);
+  if (last <= first)
+    return 0.0f;
+  double energy = 0.0;
+  for (int i = first; i < last; ++i) {
+    const double value = a.getSample(0, i);
+    energy += value * value;
+  }
+  return static_cast<float>(std::sqrt(energy / (last - first)));
+}
+
+void testSbCommitBoundarySeam() {
+  Project project = makeThreePhraseProject(NoteEngine::Psola);
+  const juce::AudioBuffer<float> source =
+      project.getAudioData().originalWaveform;
+  auto &notes = project.getNotes();
+
+  // Primera pasada: las tres frases editadas, todo commiteado.
+  for (auto &note : notes) {
+    note.setPitchOffset(0.5f);
+    note.markDirty();
+    note.markSynthDirty();
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(0, kThreeTotalFrames);
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "B inicial"));
+
+  // Segunda pasada: solo la frase del medio. Su commit termina en el punto
+  // medio del silencio a cada lado (D-250).
+  notes[1].setPitchOffset(-1.0f);
+  notes[1].markDirty();
+  notes[1].markSynthDirty();
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  project.markNoteEditDirtyRange(kThreeB0, kThreeB1);
+  // Control: render completo del estado final, en una copia tomada antes del
+  // segundo pase (D-259).
+  Project control = fullRender(project, SynthesisEngineType::Psola, "B control");
+  CHECK(renderAndWait(project, SynthesisEngineType::Psola, "B segundo pase"));
+
+  const int leftBoundary = (kThreeA1 + kThreeB0) / 2;
+  const int rightBoundary = (kThreeB1 + kThreeC0) / 2;
+  const auto &out = project.getAudioData().waveform;
+  const auto &full = control.getAudioData().waveform;
+  const float seamLeft = maxStepWindow(out, leftBoundary);
+  const float seamRight = maxStepWindow(out, rightBoundary);
+  const float sourceLeft = maxStepWindow(source, leftBoundary);
+  const float sourceRight = maxStepWindow(source, rightBoundary);
+  const float limitLeft = std::max(sourceLeft, 1.0e-3f);
+  const float limitRight = std::max(sourceRight, 1.0e-3f);
+  std::printf("Sb frontera izq (%d): salto %.8f (fuente %.8f, umbral %.8f) | "
+              "der (%d): salto %.8f (fuente %.8f, umbral %.8f)\n",
+              leftBoundary, seamLeft, sourceLeft, limitLeft, rightBoundary,
+              seamRight, sourceRight, limitRight);
+  CHECK(seamLeft <= limitLeft);
+  CHECK(seamRight <= limitRight);
+
+  // D-259: energia RMS local en la ventana del fade.
+  constexpr float kMinRatio = 0.70710678f;
+  constexpr float kMaxRatio = 1.41421356f;
+  constexpr float kNoiseFloor = 1.0e-6f;
+  const auto checkRms = [&](const char *side, int boundary) {
+    const float rmsOut = rmsWindow(out, boundary);
+    const float rmsControl = rmsWindow(full, boundary);
+    const float rmsSource = rmsWindow(source, boundary);
+    std::printf("Sb RMS %s (%d): salida %.8f | control %.8f | fuente %.8f\n",
+                side, boundary, rmsOut, rmsControl, rmsSource);
+    if (rmsControl <= kNoiseFloor) {
+      CHECK(rmsOut <= kNoiseFloor);
+      return;
+    }
+    CHECK(rmsOut >= kMinRatio * rmsControl);
+    CHECK(rmsOut <= kMaxRatio * rmsControl);
+  };
+  checkRms("izq", leftBoundary);
+  checkRms("der", rightBoundary);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -571,6 +853,12 @@ int main(int argc, char **argv) {
     testS4EditDuringRender();
   } else if (group == "s4c") {
     testS4cSameNoteSecondEditDuringRender();
+  } else if (group == "sc") {
+    testScMacroZeroRestoresSource(NoteEngine::Inherit, "inherit");
+  } else if (group == "sc2") {
+    testScMacroZeroRestoresSource(NoteEngine::Psola, "motor explicito");
+  } else if (group == "sb") {
+    testSbCommitBoundarySeam();
   } else {
     testS1ResetAll();
     testS2EngineChange();
@@ -579,6 +867,9 @@ int main(int argc, char **argv) {
     testS6ResetOneBlockWithTwoDirtyAnchors();
     testS4EditDuringRender();
     testS4cSameNoteSecondEditDuringRender();
+    testScMacroZeroRestoresSource(NoteEngine::Inherit, "inherit");
+    testScMacroZeroRestoresSource(NoteEngine::Psola, "motor explicito");
+    testSbCommitBoundarySeam();
   }
   std::printf("EditSymptomAudioTests [%s]: en verde\n", group.c_str());
   return 0;

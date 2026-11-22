@@ -121,6 +121,12 @@ namespace
     std::vector<float> bakedDeltaPitch;
     std::vector<float> deltaPitch;
     float correctionSource; // Correct Pitch reference (the sung pitch)
+    // D-258/T6: restablecer limpia tambien el motor elegido y el mute. Sin
+    // esto, "restablecer original" dejaba la nota re-sintetizada con su motor
+    // o silenciada, y no devolvia la fuente exacta.
+    NoteEngine engine;
+    bool muted;
+    NoteEngine blockEngineOverride;
 
     static NoteEditState capture(const Note& note)
     {
@@ -129,14 +135,16 @@ namespace
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
               note.getBakedDeltaPitch(), note.getDeltaPitch(),
-              note.getLastNonMacroMidiNote()};
+              note.getLastNonMacroMidiNote(), note.getEngine(), note.isMuted(),
+              note.getBlockEngineOverride()};
     }
 
     static NoteEditState defaultsFor(const Note& note)
     {
       return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
-              note.getOriginalMidiNote()};
+              note.getOriginalMidiNote(), NoteEngine::Inherit, false,
+              NoteEngine::Inherit};
     }
 
     void applyTo(Note& note) const
@@ -155,6 +163,9 @@ namespace
       note.setDeltaOffset(deltaOffset);
       note.setBakedDeltaPitch(bakedDeltaPitch);
       note.setDeltaPitch(deltaPitch);
+      note.setEngine(engine);
+      note.setMuted(muted);
+      note.setBlockEngineOverride(blockEngineOverride);
       note.markDirty();
       note.markSynthDirty();
     }

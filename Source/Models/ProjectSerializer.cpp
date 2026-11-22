@@ -255,6 +255,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
     obj->setProperty("formantShift", project.getFormantShift());
     obj->setProperty("volume", project.getVolume());
+    if (project.isBypassProcessing())
+        obj->setProperty("bypassProcessing", true);
     obj->setProperty("pitchCenter", project.getPitchCenter());
     // Per-document engine (D-174). Omitted when the document follows the
     // shared preference, so projects written before the field keep loading.
@@ -388,6 +390,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
+    project.setBypassProcessing(
+        static_cast<bool>(json.getProperty("bypassProcessing", false)));
     project.setPitchCenter(static_cast<float>(json.getProperty("pitchCenter", 0.0)));
     {
         // D-174: only the three concrete engines are document state. Anything
@@ -926,6 +930,9 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     // and no archive version has to change.
     if (note.getEngine() != NoteEngine::Inherit)
         obj->setProperty("noteEngine", noteEngineToString(note.getEngine()));
+    if (note.getBlockEngineOverride() != NoteEngine::Inherit)
+        obj->setProperty("blockEngineOverride",
+                         noteEngineToString(note.getBlockEngineOverride()));
 
     // Lyric/Phoneme
     if (note.hasLyric())
@@ -1004,6 +1011,11 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setEngine(engineVar.isVoid()
                        ? NoteEngine::Inherit
                        : stringToNoteEngine(engineVar.toString()));
+    const juce::var overrideVar =
+        json.getProperty("blockEngineOverride", juce::var());
+    note.setBlockEngineOverride(
+        overrideVar.isVoid() ? NoteEngine::Inherit
+                             : stringToNoteEngine(overrideVar.toString()));
 
     // Lyric/Phoneme
     auto lyric = json.getProperty("lyric", juce::var());

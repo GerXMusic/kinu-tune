@@ -1599,7 +1599,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               // discarded the block's outer audio and created a hard splice
               // inside a sounding note. The whole buffer is authoritative.
               juce::AudioBuffer<float> processedSlice;
-              processedSlice.makeCopyOf(audioData.waveform);
+              processedSlice = renderedProject->buildPublishAudio();
               ARA_DIAG("publish[render] mod=" + ARA_DIAG_PTR(renderModification) +
                        " key=" + renderRegionKey + " samples=" +
                        juce::String(processedSlice.getNumSamples()) +
@@ -1773,7 +1773,8 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
     // analysis-time audio. Only for regions that were actually CHANGED —
     // an unedited region stores nothing and keeps playing its original source.
     if (activeModification != nullptr && projectHasRegionEdits(stateProject)) {
-      const auto &processed = stateProject.getAudioData().waveform;
+      const auto published = stateProject.buildPublishAudio();
+      const auto &processed = published;
       const double processedRate =
           stateProject.getAudioData().sampleRate > 0
               ? static_cast<double>(stateProject.getAudioData().sampleRate)

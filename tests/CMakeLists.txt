@@ -43,6 +43,10 @@ set(PITCHNET_TEST_SOURCES
     TimingAudioTests.cpp
     NoteMuteTests.cpp
     NoteResetTests.cpp
+    # D-258: motor por bloque; D-260: bypass con el original; T7: predicado.
+    BlockEngineTests.cpp
+    BypassOriginalTests.cpp
+    NoteEditPredicateTests.cpp
     # Fase 1 de la edicion: S1/S2/S3/S6 en audio contra el render completo.
     EditSymptomAudioTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de

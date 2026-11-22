@@ -304,6 +304,14 @@ public:
     NoteEngine getEngine() const { return engine; }
     void setEngine(NoteEngine value) { engine = value; }
 
+    // D-258: motor que tenia la nota antes de aplicar un motor a todo su bloque
+    // (solo se guarda al elegir Vocoder). Permite volver al reparto anterior sin
+    // depender del undo. Inherit = "no hay override guardado".
+    NoteEngine getBlockEngineOverride() const { return blockEngineOverride; }
+    void setBlockEngineOverride(NoteEngine value) {
+        blockEngineOverride = value;
+    }
+
     // Lyric (character/syllable for this note)
     juce::String getLyric() const { return lyric; }
     void setLyric(const juce::String& text) { lyric = text; }
@@ -371,6 +379,8 @@ private:
     bool rest = false;        // Rest note (silence placeholder)
     // Per-note engine; Inherit means "use the global engine" (D-125).
     NoteEngine engine = NoteEngine::Inherit;
+    // D-258: motor previo guardado al aplicar un motor a todo el bloque.
+    NoteEngine blockEngineOverride = NoteEngine::Inherit;
 
     juce::String lyric;   // Lyric text (e.g., "a", "SP" for silence)
     juce::String phoneme; // Phoneme (e.g., "a", "sp", for pronunciation)

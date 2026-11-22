@@ -228,6 +228,21 @@ public:
     float getGlobalPitchOffset() const { return globalPitchOffset; }
     void setGlobalPitchOffset(float offset) { globalPitchOffset = offset; }
 
+    // D-260 (S5): bypass del editor. Es estado del documento, no un flag
+    // estatico: al activarlo se publica el original con un crossfade corto en
+    // los bordes de la region, y al apagarlo vuelve el procesado.
+    bool isBypassProcessing() const { return bypassProcessing; }
+    void setBypassProcessing(bool value)
+    {
+        if (bypassProcessing != value)
+        {
+            bypassProcessing = value;
+            modified = true;
+        }
+    }
+    // Buffer autoritativo para el publish (procesado u original con crossfade).
+    juce::AudioBuffer<float> buildPublishAudio() const;
+
     float getFormantShift() const { return formantShift; }
     void setFormantShift(float shift) { formantShift = shift; }
 
@@ -383,6 +398,8 @@ private:
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
+    // D-260: bypass del editor (estado del documento).
+    bool bypassProcessing = false;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
 

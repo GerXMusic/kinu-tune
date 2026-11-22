@@ -155,7 +155,17 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     constexpr float kGlobalEditEpsilon = 1.0e-6f;
     if (note.isRest() || !note.isDirty())
         return false;
-    if (note.getEngine() != NoteEngine::Inherit)
+    // A muted note is an edit with an audible effect; the render must keep the
+    // mute until the reset itself clears it (T6/D-258).
+    if (note.isMuted())
+        return false;
+    // D-256: una nota neutral que revierte una edicion ya renderizada vuelve a
+    // la fuente aunque tenga motor explicito (el caso real de la macro Correct
+    // Pitch al 0 %: la nota se afino con un motor de bloque y al volver al 0 %
+    // quedaba re-sintetizada con ese motor). Un motor explicito en una nota que
+    // nunca se ha renderizado conserva su timbre: el primer render de un bloque
+    // con motor elegido no se sustituye por la fuente (S2).
+    if (note.getEngine() != NoteEngine::Inherit && !note.hasRenderedEdit())
         return false;
     if (std::abs(globalPitchOffset) > kGlobalEditEpsilon ||
         std::abs(formantShift) > kGlobalEditEpsilon)
@@ -176,6 +186,10 @@ bool Project::noteHasAudioRelevantEdit(const Note &note)
 
 bool Project::hasRegionEdits() const
 {
+    // D-260: con el bypass activo hay que publicar igualmente: el publish es
+    // el que sustituye el procesado por el original.
+    if (bypassProcessing)
+        return true;
     if (globalPitchOffset != 0.0f || formantShift != 0.0f)
         return true;
 
@@ -186,6 +200,41 @@ bool Project::hasRegionEdits() const
     }
 
     return false;
+}
+
+juce::AudioBuffer<float> Project::buildPublishAudio() const
+{
+    const auto &processed = audioData.waveform;
+    if (!bypassProcessing)
+        return processed;
+
+    const auto &original = audioData.originalWaveform;
+    if (original.getNumSamples() <= 0)
+        return processed;
+    if (original.getNumChannels() < processed.getNumChannels())
+        return processed;
+
+    // D-260: the bypass publishes the pristine source, with a 5 ms linear
+    // crossfade at both region edges so the handover to whatever plays outside
+    // the region is continuous (the edge sample equals the processed one).
+    constexpr int kByPassFadeSamples = 240;
+    juce::AudioBuffer<float> out;
+    out.makeCopyOf(original);
+    const int samples = std::min(out.getNumSamples(), processed.getNumSamples());
+    const int fade = std::min(kByPassFadeSamples, samples);
+    for (int channel = 0; channel < out.getNumChannels(); ++channel)
+    {
+        auto *data = out.getWritePointer(channel);
+        const auto *source = processed.getReadPointer(channel);
+        for (int i = 0; i < fade; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(fade);
+            data[i] = source[i] + t * (data[i] - source[i]);
+            const int index = samples - 1 - i;
+            data[index] = source[index] + t * (data[index] - source[index]);
+        }
+    }
+    return out;
 }
 
 void Project::clearAllDirty()
@@ -270,6 +319,7 @@ int Project::markEditedNotesDirty()
     int blockStart = -1;
     int blockEnd = -1;
     int previousEnd = -1;
+    int previousSourceEnd = -1;
 
     struct BlockSpan
     {
@@ -289,11 +339,14 @@ int Project::markEditedNotesDirty()
     {
         const auto &note = notes[static_cast<size_t>(index)];
         bool sameBlock = blockNotes.empty();
-        if (!sameBlock && !wholeProjectEdited && previousEnd >= 0)
+        if (!sameBlock && !wholeProjectEdited && previousSourceEnd >= 0)
         {
+            // D-262 (T8): the silence that separates blocks is measured on the
+            // source span; moving a note in the timeline does not invent or
+            // remove silence in the audio.
             const bool silence = engineBlocks::findSilenceRun(
-                source, audioData.sampleRate, previousEnd * kHop,
-                note.getStartFrame() * kHop).has_value();
+                source, audioData.sampleRate, previousSourceEnd * kHop,
+                note.getSrcStartFrame() * kHop).has_value();
             sameBlock = !silence;
         }
         if (!sameBlock)
@@ -310,6 +363,7 @@ int Project::markEditedNotesDirty()
         }
         blockNotes.push_back(index);
         previousEnd = note.getEndFrame();
+        previousSourceEnd = note.getSrcEndFrame();
     }
     flushBlock();
 

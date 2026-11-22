@@ -2322,11 +2322,37 @@ void MainComponent::pollMcpControl()
           response->setProperty("applied_indices", juce::var(applied));
           response->setProperty("unchanged_indices", juce::var(unchanged));
           response->setProperty("refused", refused);
+          response->setProperty("overwritten", lastBlockEngineOverwritten);
+          juce::Array<juce::var> outOfRange;
+          for (const int index : lastBlockEngineOutOfRange)
+            outOfRange.add(index);
+          response->setProperty("out_of_range_indices", juce::var(outOfRange));
+          response->setProperty("block_message", lastEngineBlockMessage);
           response->setProperty("engine", engineText);
           response->setProperty("ok", refused == 0);
           if (refused > 0)
             response->setProperty("error", "D-129 rechazó notas sin silencio válido; ver refused y unchanged_indices.");
         }
+      }
+    }
+    else if (command == "set_bypass")
+    {
+      // D-260 (S5): bypass del editor como estado del documento. Publica el
+      // original con crossfade corto en los bordes de la region.
+      const auto valueVar = request.getProperty("bypass", juce::var());
+      if (!valueVar.isBool() && !valueVar.isInt() && !valueVar.isDouble())
+        response->setProperty("error", "set_bypass necesita bypass=true/false.");
+      else
+      {
+        const bool value = static_cast<bool>(valueVar);
+        project->setBypassProcessing(value);
+        project->setModified(true);
+        markRenderDirty();
+        notifyProjectDataChanged();
+        if (isPluginMode() && onPitchEditFinished)
+          onPitchEditFinished();
+        response->setProperty("bypass", value);
+        response->setProperty("ok", true);
       }
     }
     else if (command == "set_synthesis_engine")
@@ -4413,6 +4439,8 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
 
   // D-185: a new gesture replaces the previous explanation.
   lastRefusedEngineRequests.clear();
+  lastBlockEngineOverwritten = 0;
+  lastBlockEngineOutOfRange.clear();
 
   const auto &audio = project->getAudioData();
   const auto &source = audio.originalWaveform.getNumSamples() > 0
@@ -4422,46 +4450,81 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
                                 ? editorController->getSynthesisEngineType()
                                 : defaultSynthesisEngineType();
 
-  // The rule lives in one place so the menu and the renderer cannot disagree:
-  // a note only takes another engine when a usable silence separates it from
-  // the previous one (D-129).
-  const auto plan = engineBlocks::planEngineEdits(
-      notes, selection, engine, globalEngine, source, audio.sampleRate,
-      HOP_SIZE);
-
-  if (plan.refused > 0)
-    LOG("engine: refused " + juce::String(plan.refused) + " of " +
-        juce::String(static_cast<int>(selection.size())) +
-        " note(s): no silence between blocks");
-  for (const auto &refusal : plan.refusals)
-    lastRefusedEngineRequests[refusal.noteIndex] = refusal.requested;
-
-  if (!plan.edits.empty())
+  // D-257/D-258: the gesture is block-wide. Each selected note opens the
+  // engine block that contains it (D-239) and the whole block takes the
+  // engine; a block reached twice is applied once. The rule lives in one place
+  // so the menu, the MCP and the renderer cannot disagree.
+  std::vector<engineBlocks::BlockEngineEdit> plans;
+  std::unordered_set<int> covered;
+  for (const int anchor : selection)
   {
-    std::vector<NoteEngineAction::Change> changes;
-    changes.reserve(plan.edits.size());
-    for (const auto &edit : plan.edits)
-      changes.push_back(
-          {&notes[static_cast<size_t>(edit.noteIndex)], edit.previous,
-           edit.next});
+    auto plan = engineBlocks::planBlockEngineEdit(
+        notes, anchor, engine, globalEngine, source, audio.sampleRate, HOP_SIZE);
+    if (plan.blockNotes.empty())
+      continue;
+    bool alreadyCovered = false;
+    for (const int index : plan.blockNotes)
+      alreadyCovered |= covered.count(index) != 0;
+    if (alreadyCovered)
+      continue;
+    for (const int index : plan.blockNotes)
+      covered.insert(index);
+    plans.push_back(std::move(plan));
+  }
 
-    // D-247: solo hay que re-renderizar si cambia el motor EFECTIVO. Elegir
-    // «Heredar» cuando el motor global ya es el mismo solo borra el override
-    // guardado: el sonido no cambia y marcar la region sucia dejaba el ARA en
-    // silencio esperando un render que no hacía falta.
-    const auto effectiveOf = [globalEngine](NoteEngine engine)
-    {
-      if (const auto mapped = noteEngineToSynthesisEngine(engine))
-        return *mapped;
-      return globalEngine;
-    };
-    bool soundChanges = false;
+  std::vector<NoteEngineAction::Change> changes;
+  bool soundChanges = false;
+  int blockNotes = 0;
+  for (auto &plan : plans)
+  {
+    lastBlockEngineOverwritten += plan.overwritten;
+    blockNotes += static_cast<int>(plan.blockNotes.size());
+    soundChanges |= plan.changesSound;
+    for (const int index : plan.outOfBenefitRange)
+      lastBlockEngineOutOfRange.push_back(index);
     for (const auto &edit : plan.edits)
-      if (effectiveOf(edit.next) != effectiveOf(edit.previous))
+    {
+      auto &note = notes[static_cast<size_t>(edit.noteIndex)];
+      // D-258 (4): choosing the Vocoder keeps the previous engine of every
+      // note of the block so the choice can be undone to that exact split.
+      note.setBlockEngineOverride(engine == NoteEngine::Vocoder
+                                      ? edit.previous
+                                      : NoteEngine::Inherit);
+      changes.push_back({&note, edit.previous, edit.next});
+    }
+  }
+  std::sort(lastBlockEngineOutOfRange.begin(),
+            lastBlockEngineOutOfRange.end());
+
+  if (!plans.empty() && (lastBlockEngineOverwritten > 0 ||
+                         !lastBlockEngineOutOfRange.empty()))
+  {
+    juce::String message;
+    message << "Motor " << noteEngineToString(engine) << ": "
+            << lastBlockEngineOverwritten << " de " << blockNotes
+            << " nota(s) del bloque cambian de motor.";
+    if (engine == NoteEngine::Psola && !lastBlockEngineOutOfRange.empty())
+    {
+      message << "\n\nFuera del rango de beneficio del Vocoder [-1,5; +2,5] st ("
+              << static_cast<int>(lastBlockEngineOutOfRange.size())
+              << "): ";
+      for (size_t i = 0; i < lastBlockEngineOutOfRange.size(); ++i)
       {
-        soundChanges = true;
-        break;
+        if (i > 0)
+          message << ", ";
+        message << "#" << lastBlockEngineOutOfRange[i];
       }
+      message << ". Se aplica el motor Clasico igualmente.";
+    }
+    LOG("engine block: " + message.replace("\n\n", " | "));
+    lastEngineBlockMessage = message.replace("\n\n", " | ");
+  }
+
+  if (!changes.empty())
+  {
+    std::sort(changes.begin(), changes.end(), [](const auto &a, const auto &b) {
+      return a.note->getStartFrame() < b.note->getStartFrame();
+    });
 
     auto action = std::make_unique<NoteEngineAction>(
         std::move(changes), [this] { pianoRoll.repaint(); });
@@ -4485,14 +4548,17 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
       // El sonido no cambia (solo se borra el override guardado). Se descarta
       // la suciedad que la accion marco para que el publish no deje el ARA en
       // silencio esperando un render que no hace falta.
-      for (const auto &edit : plan.edits)
-        notes[static_cast<size_t>(edit.noteIndex)].clearDirty();
+      for (const auto &edit : plans)
+        for (const auto &change : edit.edits)
+          notes[static_cast<size_t>(change.noteIndex)].clearDirty();
       notifyProjectDataChanged();
     }
   }
 
   variAudioInspector.refresh();
-  return plan.refused;
+  // D-258: inside a block there is no usable silence by definition, so a
+  // block-wide gesture cannot be refused by D-129.
+  return 0;
 }
 
 void MainComponent::onZoomChanged(float pixelsPerSecond)
