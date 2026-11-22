@@ -146,11 +146,21 @@ endif()
 
 # Check if ONNX Runtime already exists in build directory
 if(APPLE)
+    # The macOS arm64 package comes from NuGet (Microsoft.ML.OnnxRuntime) and uses
+    # build/native/include + runtimes/osx-arm64/native; give it its own cache suffix
+    # so an earlier tarball checkout of the same version is never reused.
+    if(ONNXRUNTIME_MACOS_PACKAGE STREQUAL "arm64")
+        set(ONNXRUNTIME_MACOS_NUGET ON)
+        set(ONNXRUNTIME_CACHE_SUFFIX "-nuget-src")
+    else()
+        set(ONNXRUNTIME_MACOS_NUGET OFF)
+        set(ONNXRUNTIME_CACHE_SUFFIX "-src")
+    endif()
     # Keep packages for different architecture selections separate so that
     # reconfiguring an existing build cannot accidentally reuse an ARM-only
     # runtime in an Intel or universal build.
     set(ONNXRUNTIME_CACHE_DIR
-        "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-${ONNXRUNTIME_MACOS_PACKAGE}-src")
+        "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-${ONNXRUNTIME_MACOS_PACKAGE}${ONNXRUNTIME_CACHE_SUFFIX}")
 else()
     set(ONNXRUNTIME_CACHE_DIR
         "${CMAKE_BINARY_DIR}/_deps/onnxruntime-${ONNXRUNTIME_VERSION}-src")
@@ -184,8 +194,20 @@ else()
         if(USE_GPU)
             message(WARNING "GPU acceleration is not supported on macOS, falling back to CPU")
         endif()
-        set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-osx-${ONNXRUNTIME_MACOS_PACKAGE}")
-        set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-${ONNXRUNTIME_MACOS_PACKAGE}-${ONNXRUNTIME_VERSION}.tgz")
+        # macOS arm64: use the NuGet package Microsoft.ML.OnnxRuntime. Its layout is
+        # build/native/include + runtimes/<rid>/native, like the DirectML NuGet package.
+        # Any other macOS architecture list keeps the GitHub tarball.
+        if(ONNXRUNTIME_MACOS_PACKAGE STREQUAL "arm64")
+            set(ONNXRUNTIME_MACOS_NUGET ON)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-nuget-${ONNXRUNTIME_VERSION}-osx-arm64")
+            set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/${ONNXRUNTIME_VERSION}")
+            message(STATUS "Downloading ONNX Runtime NuGet package Microsoft.ML.OnnxRuntime (macOS arm64)")
+        else()
+            set(ONNXRUNTIME_MACOS_NUGET OFF)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-osx-${ONNXRUNTIME_MACOS_PACKAGE}")
+            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-${ONNXRUNTIME_MACOS_PACKAGE}-${ONNXRUNTIME_VERSION}.tgz")
+            message(WARNING "ONNX Runtime for macOS ${ONNXRUNTIME_MACOS_PACKAGE} still uses the GitHub tarball: the NuGet package only covers osx-arm64")
+        endif()
     else()
         if(USE_CUDA)
             set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-linux-x64-gpu_cuda13")
@@ -201,6 +223,9 @@ else()
 
     message(STATUS "Downloading ONNX Runtime from: ${ONNXRUNTIME_URL}")
     pitchnet_download_hash_arguments(ONNXRUNTIME_HASH_ARGS "${ONNXRUNTIME_PACKAGE_KEY}" URL_HASH)
+    if(NOT ONNXRUNTIME_HASH_ARGS)
+        message(STATUS "No SHA-256 registered for ${ONNXRUNTIME_PACKAGE_KEY}: the download is not hash-verified")
+    endif()
 
     FetchContent_Declare(
         onnxruntime
@@ -220,11 +245,19 @@ if(WIN32 AND USE_DIRECTML)
     set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/runtimes/win-x64/native/onnxruntime.lib)
     set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/runtimes/win-x64/native)
 else()
-    set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include)
-    if(WIN32)
+    if(APPLE AND ONNXRUNTIME_MACOS_NUGET)
+        # Microsoft.ML.OnnxRuntime NuGet layout: headers under build/native/include,
+        # the dylib under runtimes/osx-arm64/native (unversioned, no symlink to create).
+        set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/build/native/include)
+        unset(ONNXRUNTIME_LIBRARY CACHE)
+        set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/runtimes/osx-arm64/native/libonnxruntime.dylib)
+        set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/runtimes/osx-arm64/native)
+    elseif(WIN32)
+        set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include)
         set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
         set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/lib)
     else()
+        set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include)
         unset(ONNXRUNTIME_LIBRARY CACHE)
         find_library(ONNXRUNTIME_LIBRARY onnxruntime PATHS ${ONNXRUNTIME_ROOT}/lib NO_DEFAULT_PATH)
     endif()
@@ -876,10 +909,18 @@ if(ONNXRUNTIME_FOUND)
     elseif(APPLE)
         # macOS: Embed dylib in app bundle and plugin bundles
         get_filename_component(ONNXRUNTIME_LIB_DIR ${ONNXRUNTIME_LIBRARY} DIRECTORY)
-        file(GLOB ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.*.dylib")
+        if(ONNXRUNTIME_MACOS_NUGET)
+            # Microsoft.ML.OnnxRuntime ships an unversioned libonnxruntime.dylib:
+            # embed that file as-is and skip the versioned symlink below.
+            set(ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIBRARY}")
+        else()
+            file(GLOB ONNXRUNTIME_DYLIBS "${ONNXRUNTIME_LIB_DIR}/libonnxruntime.*.dylib")
+            if(ONNXRUNTIME_DYLIBS)
+                list(GET ONNXRUNTIME_DYLIBS 0 ONNXRUNTIME_VERSIONED_DYLIB)
+                get_filename_component(ONNXRUNTIME_VERSIONED_DYLIB_NAME "${ONNXRUNTIME_VERSIONED_DYLIB}" NAME)
+            endif()
+        endif()
         if(ONNXRUNTIME_DYLIBS)
-            list(GET ONNXRUNTIME_DYLIBS 0 ONNXRUNTIME_VERSIONED_DYLIB)
-            get_filename_component(ONNXRUNTIME_VERSIONED_DYLIB_NAME "${ONNXRUNTIME_VERSIONED_DYLIB}" NAME)
             add_custom_command(TARGET PitchNet POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks"
                 COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CleanOnnxRuntimeFrameworks.cmake")
@@ -919,23 +960,25 @@ if(ONNXRUNTIME_FOUND)
                         "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/")
                 endif()
             endforeach()
-            add_custom_command(TARGET PitchNet POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E create_symlink
-                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
-                "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks/libonnxruntime.dylib")
-            add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E create_symlink
-                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
-                "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks/libonnxruntime.dylib")
-            add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E create_symlink
-                "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
-                "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks/libonnxruntime.dylib")
-            if(TARGET PitchNetPlugin_AAX)
-                add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+            if(NOT ONNXRUNTIME_MACOS_NUGET)
+                add_custom_command(TARGET PitchNet POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E create_symlink
                     "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
-                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/libonnxruntime.dylib")
+                    "$<TARGET_BUNDLE_DIR:PitchNet>/Contents/Frameworks/libonnxruntime.dylib")
+                add_custom_command(TARGET PitchNetPlugin_VST3 POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_VST3>/Contents/Frameworks/libonnxruntime.dylib")
+                add_custom_command(TARGET PitchNetPlugin_AU POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                    "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AU>/Contents/Frameworks/libonnxruntime.dylib")
+                if(TARGET PitchNetPlugin_AAX)
+                    add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E create_symlink
+                        "${ONNXRUNTIME_VERSIONED_DYLIB_NAME}"
+                        "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/libonnxruntime.dylib")
+                endif()
             endif()
             # Fix rpath for all targets using install_name_tool
             add_custom_command(TARGET PitchNet POST_BUILD
