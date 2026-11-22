@@ -467,50 +467,56 @@ void ToolbarComponent::setBypassState(bool active)
     bypassButton.repaint();
 }
 
-// Icono de bypass estilo Melodyne: una caja con la senal que la atraviesa y
-// sale por abajo (mismo dibujo que el boton del plugin de referencia).
+// Icono de bypass estilo Melodyne: boton cuadrado con relieve y el glifo de
+// "senal desviada" (barra horizontal que sale y baja con flecha).
 void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool over,
                                                      bool down)
 {
-    auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
     const bool active = getToggleState();
-    juce::Colour background = APP_COLOR_SURFACE_RAISED;
+    juce::Colour face = juce::Colour(0xFFC9C9C9u);
     if (active)
-        background = APP_COLOR_PRIMARY;
+        face = face.darker(0.18f);
     else if (down)
-        background = APP_COLOR_SURFACE_RAISED.darker(0.25f);
+        face = face.darker(0.12f);
     else if (over)
-        background = APP_COLOR_SURFACE_RAISED.brighter(0.12f);
-    g.setColour(background);
-    g.fillRoundedRectangle(bounds, 4.0f);
-    g.setColour(active ? APP_COLOR_PRIMARY.brighter(0.35f)
-                       : APP_COLOR_BORDER_HIGHLIGHT);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+        face = face.brighter(0.06f);
+    g.setColour(face);
+    g.fillRoundedRectangle(bounds, 2.0f);
+    // Relieve: borde oscuro y luz arriba-izquierda.
+    g.setColour(juce::Colour(0xFF6B6B6Bu));
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 2.0f, 1.0f);
+    g.setColour(juce::Colours::white.withAlpha(active ? 0.18f : 0.45f));
+    g.drawLine(bounds.getX() + 2.0f, bounds.getY() + 1.0f,
+               bounds.getRight() - 2.0f, bounds.getY() + 1.0f, 1.0f);
 
-    g.setColour(APP_COLOR_TEXT_PRIMARY);
     const auto centre = bounds.getCentre();
     const float w = bounds.getWidth();
     const float h = bounds.getHeight();
-    juce::Path icon;
-    // Caja pequena a la izquierda.
-    const auto box = juce::Rectangle<float>(centre.x - w * 0.28f,
-                                            centre.y - h * 0.16f,
-                                            w * 0.30f, h * 0.32f);
-    g.fillRoundedRectangle(box, 1.2f);
-    // Flecha: entra por la caja, sube y sale hacia abajo por la derecha.
-    icon.startNewSubPath(box.getRight(), box.getCentreY());
-    icon.lineTo(centre.x + w * 0.30f, box.getCentreY());
-    icon.lineTo(centre.x + w * 0.30f, centre.y + h * 0.30f);
-    g.strokePath(icon, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
-                                            juce::PathStrokeType::rounded));
+    g.setColour(juce::Colour(0xFF1B1B1Bu));
+
+    // Barra horizontal (la senal) a la izquierda del centro.
+    const auto bar = juce::Rectangle<float>(centre.x - w * 0.32f,
+                                            centre.y - h * 0.13f,
+                                            w * 0.34f, h * 0.26f);
+    g.fillRoundedRectangle(bar, 1.0f);
+
+    // Desvio: sale de la barra, va a la derecha y baja, terminando en flecha.
+    juce::Path detour;
+    const float turnX = centre.x + w * 0.22f;
+    const float tipY = centre.y + h * 0.30f;
+    detour.startNewSubPath(bar.getRight(), bar.getCentreY());
+    detour.lineTo(turnX, bar.getCentreY());
+    detour.lineTo(turnX, tipY - 3.0f);
+    g.strokePath(detour, juce::PathStrokeType(1.6f,
+                                              juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
     juce::Path arrow;
-    const float tipY = centre.y + h * 0.34f;
-    const float tipX = centre.x + w * 0.30f;
-    arrow.startNewSubPath(tipX - 3.0f, tipY - 4.0f);
-    arrow.lineTo(tipX, tipY);
-    arrow.lineTo(tipX + 3.0f, tipY - 4.0f);
-    g.strokePath(arrow, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
-                                             juce::PathStrokeType::rounded));
+    arrow.startNewSubPath(turnX - 3.2f, tipY - 4.2f);
+    arrow.lineTo(turnX, tipY);
+    arrow.lineTo(turnX + 3.2f, tipY - 4.2f);
+    arrow.closeSubPath();
+    g.fillPath(arrow);
 }
 
 void ToolbarComponent::setUiMode(EditorUiMode mode){

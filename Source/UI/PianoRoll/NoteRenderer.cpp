@@ -447,8 +447,12 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         juce::Path wavePath;
         bool hasWave = false;
 
-        if (!greyscale && samples && totalSamples > 0 &&
-            renderedWidth > 2.0f && endSample > startSample)
+        // Tarea 3 (2026-11-22): en la vista de bypass las notas van en gris pero
+        // conservan la forma de onda real (Melodyne muestra la melodia original
+        // con su envolvente, no una barra plana).
+        if ((!greyscale || originalPitchView) && samples &&
+            totalSamples > 0 && renderedWidth > 2.0f &&
+            endSample > startSample)
         {
           const int pointCount = std::max(
               2, std::min(1024,
@@ -544,8 +548,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
           // The contour follows the waveform. Selection is a brighter edge,
           // never a frame around the note.
-          g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
-                               : juce::Colour(0xFF1E4C7Au).withAlpha(0.95f));
+          g.setColour(greyscale
+                          ? juce::Colour(0xFF6E6E6Eu)
+                          : (selected ? juce::Colours::white.withAlpha(0.96f)
+                                      : juce::Colour(0xFF1E4C7Au).withAlpha(0.95f)));
           g.strokePath(wavePath, juce::PathStrokeType(selected ? 1.5f : 1.0f,
                                                       juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
