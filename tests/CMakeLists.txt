@@ -216,6 +216,13 @@ target_link_libraries(NoteTransitionResetTests PRIVATE pitchnet_ui)
 target_compile_features(NoteTransitionResetTests PRIVATE cxx_std_17)
 add_test(NAME NoteTransitionResetTests COMMAND NoteTransitionResetTests)
 
+# Tareas 1-3 (2026-11-22): cajon alineado, bypass en la barra superior y curva
+# de fuente en la vista de bypass.
+add_executable(BypassUiTests BypassUiTests.cpp)
+target_link_libraries(BypassUiTests PRIVATE pitchnet_ui)
+target_compile_features(BypassUiTests PRIVATE cxx_std_17)
+add_test(NAME BypassUiTests COMMAND BypassUiTests)
+
 add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
 target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)
 target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)

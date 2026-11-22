@@ -142,6 +142,8 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     {
         label.setFont(bold ? AppFont::getBoldFont(size) : AppFont::getFont(size));
         label.setColour(juce::Label::textColourId, colour);
+        // Tarea 1: el cajon se lee a la izquierda; nada de rotulos centrados.
+        label.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(label);
     };
     setupLabel(engineTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
@@ -151,7 +153,6 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     setupLabel(blockStatus, 12.5f, false, APP_COLOR_TEXT_MUTED);
     setupLabel(deviceTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
     deviceTitle.setVisible(false);
-    setupLabel(bypassTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
     setupLabel(blockNotice, 12.5f, false, APP_COLOR_TEXT_PRIMARY);
     blockNotice.setVisible(false);
     blockNotice.setJustificationType(juce::Justification::topLeft);
@@ -192,25 +193,6 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     };
     addChildComponent(deviceButton);
 
-    // D-267 (S5): bypass del documento. Toggle real: el estado lo manda el
-    // proyecto (getBypass), nunca el boton por su cuenta.
-    bypassButton.setColour(juce::TextButton::buttonColourId,
-                           APP_COLOR_SURFACE_RAISED);
-    bypassButton.setColour(juce::TextButton::buttonOnColourId,
-                           APP_COLOR_PRIMARY);
-    bypassButton.setColour(juce::TextButton::textColourOffId,
-                           APP_COLOR_TEXT_PRIMARY);
-    bypassButton.setColour(juce::TextButton::textColourOnId,
-                           APP_COLOR_TEXT_PRIMARY);
-    bypassButton.onClick = [this] {
-        if (!onBypassChanged)
-            return;
-        const bool wanted = !(getBypass && getBypass());
-        onBypassChanged(wanted);
-        setBypassState(getBypass ? getBypass() : wanted);
-    };
-    addAndMakeVisible(bypassButton);
-
     setEditorMode(mode);
     refreshLocalisedText();
     startTimerHz(4);
@@ -242,9 +224,6 @@ void EnginePanel::refreshLocalisedText()
     blockTitle.setText(TR("engine.block_title"), juce::dontSendNotification);
     blockHint.setText(TR("engine.block_hint"), juce::dontSendNotification);
     deviceTitle.setText(TR("engine.device"), juce::dontSendNotification);
-    bypassTitle.setText(TR("engine.bypass"), juce::dontSendNotification);
-    bypassButton.setButtonText(TR("engine.bypass"));
-    bypassButton.setTooltip(TR("engine.bypass_hint"));
 
     engineChoices.setOptions({TR("inspector.engine_vocoder"),
                               TR("inspector.engine_psola"),
@@ -318,11 +297,6 @@ void EnginePanel::setRenderStatusText(const juce::String& text)
     repaint();
 }
 
-void EnginePanel::setBypassState(bool bypassed)
-{
-    bypassButton.setToggleState(bypassed, juce::dontSendNotification);
-}
-
 void EnginePanel::setBlockNotice(const juce::String& text)
 {
     blockNotice.setText(text, juce::dontSendNotification);
@@ -335,6 +309,25 @@ void EnginePanel::timerCallback()
 {
     if (getNoteEngine)
         setNoteEngine(getNoteEngine());
+}
+
+juce::Array<juce::Rectangle<int>> EnginePanel::getAlignedControlBounds() const
+{
+    return {engineTitle.getBounds(), engineHint.getBounds(), engineChoices.getBounds(),
+            deviceTitle.getBounds(), deviceButton.getBounds(), blockTitle.getBounds(),
+            blockHint.getBounds(), blockChoices.getBounds(), blockStatus.getBounds(),
+            blockNotice.getBounds()};
+}
+
+bool EnginePanel::areHeadersLeftAligned() const
+{
+    const auto left = [](const juce::Label& label)
+    {
+        return label.getJustificationType().testFlags(juce::Justification::left);
+    };
+    return left(engineTitle) && left(engineHint) && left(blockTitle) &&
+           left(blockHint) && left(blockStatus) && left(deviceTitle) &&
+           left(blockNotice);
 }
 
 void EnginePanel::paint(juce::Graphics& g)
@@ -386,7 +379,9 @@ void EnginePanel::resized()
     engineHint.setBounds(area.removeFromTop(24));
     const int engineRows = 3;
     engineCard = area.removeFromTop(kCardPad * 2 + engineRows * kRowHeight);
-    engineChoices.setBounds(engineCard.reduced(kCardPad, kCardPad));
+    // Tarea 1: mismo margen izquierdo y mismo ancho que los rotulos; el inset
+    // de la tarjeta es solo vertical para no desplazar los controles.
+    engineChoices.setBounds(engineCard.reduced(0, kCardPad));
 
     // Inference device directly under the project engine, not stranded at
     // the bottom of the drawer.
@@ -410,23 +405,17 @@ void EnginePanel::resized()
         blockTitle.setBounds(area.removeFromTop(kTitleHeight));
         blockHint.setBounds(area.removeFromTop(kHintHeight));
         blockCard = area.removeFromTop(kCardPad * 2 + 4 * kRowHeight);
-        blockChoices.setBounds(blockCard.reduced(kCardPad, kCardPad));
+        blockChoices.setBounds(blockCard.reduced(0, kCardPad));
         area.removeFromTop(6);
         blockStatus.setBounds(area.removeFromTop(40));
     }
-
-    // D-267 (S5): el bypass no depende de Avanzado.
-    area.removeFromTop(12);
-    bypassTitle.setBounds(area.removeFromTop(kTitleHeight));
-    bypassRow = area.removeFromTop(32);
-    bypassButton.setBounds(bypassRow);
 
     // D-267 (aviso de motor): panel de texto, nunca un dialogo modal.
     if (blockNotice.isVisible() && area.getHeight() > 16)
     {
         area.removeFromTop(8);
         noticeCard = area.removeFromTop(juce::jmin(96, area.getHeight()));
-        blockNotice.setBounds(noticeCard.reduced(kCardPad, 5));
+        blockNotice.setBounds(noticeCard.reduced(0, 5));
     }
     else
     {

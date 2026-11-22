@@ -600,13 +600,23 @@ void PianoRollComponent::paint(juce::Graphics &g)
     }
 
     drawGameChunksDebugOverlay(g);
-    drawNotes(g, NoteRenderPass::Body);
-    drawNotes(g, NoteRenderPass::HoverShadow);
-    drawNotes(g, NoteRenderPass::HoveredBody);
-    drawPitchCurves(g);
+    if (bypassView)
+    {
+      // Tarea 3: solo la curva de la fuente, en gris. Ni bloques de nota ni
+      // curva editada (Melodyne: bypass = el original tal cual).
+      drawBypassSourceCurve(g);
+    }
+    else
+    {
+      drawNotes(g, NoteRenderPass::Body);
+      drawNotes(g, NoteRenderPass::HoverShadow);
+      drawNotes(g, NoteRenderPass::HoveredBody);
+      drawPitchCurves(g);
+    }
     if (currentHandler_)
       currentHandler_->draw(g);
-    drawNotes(g, NoteRenderPass::Overlay);
+    if (!bypassView)
+      drawNotes(g, NoteRenderPass::Overlay);
     drawGameValuesDebugOverlay(g);
     drawSelectionRect(g);
 
@@ -1538,6 +1548,76 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
                                         previewPlaybackEndFrame,
                                         previewPlaybackCurrentTime);
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
+}
+
+std::vector<float> PianoRollComponent::getBypassCurveCents(int firstFrame,
+                                                         int lastFrame) const
+{
+  std::vector<float> curve;
+  if (project == nullptr || lastFrame <= firstFrame)
+    return curve;
+  const auto &audio = project->getAudioData();
+  const auto &f0 = audio.denseF0.empty() ? audio.f0 : audio.denseF0;
+  const int total = static_cast<int>(f0.size());
+  const int first = juce::jlimit(0, total, firstFrame);
+  const int last = juce::jlimit(first, total, lastFrame);
+  curve.reserve(static_cast<size_t>(last - first));
+  for (int frame = first; frame < last; ++frame)
+  {
+    const float hz = f0[static_cast<size_t>(frame)];
+    const float midi = hz > 0.0f ? 69.0f + 12.0f * std::log2(hz / 440.0f) : 0.0f;
+    curve.push_back(midi * 100.0f);
+  }
+  return curve;
+}
+
+void PianoRollComponent::drawBypassSourceCurve(juce::Graphics &g)
+{
+  if (project == nullptr)
+    return;
+  const auto &audio = project->getAudioData();
+  const auto &f0 = audio.denseF0.empty() ? audio.f0 : audio.denseF0;
+  if (f0.empty() || audio.sampleRate <= 0.0)
+    return;
+  const auto &voiced = audio.voicedMask;
+  const double frameSeconds =
+      static_cast<double>(HOP_SIZE) / audio.sampleRate;
+  juce::Path path;
+  bool started = false;
+  for (int frame = 0; frame < static_cast<int>(f0.size()); ++frame)
+  {
+    const bool isVoiced = voiced.empty() ||
+                          (frame < static_cast<int>(voiced.size()) &&
+                           static_cast<bool>(voiced[static_cast<size_t>(frame)]));
+    const float hz = f0[static_cast<size_t>(frame)];
+    if (!isVoiced || hz <= 0.0f)
+    {
+      started = false;
+      continue;
+    }
+    const float midi = 69.0f + 12.0f * std::log2(hz / 440.0f);
+    const float x = timeToX(frame * frameSeconds);
+    const float y = midiToY(midi);
+    if (!started)
+    {
+      path.startNewSubPath(x, y);
+      started = true;
+    }
+    else
+    {
+      path.lineTo(x, y);
+    }
+  }
+  g.setColour(juce::Colour(0xFF9A9A9A));
+  g.strokePath(path, juce::PathStrokeType(1.5f));
+}
+
+void PianoRollComponent::setBypassView(bool active)
+{
+  if (bypassView == active)
+    return;
+  bypassView = active;
+  repaint();
 }
 
 void PianoRollComponent::drawPitchCurves(juce::Graphics &g)

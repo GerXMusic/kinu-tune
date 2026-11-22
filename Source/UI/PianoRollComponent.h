@@ -123,6 +123,14 @@ public:
   // nota es una pausa o no hay proyecto.
   bool resetNoteToOriginal(int index);
 
+  // Tarea 3 (2026-11-22): vista de bypass estilo Melodyne. Con el bypass
+  // activo se dibuja solo la curva F0 de la FUENTE en gris, sin bloques de nota
+  // ni la curva editada. getBypassCurveCents() devuelve exactamente la curva
+  // que se dibuja, para poder medirla.
+  void setBypassView(bool active);
+  bool isBypassView() const { return bypassView; }
+  std::vector<float> getBypassCurveCents(int firstFrame, int lastFrame) const;
+
   void paint(juce::Graphics &g) override;
   void resized() override;
   void mouseDown(const juce::MouseEvent &e) override;
@@ -385,6 +393,8 @@ private:
   void drawLoopTimeline(juce::Graphics &g);
   void drawNotes(juce::Graphics &g, NoteRenderPass pass);
   void drawPitchCurves(juce::Graphics &g);
+  void drawBypassSourceCurve(juce::Graphics &g);
+  bool bypassView = false;
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawAudioSourceRegionOverlay(juce::Graphics &g);

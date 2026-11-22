@@ -982,13 +982,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   enginePanel.getNoteEngine = [this] { return getSelectionNoteEngine(); };
   enginePanel.onNoteEngineChanged = [this](NoteEngine engine)
   { applyNoteEngineToSelection(engine); };
-  // D-267 (S5): el boton del rail lee y escribe el estado del documento.
-  enginePanel.getBypass = [this] {
+  // Tarea 2 (2026-11-22): el bypass vive en la barra superior.
+  toolbar.onBypassClicked = [this] {
     auto *project = getProject();
-    return project != nullptr && project->isBypassProcessing();
+    applyBypassProcessing(!(project != nullptr && project->isBypassProcessing()));
   };
-  enginePanel.onBypassChanged = [this](bool bypassed)
-  { applyBypassProcessing(bypassed); };
   enginePanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   enginePanel.setDeviceOptions(GpuDeviceList::getDeviceNames(
                                    settingsManager->getDevice()),
@@ -2414,10 +2412,14 @@ void MainComponent::pollMcpControl()
       // D-267 (T3): pulsa el boton del rail por su onClick real. Sirve para
       // verificar el cableado sin teclado/raton scriptable (D-126).
       const bool before = project->isBypassProcessing();
-      enginePanel.clickBypassNow();
+      toolbar.clickBypassNow();
       response->setProperty("bypass_before", before);
       response->setProperty("bypass", project->isBypassProcessing());
-      response->setProperty("button_visible", enginePanel.isBypassButtonVisible());
+      response->setProperty("button_visible", toolbar.isBypassButtonVisible());
+      response->setProperty("button_zone", "top_bar");
+      response->setProperty("bypass_view",
+                            pianoRoll.isBypassView() ? "original_curve_gray"
+                                                     : "edited");
       response->setProperty("ok", true);
     }
     else if (command == "reset_notes")
@@ -2941,7 +2943,12 @@ void MainComponent::pollMcpControl()
       response->setProperty("bypass",
                             project != nullptr && project->isBypassProcessing());
       response->setProperty("bypass_button_visible",
-                            enginePanel.isBypassButtonVisible());
+                            toolbar.isBypassButtonVisible());
+      response->setProperty("bypass_button_zone", "top_bar");
+      response->setProperty("bypass_button_active", toolbar.isBypassActive());
+      response->setProperty("bypass_view",
+                            pianoRoll.isBypassView() ? "original_curve_gray"
+                                                     : "edited");
       response->setProperty("block_notice_visible",
                             enginePanel.isBlockNoticeVisible());
       response->setProperty("block_notice_text",
@@ -4909,6 +4916,9 @@ void MainComponent::applyBypassProcessing(bool bypassed)
   // mientras hay algo pendiente.
   project->setBypassProcessing(bypassed);
   markRenderDirty();
+  // Tarea 3: la vista sigue al estado del documento (curva de fuente en gris).
+  pianoRoll.setBypassView(bypassed);
+  toolbar.setBypassState(bypassed);
   // El bypass no tiene notas sucias que renderizar: la publicacion la pide
   // onPitchEditFinished. La cola de bloques queda vacia para que el estado
   // derivado no se quede en Dirty (D-266) ni el ARA silencie la region.
@@ -5005,7 +5015,12 @@ void MainComponent::refreshEditorChrome()
   enginePanel.setSynthesisEngine(engine);
   toolbar.setUiMode(editorUiMode);
   if (project != nullptr)
-    enginePanel.setBypassState(project->isBypassProcessing());
+  {
+    const bool bypass = project->isBypassProcessing();
+    // Tarea 2/3: boton de la barra y vista de la curva de fuente.
+    toolbar.setBypassState(bypass);
+    pianoRoll.setBypassView(bypass);
+  }
 }
 
 void MainComponent::applyProjectSynthesisEngine()

@@ -156,6 +156,16 @@ ToolbarComponent::ToolbarComponent()
     styleFlatTextButton(tempoButton);
     styleFlatTextButton(gridButton);
     styleFlatTextButton(engineButton);
+    styleFlatTextButton(bypassButton);
+    bypassButton.setButtonText("Bypass");
+    bypassButton.setTooltip(TR("engine.bypass_hint"));
+    bypassButton.setColour(juce::TextButton::buttonOnColourId, APP_COLOR_PRIMARY);
+    bypassButton.setColour(juce::TextButton::textColourOnId, APP_COLOR_TEXT_PRIMARY);
+    bypassButton.onClick = [this]
+    {
+        if (onBypassClicked)
+            onBypassClicked();
+    };
 
     basicModeButton.onClick = [this] { setUiMode(EditorUiMode::Basic);
                                        if (onUiModeChanged) onUiModeChanged(EditorUiMode::Basic); };
@@ -171,6 +181,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(scaleButton);
     addAndMakeVisible(tempoButton);
     addAndMakeVisible(gridButton);
+    addAndMakeVisible(bypassButton);
     // The engine summary chip was removed: the engine in use is chosen in the
     // Motor drawer, and the top bar no longer announces it.
     addChildComponent(engineButton);
@@ -361,6 +372,8 @@ void ToolbarComponent::resized()
 
     placeRight(redoButton, 26);
     placeRight(undoButton, 26);
+    // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla.
+    placeRight(bypassButton, 72);
     placeRight(gridButton, 48);
 
     tempoButton.setVisible(showTempo);
@@ -450,8 +463,14 @@ void ToolbarComponent::updateToolButtonStates()
             button->setActiveState(button->getTool() == activeTool);
 }
 
-void ToolbarComponent::setUiMode(EditorUiMode mode)
+void ToolbarComponent::setBypassState(bool active)
 {
+    bypassActive = active;
+    bypassButton.setToggleState(active, juce::dontSendNotification);
+    bypassButton.setButtonText(active ? "Bypass *" : "Bypass");
+}
+
+void ToolbarComponent::setUiMode(EditorUiMode mode){
     uiMode = mode;
     updateModeButtonStates();
     resized();

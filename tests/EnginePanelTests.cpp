@@ -34,27 +34,6 @@ int main()
     EnginePanel panel(EditorUiMode::Advanced);
     panel.setSize(300, 640);
 
-    bool projectBypass = false;
-    int bypassCallbacks = 0;
-    panel.getBypass = [&] { return projectBypass; };
-    panel.onBypassChanged = [&](bool value)
-    {
-        projectBypass = value;
-        ++bypassCallbacks;
-    };
-
-    // S5: el boton conmuta el estado del documento por su onClick.
-    CHECK(panel.isBypassButtonVisible());
-    panel.clickBypassNow();
-    CHECK(bypassCallbacks == 1);
-    CHECK(projectBypass);
-    panel.clickBypassNow();
-    CHECK(bypassCallbacks == 2);
-    CHECK(!projectBypass);
-    std::cout << "S5 boton de bypass: " << bypassCallbacks
-              << " pulsaciones, estado final "
-              << (projectBypass ? "original" : "procesado") << "\n";
-
     // Aviso de motor: numero y listas dentro del panel, sin dialogo.
     const juce::String notice =
         "Motor PSOLA: 2 de 3 nota(s) del bloque cambian de motor. "
@@ -72,13 +51,8 @@ int main()
     CHECK(shown.contains("#2"));
     CHECK(!anyDialogOnDesktop());
 
-    // El aviso no bloquea: la UI sigue respondiendo a un clic real del boton.
-    panel.clickBypassNow();
-    CHECK(bypassCallbacks == 3);
-    // Y el camino asincrono del raton (postCommandMessage) tambien llega.
-    panel.triggerBypassButton();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
-    CHECK(bypassCallbacks == 4);
+    // El aviso no bloquea: la UI sigue respondiendo sin abrir dialogos.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
     CHECK(!anyDialogOnDesktop());
 
     // Sin texto, el aviso desaparece (no queda un panel vacio).
