@@ -486,8 +486,9 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
         g.fillRoundedRectangle(bounds, 4.0f);
     }
 
-    // Glifo con aire: lineas finas y huecos claros entre barra, desvio y
-    // flecha, para que a 30 px no se apelotone.
+    // Glifo centrado: el eje vertical del tallo, la barra y la flecha es el
+    // mismo (x = 0.5) y los tres tramos del corchete (arriba, derecha, abajo)
+    // llevan el mismo grosor. El conjunto queda centrado en el boton.
     const auto inner = bounds.reduced(bounds.getWidth() * 0.10f,
                                        bounds.getHeight() * 0.10f);
     const float x = inner.getX();
@@ -501,29 +502,29 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
     g.setColour(APP_COLOR_TEXT_PRIMARY);
     const float stroke = std::max(1.2f, w * 0.075f);
 
-    // Barra (algo mas gruesa que las lineas, pero con aire alrededor).
-    const auto bar = juce::Rectangle<float>(at(0.10f, 0.43f), at(0.60f, 0.57f));
+    // Barra (algo mas gruesa que las lineas), centrada con el resto.
+    const auto bar = juce::Rectangle<float>(at(0.26f, 0.42f), at(0.60f, 0.56f));
     g.fillRect(bar);
 
-    // Tallo superior, corto y fino.
-    g.drawLine(juce::Line<float>(at(0.34f, 0.04f), at(0.34f, 0.30f)), stroke);
+    // Corchete: tallo superior, tramo de arriba, vertical derecha y tramo de
+    // abajo, los tres con el mismo grosor.
+    juce::Path bracket;
+    bracket.startNewSubPath(at(0.50f, 0.08f));
+    bracket.lineTo(at(0.50f, 0.30f));
+    bracket.lineTo(at(0.74f, 0.30f));
+    bracket.lineTo(at(0.74f, 0.70f));
+    bracket.lineTo(at(0.50f, 0.70f));
+    g.strokePath(bracket, juce::PathStrokeType(stroke,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::butt));
 
-    // Desvio: sale del tallo, va a la derecha, baja por fuera de la barra y
-    // vuelve a entrar por debajo; termina justo encima de la flecha.
-    juce::Path detour;
-    detour.startNewSubPath(at(0.34f, 0.30f));
-    detour.lineTo(at(0.84f, 0.30f));
-    detour.lineTo(at(0.84f, 0.72f));
-    detour.lineTo(at(0.44f, 0.72f));
-    g.strokePath(detour, juce::PathStrokeType(stroke,
-                                              juce::PathStrokeType::curved,
-                                              juce::PathStrokeType::butt));
-
-    // Flecha abajo, separada de la barra.
+    // Flecha en el mismo eje, separada de la barra.
+    const auto arrowStem = juce::Line<float>(at(0.50f, 0.70f), at(0.50f, 0.78f));
+    g.drawLine(arrowStem, stroke);
     juce::Path arrow;
-    arrow.startNewSubPath(at(0.31f, 0.80f));
-    arrow.lineTo(at(0.57f, 0.80f));
-    arrow.lineTo(at(0.44f, 0.98f));
+    arrow.startNewSubPath(at(0.37f, 0.78f));
+    arrow.lineTo(at(0.63f, 0.78f));
+    arrow.lineTo(at(0.50f, 0.95f));
     arrow.closeSubPath();
     g.fillPath(arrow);
 }
