@@ -370,7 +370,7 @@ void ToolbarComponent::resized()
     placeRight(undoButton, 26);
     // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla. Icono
     // cuadrado estilo Melodyne.
-    placeRight(bypassButton, 30);
+    placeRight(bypassButton, 36);
     placeRight(gridButton, 48);
 
     tempoButton.setVisible(showTempo);
@@ -489,8 +489,8 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
     // Glifo centrado: el eje vertical del tallo, la barra y la flecha es el
     // mismo (x = 0.5) y los tres tramos del corchete (arriba, derecha, abajo)
     // llevan el mismo grosor. El conjunto queda centrado en el boton.
-    const auto inner = bounds.reduced(bounds.getWidth() * 0.10f,
-                                       bounds.getHeight() * 0.10f);
+    const auto inner = bounds.reduced(bounds.getWidth() * 0.05f,
+                                       bounds.getHeight() * 0.05f);
     const float x = inner.getX();
     const float y = inner.getY();
     const float w = inner.getWidth();
@@ -500,10 +500,10 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
     };
 
     g.setColour(APP_COLOR_TEXT_PRIMARY);
-    const float stroke = std::max(1.2f, w * 0.075f);
+    const float stroke = std::max(1.4f, w * 0.08f);
 
     // Barra (algo mas gruesa que las lineas), centrada con el resto.
-    const auto bar = juce::Rectangle<float>(at(0.26f, 0.42f), at(0.60f, 0.56f));
+    const auto bar = juce::Rectangle<float>(at(0.24f, 0.40f), at(0.62f, 0.58f));
     g.fillRect(bar);
 
     // Corchete: tallo superior, tramo de arriba, vertical derecha y tramo de
