@@ -1,0 +1,103 @@
+name: macOS plugin build
+
+# Se lanza a mano: build de produccion arm64 (Apple silicon M1 Pro / M4),
+# validada con pluginval y publicada como artefacto. Sin firma ni notarizacion.
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure (Release, arm64)
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DUSE_DIRECTML=OFF
+          -DPITCHNET_ARA_DIAGNOSTICS=OFF
+          -DPITCHNET_BUILD_TESTS=OFF
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      # El runner hospedado tiene 3 CPUs; --parallel 3 evita lanzar decenas de compiladores.
+      - name: Build the VST3
+        run: |
+          set -o pipefail
+          target="PitchNetPlugin_VST3"
+          if ! cmake --build build --config Release --target "$target" --parallel 3; then
+            echo "Target $target no existe; buscando el nombre real..."
+            target=$(cmake --build build --target help | grep -i vst3 | head -n1 | tr -d '\r' | sed 's/:.*//' | xargs)
+            if [ -z "$target" ]; then
+              echo "No se encontro ningun target VST3" >&2
+              exit 1
+            fi
+            echo "Usando target: $target"
+            cmake --build build --config Release --target "$target" --parallel 3
+          fi
+          echo "TARGET_USED=$target" >> "$GITHUB_ENV"
+
+      - name: Locate the built VST3
+        run: |
+          vst3=$(find build -name "*.vst3" -maxdepth 6 -type d | head -n1)
+          if [ -z "$vst3" ]; then
+            echo "No se genero ningun .vst3" >&2
+            exit 1
+          fi
+          echo "VST3_PATH=$vst3" >> "$GITHUB_ENV"
+          echo "Encontrado: $vst3"
+
+      # Version fijada a proposito (no "latest").
+      - name: Download pluginval 1.0.4
+        run: |
+          mkdir -p "$RUNNER_TEMP/pluginval"
+          curl -fsSL -o "$RUNNER_TEMP/pluginval/pluginval.zip" \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          ditto -x -k "$RUNNER_TEMP/pluginval/pluginval.zip" "$RUNNER_TEMP/pluginval"
+
+      # Solo se pasan los flags que el binario declara en --help.
+      - name: Validate the VST3 with pluginval (strictness 5)
+        run: |
+          set -o pipefail
+          bin=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval -perm -u+x | head -n1)
+          if [ -z "$bin" ]; then
+            echo "No se encontro el binario pluginval" >&2
+            exit 1
+          fi
+          "$bin" --help > help.txt 2>&1 || true
+          cat help.txt
+
+          if ! grep -q -- "--strictness-level" help.txt; then
+            echo "pluginval no admite --strictness-level" >&2
+            exit 1
+          fi
+
+          args=(--strictness-level 5)
+          if grep -q -- "--skip-gui-tests" help.txt; then
+            args+=(--skip-gui-tests)
+          fi
+          if grep -q -- "--validate" help.txt; then
+            args+=(--validate "$VST3_PATH")
+          else
+            args+=("$VST3_PATH")
+          fi
+
+          echo "pluginval ${args[*]}"
+          "$bin" "${args[@]}"
+
+      - name: Package the VST3
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "dist/KinuTune-macOS-arm64.zip"
+          ls -l dist
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: KinuTune-macOS-arm64
+          path: dist/KinuTune-macOS-arm64.zip
+          if-no-files-found: error
