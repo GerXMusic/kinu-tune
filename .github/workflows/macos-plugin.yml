@@ -92,12 +92,12 @@ jobs:
       - name: Package the VST3
         run: |
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "dist/KinuTune-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "dist/TuneX-macOS-arm64.zip"
           ls -l dist
 
       - name: Upload the artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: KinuTune-macOS-arm64
-          path: dist/KinuTune-macOS-arm64.zip
+          name: TuneX-macOS-arm64
+          path: dist/TuneX-macOS-arm64.zip
           if-no-files-found: error

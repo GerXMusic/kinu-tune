@@ -1,6 +1,6 @@
 // Per-document synthesis engine (D-174, I-19).
 //
-// I-19: two different audio documents, each with its own Kinu Tune and a
+// I-19: two different audio documents, each with its own TuneX and a
 // different engine, collapse to the last modified engine after save/reopen.
 // The engine that the editor and the renderers use has to travel inside the
 // document (the Project metadata the ARA modification archive stores), not

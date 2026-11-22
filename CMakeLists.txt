@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.1.3) # Kinu Tune version (based on PitchNet 0.7.2)
+project(PitchNet VERSION 0.1.3) # TuneX version (based on PitchNet 0.7.2)
 
 # Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
 # x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
@@ -304,12 +304,12 @@ endif()
 option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OFF)
 
 # Diagnostic logging for the ARA model graph and render path. Writes through the
-# existing AppLogger to %APPDATA%/Kinu Tune/Logs/debug_<session>.log. Model-graph
+# existing AppLogger to %APPDATA%/TuneX/Logs/debug_<session>.log. Model-graph
 # events are low frequency; the render report is one line per region, once. Off
 # by default - release builds contain none of it.
 option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF)
 
-# Kinu Tune is a modified version of PitchNet (Session Loops), itself derived
+# TuneX is a modified version of PitchNet (Session Loops), itself derived
 # from HachiTune. It ships under its own vendor identity so it installs next to
 # PitchNet instead of replacing it.
 set(PITCHNET_COMPANY_NAME "Keinoaza")
@@ -317,17 +317,17 @@ set(PITCHNET_MANUFACTURER_CODE Kein)
 set(PITCHNET_COPYRIGHT
     "Copyright 2026 Session Loops, HachiTune contributors and Keinoaza")
 if(PITCHNET_DEV_BUILD)
-    set(PITCHNET_PRODUCT_NAME "Kinu Tune Dev")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.kinutune.dev")
-    set(PITCHNET_PLUGIN_CODE Kntd)
+    set(PITCHNET_PRODUCT_NAME "TuneX Dev")
+    set(PITCHNET_BUNDLE_ID "com.keinoaza.tunex.dev")
+    set(PITCHNET_PLUGIN_CODE TunD)
     message(STATUS
-        "Kinu Tune: side-by-side DEV build "
+        "TuneX: side-by-side DEV build "
         "(product '${PITCHNET_PRODUCT_NAME}', plugin code ${PITCHNET_PLUGIN_CODE}, "
         "bundle id ${PITCHNET_BUNDLE_ID})")
 else()
-    set(PITCHNET_PRODUCT_NAME "Kinu Tune")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.kinutune")
-    set(PITCHNET_PLUGIN_CODE Kntu)
+    set(PITCHNET_PRODUCT_NAME "TuneX")
+    set(PITCHNET_BUNDLE_ID "com.keinoaza.tunex")
+    set(PITCHNET_PLUGIN_CODE TunX)
 endif()
 
 # Per-dirty-note synthesis diagnostics. synthesizeRegion() always logs a few
@@ -441,8 +441,8 @@ if(ARA_AVAILABLE)
     if(PITCHNET_ARA_DIAGNOSTICS)
         target_compile_definitions(PitchNetPlugin PRIVATE
             PITCHNET_ARA_DIAGNOSTICS=1)
-        message(STATUS "Kinu Tune: ARA diagnostics ENABLED "
-                       "(macOS logs to ~/Library/Logs/Kinu Tune/)")
+        message(STATUS "TuneX: ARA diagnostics ENABLED "
+                       "(macOS logs to ~/Library/Logs/TuneX/)")
     endif()
 endif()
 if(AAX_AVAILABLE)

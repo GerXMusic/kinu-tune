@@ -1,4 +1,4 @@
-# Checks every push and pull request: builds Kinu Tune with the unit tests on
+# Checks every push and pull request: builds TuneX with the unit tests on
 # macOS (Apple silicon) and on Windows and runs them all, including the one
 # test that loads the models (ModelInferenceTests), so analysis and synthesis
 # are known to work on both. The Windows job also builds the VST3 and loads it
@@ -81,4 +81,4 @@ jobs:
       # older Visual C++ runtime, then runs pluginval. See the script.
       - name: Check the VST3 like a host does
         shell: pwsh
-        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
+        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3"

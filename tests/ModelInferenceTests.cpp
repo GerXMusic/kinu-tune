@@ -1,8 +1,8 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
-// Loads the models Kinu Tune ships and checks, with numbers, that analysis and
+// Loads the models TuneX ships and checks, with numbers, that analysis and
 // synthesis work on the platform this runs on. The other tests load no model,
 // so until this one existed nothing had ever run a model on Windows except a
 // user's DAW. The CI Windows job builds and runs only this test.

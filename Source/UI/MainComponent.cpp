@@ -72,7 +72,7 @@ const juce::Colour updateLogScrollbarThumb(0xFF565656u);
 juce::File getMcpControlDirectory()
 {
   auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                 .getChildFile("kinu-tune-mcp");
+                 .getChildFile("tunex-mcp");
   dir.createDirectory();
   return dir;
 }
@@ -1298,8 +1298,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
       juce::var(new juce::DynamicObject()));
 
   // The launch update check asks Session Loops' server about PitchNet releases
-  // and offers their download page, which does not apply to Kinu Tune.
-  // checkForUpdatesOnLaunch() stays in place for a future Kinu Tune feed.
+  // and offers their download page, which does not apply to TuneX.
+  // checkForUpdatesOnLaunch() stays in place for a future TuneX feed.
 
   LOG("MainComponent: constructor complete");
 }

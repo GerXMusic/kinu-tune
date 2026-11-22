@@ -1,5 +1,5 @@
-# Kinu Tune - Copyright (C) 2026 Keinoaza
-# Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+# TuneX - Copyright (C) 2026 Keinoaza
+# Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
 # Checks the Windows installer the way a user meets it: on a clean Windows
@@ -11,7 +11,7 @@
 # the models are gone. Run from the repository root on a Windows runner with
 # the JUCE submodule checked out (the host needs the VST3 SDK headers):
 #
-#   pwsh tools/windows/check-installer.ps1 -Setup Output/Kinu-Tune-<version>-Windows-x64-Setup.exe
+#   pwsh tools/windows/check-installer.ps1 -Setup Output/TuneX-<version>-Windows-x64-Setup.exe
 param(
     [Parameter(Mandatory = $true)][string] $Setup
 )
@@ -36,11 +36,11 @@ Copy-Item "$work/host-build/Release/vst3_instantiate.exe" $stage
 @'
 $ErrorActionPreference = "Stop"
 $failures = @()
-$vst3 = "C:\Program Files\Common Files\VST3\Kinu Tune.vst3"
-$dll = "$vst3\Contents\x86_64-win\Kinu Tune.vst3"
-$models = "C:\ProgramData\Keinoaza\Kinu Tune\models"
-$uninstaller = "C:\Program Files\Keinoaza\Kinu Tune\unins000.exe"
-$appDir = "C:\Program Files\Keinoaza\Kinu Tune"
+$vst3 = "C:\Program Files\Common Files\VST3\TuneX.vst3"
+$dll = "$vst3\Contents\x86_64-win\TuneX.vst3"
+$models = "C:\ProgramData\Keinoaza\TuneX\models"
+$uninstaller = "C:\Program Files\Keinoaza\TuneX\unins000.exe"
+$appDir = "C:\Program Files\Keinoaza\TuneX"
 $uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{38373E75-C136-4F15-8F5D-6F966750C257}_is1"
 Write-Host "Windows $([System.Environment]::OSVersion.Version)"
 # Without this the check below could not tell that the installer brought the

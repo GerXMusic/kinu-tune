@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 // When the bundled ONNX Runtime cannot be loaded (on Windows: no Visual C++
@@ -32,7 +32,7 @@ int main()
     CHECK(OnnxRuntime::getUnavailableReason().isEmpty());
 
     const juce::String reason =
-        "Could not load Kinu Tune's ONNX Runtime: LoadLibrary(onnxruntime.dll) "
+        "Could not load TuneX's ONNX Runtime: LoadLibrary(onnxruntime.dll) "
         "failed with Windows error 126";
     OnnxRuntime::forceUnavailableForTesting(reason);
     Ort::InitApi(nullptr);
