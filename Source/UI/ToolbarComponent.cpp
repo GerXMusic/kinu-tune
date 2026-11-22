@@ -370,7 +370,7 @@ void ToolbarComponent::resized()
     placeRight(undoButton, 26);
     // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla. Icono
     // cuadrado estilo Melodyne.
-    placeRight(bypassButton, 28);
+    placeRight(bypassButton, 30);
     placeRight(gridButton, 48);
 
     tempoButton.setVisible(showTempo);
@@ -467,54 +467,60 @@ void ToolbarComponent::setBypassState(bool active)
     bypassButton.repaint();
 }
 
-// Icono de bypass estilo Melodyne: boton cuadrado con relieve y el glifo de
-// "senal desviada" (barra horizontal que sale y baja con flecha).
+// Icono de bypass: el glifo de la referencia (barra gruesa, tallo superior,
+// desvio por la derecha y flecha abajo). Sin fondo cuando esta apagado; azul
+// de la casa cuando esta activo.
 void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool over,
                                                      bool down)
 {
     auto bounds = getLocalBounds().toFloat().reduced(1.0f);
     const bool active = getToggleState();
-    juce::Colour face = juce::Colour(0xFFC9C9C9u);
     if (active)
-        face = face.darker(0.18f);
-    else if (down)
-        face = face.darker(0.12f);
-    else if (over)
-        face = face.brighter(0.06f);
-    g.setColour(face);
-    g.fillRoundedRectangle(bounds, 2.0f);
-    // Relieve: borde oscuro y luz arriba-izquierda.
-    g.setColour(juce::Colour(0xFF6B6B6Bu));
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 2.0f, 1.0f);
-    g.setColour(juce::Colours::white.withAlpha(active ? 0.18f : 0.45f));
-    g.drawLine(bounds.getX() + 2.0f, bounds.getY() + 1.0f,
-               bounds.getRight() - 2.0f, bounds.getY() + 1.0f, 1.0f);
+    {
+        g.setColour(APP_COLOR_PRIMARY);
+        g.fillRoundedRectangle(bounds, 4.0f);
+    }
+    else if (over || down)
+    {
+        g.setColour(juce::Colours::white.withAlpha(down ? 0.12f : 0.07f));
+        g.fillRoundedRectangle(bounds, 4.0f);
+    }
 
-    const auto centre = bounds.getCentre();
-    const float w = bounds.getWidth();
-    const float h = bounds.getHeight();
-    g.setColour(juce::Colour(0xFF1B1B1Bu));
+    const auto inner = bounds.reduced(bounds.getWidth() * 0.13f,
+                                       bounds.getHeight() * 0.13f);
+    const float x = inner.getX();
+    const float y = inner.getY();
+    const float w = inner.getWidth();
+    const float h = inner.getHeight();
+    const auto at = [&](float u, float v) {
+        return juce::Point<float>(x + u * w, y + v * h);
+    };
 
-    // Barra horizontal (la senal) a la izquierda del centro.
-    const auto bar = juce::Rectangle<float>(centre.x - w * 0.32f,
-                                            centre.y - h * 0.13f,
-                                            w * 0.34f, h * 0.26f);
-    g.fillRoundedRectangle(bar, 1.0f);
+    g.setColour(APP_COLOR_TEXT_PRIMARY);
+    const float stroke = std::max(1.8f, w * 0.15f);
 
-    // Desvio: sale de la barra, va a la derecha y baja, terminando en flecha.
+    // Barra gruesa (la senal), centrada a la izquierda.
+    const auto bar = juce::Rectangle<float>(at(0.14f, 0.37f), at(0.72f, 0.57f));
+    g.fillRect(bar);
+
+    // Tallo superior que baja hasta la barra, y desvio que la abraza por la
+    // derecha hasta salir por debajo.
     juce::Path detour;
-    const float turnX = centre.x + w * 0.22f;
-    const float tipY = centre.y + h * 0.30f;
-    detour.startNewSubPath(bar.getRight(), bar.getCentreY());
-    detour.lineTo(turnX, bar.getCentreY());
-    detour.lineTo(turnX, tipY - 3.0f);
-    g.strokePath(detour, juce::PathStrokeType(1.6f,
+    detour.startNewSubPath(at(0.46f, 0.02f));
+    detour.lineTo(at(0.46f, 0.30f));
+    detour.lineTo(at(0.86f, 0.30f));
+    detour.lineTo(at(0.86f, 0.60f));
+    detour.lineTo(at(0.52f, 0.60f));
+    detour.lineTo(at(0.52f, 0.72f));
+    g.strokePath(detour, juce::PathStrokeType(stroke,
                                               juce::PathStrokeType::curved,
-                                              juce::PathStrokeType::rounded));
+                                              juce::PathStrokeType::butt));
+
+    // Flecha abajo, bajo la barra.
     juce::Path arrow;
-    arrow.startNewSubPath(turnX - 3.2f, tipY - 4.2f);
-    arrow.lineTo(turnX, tipY);
-    arrow.lineTo(turnX + 3.2f, tipY - 4.2f);
+    arrow.startNewSubPath(at(0.34f, 0.72f));
+    arrow.lineTo(at(0.60f, 0.72f));
+    arrow.lineTo(at(0.47f, 0.98f));
     arrow.closeSubPath();
     g.fillPath(arrow);
 }

@@ -1602,7 +1602,10 @@ void PianoRollComponent::drawBypassSourceCurve(juce::Graphics &g)
     }
     const float midi = 69.0f + 12.0f * std::log2(hz / 440.0f);
     const float x = timeToX(frame * frameSeconds);
-    const float y = midiToY(midi);
+    // midiToY() devuelve el borde superior de la fila; el centro esta medio
+    // semitono mas abajo (mismo criterio que NoteRenderer). Sin esto la curva
+    // de la fuente se dibujaba medio semitono por encima de las notas.
+    const float y = midiToY(midi) + pixelsPerSemitone * 0.5f;
     if (!started)
     {
       path.startNewSubPath(x, y);
