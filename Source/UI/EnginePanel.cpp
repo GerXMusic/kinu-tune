@@ -151,6 +151,10 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     setupLabel(blockStatus, 12.5f, false, APP_COLOR_TEXT_MUTED);
     setupLabel(deviceTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
     deviceTitle.setVisible(false);
+    setupLabel(bypassTitle, 13.0f, true, APP_COLOR_TEXT_MUTED);
+    setupLabel(blockNotice, 12.5f, false, APP_COLOR_TEXT_PRIMARY);
+    blockNotice.setVisible(false);
+    blockNotice.setJustificationType(juce::Justification::topLeft);
 
     addAndMakeVisible(engineChoices);
     addAndMakeVisible(blockChoices);
@@ -188,6 +192,25 @@ EnginePanel::EnginePanel(EditorUiMode mode) : editorMode(mode)
     };
     addChildComponent(deviceButton);
 
+    // D-267 (S5): bypass del documento. Toggle real: el estado lo manda el
+    // proyecto (getBypass), nunca el boton por su cuenta.
+    bypassButton.setColour(juce::TextButton::buttonColourId,
+                           APP_COLOR_SURFACE_RAISED);
+    bypassButton.setColour(juce::TextButton::buttonOnColourId,
+                           APP_COLOR_PRIMARY);
+    bypassButton.setColour(juce::TextButton::textColourOffId,
+                           APP_COLOR_TEXT_PRIMARY);
+    bypassButton.setColour(juce::TextButton::textColourOnId,
+                           APP_COLOR_TEXT_PRIMARY);
+    bypassButton.onClick = [this] {
+        if (!onBypassChanged)
+            return;
+        const bool wanted = !(getBypass && getBypass());
+        onBypassChanged(wanted);
+        setBypassState(getBypass ? getBypass() : wanted);
+    };
+    addAndMakeVisible(bypassButton);
+
     setEditorMode(mode);
     refreshLocalisedText();
     startTimerHz(4);
@@ -219,6 +242,9 @@ void EnginePanel::refreshLocalisedText()
     blockTitle.setText(TR("engine.block_title"), juce::dontSendNotification);
     blockHint.setText(TR("engine.block_hint"), juce::dontSendNotification);
     deviceTitle.setText(TR("engine.device"), juce::dontSendNotification);
+    bypassTitle.setText(TR("engine.bypass"), juce::dontSendNotification);
+    bypassButton.setButtonText(TR("engine.bypass"));
+    bypassButton.setTooltip(TR("engine.bypass_hint"));
 
     engineChoices.setOptions({TR("inspector.engine_vocoder"),
                               TR("inspector.engine_psola"),
@@ -292,6 +318,19 @@ void EnginePanel::setRenderStatusText(const juce::String& text)
     repaint();
 }
 
+void EnginePanel::setBypassState(bool bypassed)
+{
+    bypassButton.setToggleState(bypassed, juce::dontSendNotification);
+}
+
+void EnginePanel::setBlockNotice(const juce::String& text)
+{
+    blockNotice.setText(text, juce::dontSendNotification);
+    blockNotice.setVisible(text.isNotEmpty());
+    resized();
+    repaint();
+}
+
 void EnginePanel::timerCallback()
 {
     if (getNoteEngine)
@@ -316,6 +355,14 @@ void EnginePanel::paint(juce::Graphics& g)
     {
         g.setColour(APP_COLOR_SURFACE);
         g.fillRoundedRectangle(deviceRow.toFloat(), 6.0f);
+    }
+
+    if (!noticeCard.isEmpty())
+    {
+        g.setColour(APP_COLOR_SURFACE_RAISED.withAlpha(0.75f));
+        g.fillRoundedRectangle(noticeCard.toFloat(), 6.0f);
+        g.setColour(APP_COLOR_BORDER_HIGHLIGHT);
+        g.drawRoundedRectangle(noticeCard.toFloat().reduced(0.5f), 6.0f, 1.0f);
     }
 
     if (renderStatus.isNotEmpty())
@@ -366,5 +413,24 @@ void EnginePanel::resized()
         blockChoices.setBounds(blockCard.reduced(kCardPad, kCardPad));
         area.removeFromTop(6);
         blockStatus.setBounds(area.removeFromTop(40));
+    }
+
+    // D-267 (S5): el bypass no depende de Avanzado.
+    area.removeFromTop(12);
+    bypassTitle.setBounds(area.removeFromTop(kTitleHeight));
+    bypassRow = area.removeFromTop(32);
+    bypassButton.setBounds(bypassRow);
+
+    // D-267 (aviso de motor): panel de texto, nunca un dialogo modal.
+    if (blockNotice.isVisible() && area.getHeight() > 16)
+    {
+        area.removeFromTop(8);
+        noticeCard = area.removeFromTop(juce::jmin(96, area.getHeight()));
+        blockNotice.setBounds(noticeCard.reduced(kCardPad, 5));
+    }
+    else
+    {
+        noticeCard = {};
+        blockNotice.setBounds({});
     }
 }

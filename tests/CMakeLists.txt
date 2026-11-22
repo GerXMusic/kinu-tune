@@ -48,8 +48,7 @@ set(PITCHNET_TEST_SOURCES
     BypassOriginalTests.cpp
     NoteEditPredicateTests.cpp
     # Fase 1 de la edicion: S1/S2/S3/S6 en audio contra el render completo.
-    EditSymptomAudioTests.cpp
-    # R4 (2026-11-21): union de notas con consonante no vocalizada.
+    EditSymptomAudioTests.cpp    # R4 (2026-11-21): union de notas con consonante no vocalizada.
     NoteBoundaryHoleTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
     # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
@@ -193,6 +192,22 @@ add_executable(EditRenderCloseTests EditRenderCloseTests.cpp)
 target_link_libraries(EditRenderCloseTests PRIVATE pitchnet_ui)
 target_compile_features(EditRenderCloseTests PRIVATE cxx_std_17)
 add_test(NAME EditRenderCloseTests COMMAND EditRenderCloseTests)
+
+# D-265 (T1): el criterio de envolvente en la frontera, con su segundo gesto
+# (nota del borde de la frase) como entrada propia de ctest.
+add_test(NAME EditSymptom_sbedge COMMAND EditSymptomAudioTests sb-edge)
+
+# D-266 (T6): estado unico derivado del render (tabla de transiciones).
+add_executable(RenderStateTests RenderStateTests.cpp)
+target_link_libraries(RenderStateTests PRIVATE pitchnet_core)
+target_compile_features(RenderStateTests PRIVATE cxx_std_17)
+add_test(NAME RenderStateTests COMMAND RenderStateTests)
+
+# D-267 (T3/T4): boton de bypass y aviso de motor no modal en el rail.
+add_executable(EnginePanelTests EnginePanelTests.cpp)
+target_link_libraries(EnginePanelTests PRIVATE pitchnet_ui)
+target_compile_features(EnginePanelTests PRIVATE cxx_std_17)
+add_test(NAME EnginePanelTests COMMAND EnginePanelTests)
 
 add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
 target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)

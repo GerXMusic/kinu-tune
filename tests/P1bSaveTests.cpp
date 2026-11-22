@@ -50,7 +50,7 @@ void testSaveFlushesBeforeWriting() {
 void testFlushChainResumesTheSave() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
-  CHECK(windowAfter(mainComponent, "flushChainActive = false;", 700)
+  CHECK(windowAfter(mainComponent, "renderState.flushChainActive = false;", 700)
             .find("saveProject") != std::string::npos);
   CHECK(mainComponent.find("resumeSaveAfterFlush = false") !=
         std::string::npos);

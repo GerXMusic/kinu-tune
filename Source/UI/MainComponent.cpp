@@ -28,6 +28,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -960,7 +961,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
 
   // Rail engine drawer: same callbacks as the old rendering panel, plus the
-  // per-block engine in Advanced (gui-decision.md §2).
+  // per-block engine in Advanced (gui-decision.md Â§2).
   enginePanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
   enginePanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
   {
@@ -981,6 +982,13 @@ MainComponent::MainComponent(bool enableAudioDevice)
   enginePanel.getNoteEngine = [this] { return getSelectionNoteEngine(); };
   enginePanel.onNoteEngineChanged = [this](NoteEngine engine)
   { applyNoteEngineToSelection(engine); };
+  // D-267 (S5): el boton del rail lee y escribe el estado del documento.
+  enginePanel.getBypass = [this] {
+    auto *project = getProject();
+    return project != nullptr && project->isBypassProcessing();
+  };
+  enginePanel.onBypassChanged = [this](bool bypassed)
+  { applyBypassProcessing(bypassed); };
   enginePanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
   enginePanel.setDeviceOptions(GpuDeviceList::getDeviceNames(
                                    settingsManager->getDevice()),
@@ -1019,7 +1027,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     playAfterFlush = true;
     flushDirtyBlocks(); // render the dirty blocks first, one per pass
-    if (!flushChainActive)
+    if (!renderState.flushChainActive)
     {
       playAfterFlush = false;
       play();
@@ -1960,7 +1968,7 @@ void MainComponent::pollMcpControl()
   mcpLastPollMs = now;
 
   auto *project = getProject();
-  if ((mcpRenderPending && now - mcpLastHeartbeatMs >= 100) ||
+  if ((renderState.mcpRenderPending && now - mcpLastHeartbeatMs >= 100) ||
       now - mcpLastHeartbeatMs >= 1000)
   {
     mcpLastHeartbeatMs = now;
@@ -1970,8 +1978,27 @@ void MainComponent::pollMcpControl()
     instance->setProperty("project_loaded", project != nullptr);
     instance->setProperty("project_notes", project
         ? static_cast<int>(project->getNotes().size()) : 0);
-    instance->setProperty("render_pending", mcpRenderPending);
-    instance->setProperty("render_generation", static_cast<int>(mcpRenderGeneration));
+    instance->setProperty("render_pending", renderState.mcpRenderPending);
+    instance->setProperty("render_generation", static_cast<int>(renderState.generation));
+    // D-266 (T6): estado unico derivado y datos del pase en vuelo.
+    instance->setProperty("render_phase",
+                          RenderState::phaseName(renderState.phase()));
+    instance->setProperty("pass_revision",
+                          static_cast<juce::int64>(renderState.passRevision));
+    instance->setProperty("pass_start_frame", renderState.passStartFrame);
+    instance->setProperty("pass_end_frame", renderState.passEndFrame);
+    instance->setProperty("edit_scheduled", renderState.editRenderScheduled);
+    instance->setProperty("edit_in_flight", renderState.editRenderInFlight);
+    instance->setProperty("flush_chain_active", renderState.flushChainActive);
+    instance->setProperty("deferred_pending", renderState.deferredRenderPending);
+    // D-266: invariante de reposo del lado de la UI. `backendFlushActive`
+    // vive en el procesador (PluginProcessor) y no es visible desde aqui: se
+    // verifica por la traza de D-264, no por este canal. Se publica aparte
+    // `flush_chain_active`, que es el flush de la UI.
+    instance->setProperty("quiescent",
+                          renderState.isQuiescent(project ? project->hasDirtyNotes() : false,
+                                                  project ? project->hasF0DirtyRange() : false,
+                                                  false));
     // D-174: read the engine this instance will render with. The document
     // value is what survives save/reopen; "none" means it follows the shared
     // preference (legacy document).
@@ -2039,7 +2066,29 @@ void MainComponent::pollMcpControl()
         noteObject->setProperty("start_frame", note.getStartFrame());
         noteObject->setProperty("end_frame", note.getEndFrame());
         noteObject->setProperty("midi", note.getMidiNote());
+        // D-267 (T5): la altura de fuente y el desplazamiento que decide el
+        // rango de beneficio del Vocoder [-1,5; +2,5] st (D-257).
+        noteObject->setProperty("original_midi", note.getOriginalMidiNote());
+        const float shiftSemitones =
+            note.getAdjustedMidiNote() - note.getOriginalMidiNote();
+        noteObject->setProperty("shift_semitones",
+                                static_cast<double>(shiftSemitones));
+        noteObject->setProperty("out_of_range",
+                                shiftSemitones < -1.5f || shiftSemitones > 2.5f);
         noteObject->setProperty("rest", note.isRest());
+        // D-267 (T7): por que una nota no es "neutral" frente a la fuente. El
+        // reset solo devuelve el original si isNeutralForOriginalWaveform() es
+        // cierto; estos campos dicen cual de sus condiciones falla.
+        noteObject->setProperty("neutral", note.isNeutralForOriginalWaveform());
+        noteObject->setProperty("src_start_frame", note.getSrcStartFrame());
+        noteObject->setProperty("src_end_frame", note.getSrcEndFrame());
+        noteObject->setProperty("transition_out_ms", note.getTransitionOutMs());
+        noteObject->setProperty("vibrato", note.getVibrato());
+        noteObject->setProperty("pitch_drift", note.getPitchDrift());
+        noteObject->setProperty("volume_db", note.getVolumeDb());
+        noteObject->setProperty("formant", note.getFormantShift());
+        noteObject->setProperty("has_baked_delta", note.hasBakedDeltaPitch());
+        noteObject->setProperty("rendered_edit", note.hasRenderedEdit());
         noteObject->setProperty("engine", noteEngineToString(note.getEngine()));
         // D-181: what the renderer will actually use. With no hidden fallback
         // it must equal the stored request (or the instance engine for
@@ -2065,6 +2114,10 @@ void MainComponent::pollMcpControl()
         noteArray.add(juce::var(noteObject));
       }
       response->setProperty("notes", juce::var(noteArray));
+      response->setProperty(
+          "out_of_range_count",
+          engineBlocks::countOutOfBenefitRange(project->getNotes()));
+      response->setProperty("bypass", project->isBypassProcessing());
       response->setProperty("ok", true);
     }
     else if (command == "list_note_modulators")
@@ -2327,6 +2380,11 @@ void MainComponent::pollMcpControl()
           for (const int index : lastBlockEngineOutOfRange)
             outOfRange.add(index);
           response->setProperty("out_of_range_indices", juce::var(outOfRange));
+          juce::Array<juce::var> overwrittenIndices;
+          for (const int index : lastBlockEngineOverwrittenIndices)
+            overwrittenIndices.add(index);
+          response->setProperty("overwritten_indices",
+                                juce::var(overwrittenIndices));
           response->setProperty("block_message", lastEngineBlockMessage);
           response->setProperty("engine", engineText);
           response->setProperty("ok", refused == 0);
@@ -2338,21 +2396,255 @@ void MainComponent::pollMcpControl()
     else if (command == "set_bypass")
     {
       // D-260 (S5): bypass del editor como estado del documento. Publica el
-      // original con crossfade corto en los bordes de la region.
+      // original con crossfade corto en los bordes. D-267: mismo camino que el
+      // boton del rail.
       const auto valueVar = request.getProperty("bypass", juce::var());
       if (!valueVar.isBool() && !valueVar.isInt() && !valueVar.isDouble())
         response->setProperty("error", "set_bypass necesita bypass=true/false.");
       else
       {
         const bool value = static_cast<bool>(valueVar);
-        project->setBypassProcessing(value);
-        project->setModified(true);
-        markRenderDirty();
-        notifyProjectDataChanged();
-        if (isPluginMode() && onPitchEditFinished)
-          onPitchEditFinished();
-        response->setProperty("bypass", value);
+        applyBypassProcessing(value);
+        response->setProperty("bypass", project->isBypassProcessing());
         response->setProperty("ok", true);
+      }
+    }
+    else if (command == "click_bypass")
+    {
+      // D-267 (T3): pulsa el boton del rail por su onClick real. Sirve para
+      // verificar el cableado sin teclado/raton scriptable (D-126).
+      const bool before = project->isBypassProcessing();
+      enginePanel.clickBypassNow();
+      response->setProperty("bypass_before", before);
+      response->setProperty("bypass", project->isBypassProcessing());
+      response->setProperty("button_visible", enginePanel.isBypassButtonVisible());
+      response->setProperty("ok", true);
+    }
+    else if (command == "reset_notes")
+    {
+      // D-267 (T7): reset por el mismo camino del boton y del menu (undo y
+      // render). indices vacio = todas las notas.
+      const auto indicesVar = request.getProperty("indices", juce::var());
+      std::vector<int> indices;
+      if (indicesVar.isArray())
+        for (const auto &value : *indicesVar.getArray())
+          indices.push_back(static_cast<int>(value));
+      auto &notes = project->getNotes();
+      if (indices.empty())
+        for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+          indices.push_back(i);
+
+      bool valid = true;
+      for (const int index : indices)
+        if (index < 0 || index >= static_cast<int>(notes.size()))
+          valid = false;
+
+      if (!valid)
+        response->setProperty("error", "reset_notes: indice fuera de rango; no se aplico nada.");
+      else
+      {
+        juce::Array<juce::var> resetIndices;
+        for (const int index : indices)
+        {
+          if (pianoRoll.resetNoteToOriginal(index))
+            resetIndices.add(index);
+        }
+        response->setProperty("reset_indices", juce::var(resetIndices));
+        response->setProperty("ok", true);
+      }
+    }
+    else if (command == "probe_audio")
+    {
+      // D-267 (T2/T3/T7): huella del audio autoritativo. `buildPublishAudio`
+      // es exactamente lo que el ARA publica (PluginProcessor.cpp, D-239), asi
+      // que comparar hashes mide lo que el host recibe sin captura en tiempo
+      // real ni bounce. hash de FNV-1a sobre los bits float del canal 0.
+      const auto &audio = project->getAudioData();
+      const int totalSamples = audio.waveform.getNumSamples();
+      int first = static_cast<int>(request.getProperty("start_sample", 0));
+      int last = static_cast<int>(request.getProperty("end_sample", totalSamples));
+      first = juce::jlimit(0, totalSamples, first);
+      last = juce::jlimit(first, totalSamples, last);
+      auto hashRange = [first, last](const juce::AudioBuffer<float> &buffer) {
+        juce::uint64 hash = 1469598103934665603ull;
+        if (buffer.getNumChannels() <= 0)
+          return juce::String("none");
+        const auto *data = buffer.getReadPointer(0);
+        const int end = std::min(last, buffer.getNumSamples());
+        for (int i = first; i < end; ++i)
+        {
+          juce::uint32 bits = 0;
+          std::memcpy(&bits, data + i, sizeof(bits));
+          for (int byte = 0; byte < 4; ++byte)
+          {
+            hash ^= (bits >> (8 * byte)) & 0xFFu;
+            hash *= 1099511628211ull;
+          }
+        }
+        return juce::String::toHexString(static_cast<juce::int64>(hash));
+      };
+      double energy = 0.0;
+      float peak = 0.0f;
+      double originalEnergy = 0.0;
+      float originalPeak = 0.0f;
+      float stepWave = 0.0f;
+      float stepOriginal = 0.0f;
+      double diffWaveOriginal = 0.0;
+      int diffCount = 0;
+      int firstDiff = -1;
+      int lastDiff = -1;
+      auto published = project->buildPublishAudio();
+      double diffPublishWave = 0.0;
+      double diffPublishOriginal = 0.0;
+      if (audio.waveform.getNumChannels() > 0)
+      {
+        const auto *data = audio.waveform.getReadPointer(0);
+        const auto *original = audio.originalWaveform.getNumChannels() > 0
+                                   ? audio.originalWaveform.getReadPointer(0)
+                                   : nullptr;
+        const auto *publishedData =
+            published.getNumChannels() > 0 ? published.getReadPointer(0) : nullptr;
+        const int end = std::min(last, audio.waveform.getNumSamples());
+        for (int i = first; i < end; ++i)
+        {
+          energy += static_cast<double>(data[i]) * data[i];
+          peak = std::max(peak, std::abs(data[i]));
+          if (i > first)
+            stepWave = std::max(stepWave, std::abs(data[i] - data[i - 1]));
+          if (original != nullptr)
+          {
+            originalEnergy += static_cast<double>(original[i]) * original[i];
+            originalPeak = std::max(originalPeak, std::abs(original[i]));
+            if (i > first)
+              stepOriginal = std::max(
+                  stepOriginal, std::abs(original[i] - original[i - 1]));
+            const double diff = std::abs(static_cast<double>(data[i]) - original[i]);
+            diffWaveOriginal = std::max(diffWaveOriginal, diff);
+            if (diff > 1.0e-7)
+            {
+              ++diffCount;
+              if (firstDiff < 0)
+                firstDiff = i;
+              lastDiff = i;
+            }
+          }
+          if (publishedData != nullptr)
+          {
+            diffPublishWave = std::max(
+                diffPublishWave,
+                std::abs(static_cast<double>(publishedData[i]) - data[i]));
+            if (original != nullptr)
+              diffPublishOriginal = std::max(
+                  diffPublishOriginal,
+                  std::abs(static_cast<double>(publishedData[i]) - original[i]));
+          }
+        }
+      }
+      const int count = std::max(0, std::min(last, totalSamples) - first);
+      response->setProperty("first_sample", first);
+      response->setProperty("last_sample", last);
+      response->setProperty("sample_rate", audio.sampleRate);
+      response->setProperty("waveform_hash", hashRange(audio.waveform));
+      response->setProperty("original_hash", hashRange(audio.originalWaveform));
+      response->setProperty("publish_hash",
+                            hashRange(project->buildPublishAudio()));
+      response->setProperty("peak", static_cast<double>(peak));
+      response->setProperty("rms",
+                            count > 0 ? std::sqrt(energy / count) : 0.0);
+      response->setProperty("original_peak", static_cast<double>(originalPeak));
+      response->setProperty("original_rms",
+                            count > 0 ? std::sqrt(originalEnergy / count) : 0.0);
+      response->setProperty("step_waveform", static_cast<double>(stepWave));
+      response->setProperty("step_original", static_cast<double>(stepOriginal));
+      // D-267 (T2): diff contra la medida anterior (mismo tramo). Separa "el
+      // audio no cambio" de "otro pase del mismo estado" y de "audio viejo".
+      double diffPrevious = 0.0;
+      int previousDiffs = 0;
+      bool comparable = static_cast<int>(lastProbeSamples.size()) == count &&
+                        lastProbeFirstSample == first;
+      if (comparable && audio.waveform.getNumChannels() > 0)
+      {
+        const auto *data = audio.waveform.getReadPointer(0);
+        for (int i = 0; i < count; ++i)
+        {
+          const double diff =
+              std::abs(static_cast<double>(data[first + i]) -
+                       lastProbeSamples[static_cast<size_t>(i)]);
+          diffPrevious = std::max(diffPrevious, diff);
+          if (diff > 1.0e-7)
+            ++previousDiffs;
+        }
+      }
+      response->setProperty("comparable_with_previous", comparable);
+      response->setProperty("max_diff_previous", diffPrevious);
+      response->setProperty("diff_samples_previous", previousDiffs);
+      lastProbeSamples.assign(count, 0.0f);
+      if (count > 0 && audio.waveform.getNumChannels() > 0)
+      {
+        const auto *data = audio.waveform.getReadPointer(0);
+        for (int i = 0; i < count; ++i)
+          lastProbeSamples[static_cast<size_t>(i)] = data[first + i];
+      }
+      lastProbeFirstSample = first;
+      response->setProperty("max_diff_wave_original", diffWaveOriginal);
+      response->setProperty("diff_samples", diffCount);
+      response->setProperty("first_diff_sample", firstDiff);
+      response->setProperty("last_diff_sample", lastDiff);
+      response->setProperty("max_diff_publish_waveform", diffPublishWave);
+      response->setProperty("max_diff_publish_original", diffPublishOriginal);
+      response->setProperty("dirty_notes", project->hasDirtyNotes());
+      response->setProperty("f0_dirty", project->hasF0DirtyRange());
+      response->setProperty("render_generation",
+                            static_cast<int>(renderState.generation));
+      response->setProperty("ok", true);
+    }
+    else if (command == "dump_audio")
+    {
+      // D-267 (T8): escribe el audio publicado (buildPublishAudio) a un WAV,
+      // para que la escucha del usuario tenga el archivo exacto que el host
+      // recibe, sin depender del bounce offline ni de la captura en vivo.
+      const auto path = request.getProperty("path", "").toString();
+      const auto &audio = project->getAudioData();
+      const int totalSamples = audio.waveform.getNumSamples();
+      int first = static_cast<int>(request.getProperty("start_sample", 0));
+      int last = static_cast<int>(request.getProperty("end_sample", totalSamples));
+      first = juce::jlimit(0, totalSamples, first);
+      last = juce::jlimit(first, totalSamples, last);
+      auto published = project->buildPublishAudio();
+      if (path.isEmpty() || last <= first || published.getNumSamples() <= 0)
+        response->setProperty("error", "dump_audio necesita path y un tramo con audio.");
+      else
+      {
+        juce::File file(path);
+        file.getParentDirectory().createDirectory();
+        file.deleteFile();
+        auto stream = std::unique_ptr<juce::FileOutputStream>(file.createOutputStream());
+        if (stream == nullptr)
+          response->setProperty("error", "dump_audio: no se pudo abrir " + path);
+        else
+        {
+          const int channels = std::max(1, published.getNumChannels());
+          const int lastSample =
+              std::min(last, published.getNumSamples());
+          std::unique_ptr<juce::AudioFormatWriter> writer(
+              juce::WavAudioFormat().createWriterFor(
+                  stream.get(), static_cast<double>(audio.sampleRate),
+                  static_cast<unsigned int>(channels), 24, {}, 0));
+          if (writer == nullptr)
+            response->setProperty("error", "dump_audio: formato no soportado.");
+          else
+          {
+            stream.release();
+            writer->writeFromAudioSampleBuffer(published, first,
+                                               lastSample - first);
+            writer.reset();
+            response->setProperty("path", path);
+            response->setProperty("first_sample", first);
+            response->setProperty("last_sample", lastSample);
+            response->setProperty("sample_rate", audio.sampleRate);
+            response->setProperty("ok", true);
+          }
+        }
       }
     }
     else if (command == "set_synthesis_engine")
@@ -2645,6 +2937,17 @@ void MainComponent::pollMcpControl()
                             project != nullptr
                                 ? static_cast<int>(project->getNotes().size())
                                 : 0);
+      // D-267: verificacion de UI sin raton (bypass y aviso de motor).
+      response->setProperty("bypass",
+                            project != nullptr && project->isBypassProcessing());
+      response->setProperty("bypass_button_visible",
+                            enginePanel.isBypassButtonVisible());
+      response->setProperty("block_notice_visible",
+                            enginePanel.isBlockNoticeVisible());
+      response->setProperty("block_notice_text",
+                            enginePanel.getBlockNoticeText());
+      response->setProperty("render_phase",
+                            RenderState::phaseName(renderState.phase()));
       response->setProperty("ok", true);
     }
     else
@@ -2894,12 +3197,12 @@ void MainComponent::saveProject(bool saveAs)
   {
     resumeSaveAfterFlush = true;
     saveAsAfterFlush = saveAs;
-    deferredRenderPending = true;
+    renderState.deferredRenderPending = true;
     playAfterFlush = false;
     toolbar.showProgress(TR("progress.synthesizing"));
     toolbar.setProgress(-1.0f);
     flushDirtyBlocks();
-    if (flushChainActive)
+    if (renderState.flushChainActive)
       return; // the save resumes when the last block is clean
     resumeSaveAfterFlush = false;
   }
@@ -4101,8 +4404,13 @@ void MainComponent::resynthesizeIncremental()
     return;
   }
 
-  mcpRenderPending = true;
-  ++mcpRenderGeneration;
+  renderState.mcpRenderPending = true;
+  ++renderState.generation;
+  // D-266: que cubre este pase. El rango se afina con las notas sucias en la
+  // rama del plugin (abajo); si no hay notas, se usa el rango F0.
+  renderState.passRevision = dirtyRevision;
+  renderState.passStartFrame = project->getF0DirtyRange().first;
+  renderState.passEndFrame = project->getF0DirtyRange().second;
   pushSweepState();
   pianoRoll.repaint();
 
@@ -4121,11 +4429,22 @@ void MainComponent::resynthesizeIncremental()
     // del rango F0. Es lo unico que su cierre limpiara.
     flushDirtyNoteSnapshot.clear();
     const auto &notes = project->getNotes();
+    int passStart = std::numeric_limits<int>::max();
+    int passEnd = std::numeric_limits<int>::min();
     for (int index = 0; index < static_cast<int>(notes.size()); ++index)
     {
       const auto &note = notes[static_cast<size_t>(index)];
       if (note.isDirty())
+      {
         flushDirtyNoteSnapshot.emplace_back(index, note.getDirtyRevision());
+        passStart = std::min(passStart, note.getStartFrame());
+        passEnd = std::max(passEnd, note.getEndFrame());
+      }
+    }
+    if (passEnd > passStart)
+    {
+      renderState.passStartFrame = passStart;
+      renderState.passEndFrame = passEnd;
     }
     const auto f0Range = project->getF0DirtyRange();
     flushF0SnapshotStart = f0Range.first;
@@ -4155,7 +4474,7 @@ void MainComponent::resynthesizeIncremental()
         if (safeThis == nullptr)
           return;
 
-        safeThis->mcpRenderPending = false;
+        safeThis->renderState.mcpRenderPending = false;
         safeThis->pushSweepState();
 
         safeThis->setToolGroupEnabled(true);
@@ -4171,7 +4490,7 @@ void MainComponent::resynthesizeIncremental()
         // P1b: the flush continues block by block. The project renders one
         // silence-bounded block per pass (D-197), so the transport waits until
         // none is left dirty.
-        if (safeThis->flushChainActive)
+        if (safeThis->renderState.flushChainActive)
         {
           auto *chainProject = safeThis->getProject();
           if (chainProject != nullptr &&
@@ -4183,7 +4502,7 @@ void MainComponent::resynthesizeIncremental()
 
           safeThis->deferredRenders.clear();
           safeThis->pushSweepState();
-          safeThis->flushChainActive = false;
+          safeThis->renderState.flushChainActive = false;
           if (safeThis->playAfterFlush)
           {
             safeThis->playAfterFlush = false;
@@ -4225,9 +4544,9 @@ void MainComponent::markRenderDirty()
       " range=[" + juce::String(range.first) + "," +
       juce::String(range.second) + ")");
 
-  deferredRenderPending = true;
+  renderState.deferredRenderPending = true;
   // D-249 (politica A): toda edicion pide su render; el timer lo coalesce.
-  editRenderScheduled = true;
+  renderState.editRenderScheduled = true;
   editRenderRequestedAtMs = juce::Time::getMillisecondCounterHiRes();
   pushSweepState();
   pianoRoll.repaint();
@@ -4239,9 +4558,9 @@ void MainComponent::markRenderDirty()
 // finishBackendRender re-renderiza si la revision cambio.
 void MainComponent::serviceEditRender()
 {
-  if (!editRenderScheduled || editRenderInFlight)
+  if (!renderState.editRenderScheduled || renderState.editRenderInFlight)
     return;
-  if (flushChainActive || mcpRenderPending)
+  if (renderState.flushChainActive || renderState.mcpRenderPending)
     return;
 
   constexpr double kDebounceMs = 120.0;
@@ -4249,7 +4568,7 @@ void MainComponent::serviceEditRender()
       kDebounceMs)
     return;
 
-  editRenderScheduled = false;
+  renderState.editRenderScheduled = false;
 
   auto *project = getProject();
   if (project == nullptr || editorController == nullptr)
@@ -4260,7 +4579,7 @@ void MainComponent::serviceEditRender()
   LOG("P1b: edit render rev=" + juce::String(dirtyRevision) +
       " dirtyNotes=" + juce::String(project->hasDirtyNotes() ? 1 : 0) +
       " f0Dirty=" + juce::String(project->hasF0DirtyRange() ? 1 : 0));
-  editRenderInFlight = true;
+  renderState.editRenderInFlight = true;
   resynthesizeIncremental();
 }
 
@@ -4269,7 +4588,7 @@ void MainComponent::serviceEditRender()
 // Play no se dibuja nada (el progreso vive en la barra superior).
 void MainComponent::pushSweepState()
 {
-  const auto state = sweep::fromQueue(deferredRenders, mcpRenderPending);
+  const auto state = sweep::fromQueue(deferredRenders, renderState.mcpRenderPending);
   pianoRoll.setSweepState(state.active, state.blockStart, state.blockEnd,
                           state.remaining);
 }
@@ -4278,18 +4597,18 @@ void MainComponent::pushSweepState()
 // the transport; the cursor does not advance until the last block is done.
 void MainComponent::flushDirtyBlocks()
 {
-  if (!deferredRenderPending || flushChainActive)
+  if (!renderState.deferredRenderPending || renderState.flushChainActive)
     return;
 
   auto *project = getProject();
   if (project == nullptr || editorController == nullptr)
   {
-    deferredRenderPending = false;
+    renderState.deferredRenderPending = false;
     return;
   }
 
-  deferredRenderPending = false;
-  flushChainActive = true;
+  renderState.deferredRenderPending = false;
+  renderState.flushChainActive = true;
   resynthesizeIncremental();
 }
 
@@ -4307,7 +4626,7 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   // Sin bloques en la cola ni rango F0 sucio no hay flush que hacer.
   if (deferredRenders.dirtyBlockCount() == 0 && !project->hasF0DirtyRange())
     return false;
-  if (!hasDirtyBlocks || flushChainActive)
+  if (!hasDirtyBlocks || renderState.flushChainActive)
     return false;
 
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
@@ -4318,10 +4637,10 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   if (onRequestHostPlayState)
     onRequestHostPlayState(false);
 
-  deferredRenderPending = true;
+  renderState.deferredRenderPending = true;
   playAfterFlush = true;
   flushDirtyBlocks();
-  if (!flushChainActive)
+  if (!renderState.flushChainActive)
   {
     playAfterFlush = false;
     if (onRequestHostPlayState)
@@ -4355,7 +4674,7 @@ void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
   const auto engine = editorController ? editorController->getSynthesisEngineType()
                                        : defaultSynthesisEngineType();
   parameterPanel.setRenderStatus(status, engine);
-  const char *text = status == ParameterPanel::RenderStatus::Rendering ? "Rendering…"
+  const char *text = status == ParameterPanel::RenderStatus::Rendering ? "Renderingâ€¦"
                      : status == ParameterPanel::RenderStatus::Done    ? "Last render: "
                      : status == ParameterPanel::RenderStatus::Failed  ? "Render failed"
                                                                        : "";
@@ -4441,6 +4760,7 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   lastRefusedEngineRequests.clear();
   lastBlockEngineOverwritten = 0;
   lastBlockEngineOutOfRange.clear();
+  lastBlockEngineOverwrittenIndices.clear();
 
   const auto &audio = project->getAudioData();
   const auto &source = audio.originalWaveform.getNumSamples() > 0
@@ -4491,21 +4811,34 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
                                       ? edit.previous
                                       : NoteEngine::Inherit);
       changes.push_back({&note, edit.previous, edit.next});
+      lastBlockEngineOverwrittenIndices.push_back(edit.noteIndex);
     }
   }
   std::sort(lastBlockEngineOutOfRange.begin(),
             lastBlockEngineOutOfRange.end());
+  std::sort(lastBlockEngineOverwrittenIndices.begin(),
+            lastBlockEngineOverwrittenIndices.end());
 
-  if (!plans.empty() && (lastBlockEngineOverwritten > 0 ||
-                         !lastBlockEngineOutOfRange.empty()))
+  if (!plans.empty())
   {
     juce::String message;
     message << "Motor " << noteEngineToString(engine) << ": "
             << lastBlockEngineOverwritten << " de " << blockNotes
             << " nota(s) del bloque cambian de motor.";
+    if (!lastBlockEngineOverwrittenIndices.empty())
+    {
+      message << " Sobrescritas: ";
+      for (size_t i = 0; i < lastBlockEngineOverwrittenIndices.size(); ++i)
+      {
+        if (i > 0)
+          message << ", ";
+        message << "#" << lastBlockEngineOverwrittenIndices[i];
+      }
+      message << ".";
+    }
     if (engine == NoteEngine::Psola && !lastBlockEngineOutOfRange.empty())
     {
-      message << "\n\nFuera del rango de beneficio del Vocoder [-1,5; +2,5] st ("
+      message << "\nFuera del rango de beneficio del Vocoder [-1,5; +2,5] st ("
               << static_cast<int>(lastBlockEngineOutOfRange.size())
               << "): ";
       for (size_t i = 0; i < lastBlockEngineOutOfRange.size(); ++i)
@@ -4516,8 +4849,10 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
       }
       message << ". Se aplica el motor Clasico igualmente.";
     }
-    LOG("engine block: " + message.replace("\n\n", " | "));
-    lastEngineBlockMessage = message.replace("\n\n", " | ");
+    LOG("engine block: " + message.replace("\n", " | "));
+    lastEngineBlockMessage = message.replace("\n", " | ");
+    // D-267 (T4): aviso visual no modal en el rail, mismo dato que el canal.
+    enginePanel.setBlockNotice(message);
   }
 
   if (!changes.empty())
@@ -4559,6 +4894,29 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   // D-258: inside a block there is no usable silence by definition, so a
   // block-wide gesture cannot be refused by D-129.
   return 0;
+}
+
+void MainComponent::applyBypassProcessing(bool bypassed)
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+  if (project->isBypassProcessing() == bypassed)
+    return;
+
+  // D-267 (S5): mismo camino que cualquier edicion audible (D-247): estado del
+  // documento, dirty y render. Sin el render, el ARA silencia la region
+  // mientras hay algo pendiente.
+  project->setBypassProcessing(bypassed);
+  markRenderDirty();
+  // El bypass no tiene notas sucias que renderizar: la publicacion la pide
+  // onPitchEditFinished. La cola de bloques queda vacia para que el estado
+  // derivado no se quede en Dirty (D-266) ni el ARA silencie la region.
+  renderState.deferredRenderPending = false;
+  renderState.editRenderScheduled = false;
+  notifyProjectDataChanged();
+  if (isPluginMode() && onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 void MainComponent::onZoomChanged(float pixelsPerSecond)
@@ -4646,6 +5004,8 @@ void MainComponent::refreshEditorChrome()
                                                                       : "Classic");
   enginePanel.setSynthesisEngine(engine);
   toolbar.setUiMode(editorUiMode);
+  if (project != nullptr)
+    enginePanel.setBypassState(project->isBypassProcessing());
 }
 
 void MainComponent::applyProjectSynthesisEngine()
@@ -4798,7 +5158,7 @@ void MainComponent::hideAnalysisProgress()
 
 void MainComponent::finishBackendRender(bool success)
 {
-  mcpRenderPending = false;
+  renderState.mcpRenderPending = false;
   pushSweepState();
   setToolGroupEnabled(true);
   toolbar.hideProgress();
@@ -4810,7 +5170,7 @@ void MainComponent::finishBackendRender(bool success)
   // D-249: el render al soltar la edicion (politica A) usa el mismo cierre,
   // sin tocar el transporte. Asi el estado sucio del editor no puede quedarse
   // puesto (que es lo que deja la region muda por renderPending).
-  editRenderInFlight = false;
+  renderState.editRenderInFlight = false;
   if (success && flushSnapshotValid)
   {
     auto *doneProject = getProject();
@@ -4836,15 +5196,18 @@ void MainComponent::finishBackendRender(bool success)
       // D-227/D-254: el estado nuevo se renderiza ya; su cierre limpiara su
       // propia instantanea (antes quedaba sucio para siempre, porque el
       // re-render se cerraba sin pasar por la rama de limpieza).
-      if (!flushChainActive)
-        editRenderInFlight = true;
+      if (!renderState.flushChainActive)
+        renderState.editRenderInFlight = true;
       resynthesizeIncremental();
       return;
     }
     deferredRenders.clear();
-    if (flushChainActive)
+    renderState.deferredRenderPending = false;
+    // D-266: ya no queda nada en vuelo ni en cola; el estado derivado pasa a
+    // Published aunque haya sido un render de edicion (no de Play).
+    if (renderState.flushChainActive)
     {
-      flushChainActive = false;
+      renderState.flushChainActive = false;
       // Solo se reanuda si este flush fue quien paro el transporte.
       if (playAfterFlush)
       {

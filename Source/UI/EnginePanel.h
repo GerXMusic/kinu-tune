@@ -34,10 +34,28 @@ public:
     void setDeviceOptions(const juce::StringArray& names, int selectedIndex);
     void setRenderStatusText(const juce::String& text);
 
+    // D-267 (S5): bypass del editor con boton. El estado sigue siendo el del
+    // documento (D-260); el panel solo lo muestra y lo conmuta.
+    void setBypassState(bool bypassed);
+    bool isBypassButtonVisible() const { return bypassButton.isVisible(); }
+    // Camino sincrono del onClick (sin cola de comandos): lo usan el canal de
+    // control y el test para medir el cableado en el acto.
+    void clickBypassNow() { if (bypassButton.onClick) bypassButton.onClick(); }
+    // Camino real del raton (asincrono: postCommandMessage).
+    void triggerBypassButton() { bypassButton.triggerClick(); }
+
+    // D-267 (aviso de motor, sin dialogo modal): panel de texto del rail con
+    // el numero y la lista de D-258. Vacio = no se pinta.
+    void setBlockNotice(const juce::String& text);
+    juce::String getBlockNoticeText() const { return blockNotice.getText(); }
+    bool isBlockNoticeVisible() const { return blockNotice.isVisible(); }
+
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(NoteEngine)> onNoteEngineChanged;
     std::function<void(int)> onDeviceChanged;
     std::function<std::optional<NoteEngine>()> getNoteEngine;
+    std::function<bool()> getBypass;
+    std::function<void(bool)> onBypassChanged;
 
 private:
     class ChoiceList final : public juce::Component
@@ -80,9 +98,15 @@ private:
     juce::Label deviceTitle;
     juce::TextButton deviceButton;
 
+    juce::Label blockNotice;
+    juce::Label bypassTitle;
+    juce::TextButton bypassButton;
+
     juce::Rectangle<int> engineCard;
     juce::Rectangle<int> blockCard;
     juce::Rectangle<int> deviceRow;
+    juce::Rectangle<int> bypassRow;
+    juce::Rectangle<int> noticeCard;
     juce::StringArray deviceNames;
     int deviceIndex = 0;
     juce::String renderStatus;

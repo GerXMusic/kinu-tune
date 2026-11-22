@@ -364,6 +364,21 @@ BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
     return plan;
 }
 
+int countOutOfBenefitRange(const std::vector<Note> &notes,
+                           float benefitMinSemitones,
+                           float benefitMaxSemitones) {
+    int count = 0;
+    for (const auto &note : notes) {
+        if (note.isRest())
+            continue;
+        const float shift =
+            note.getAdjustedMidiNote() - note.getOriginalMidiNote();
+        if (shift < benefitMinSemitones || shift > benefitMaxSemitones)
+            ++count;
+    }
+    return count;
+}
+
 std::vector<Block> blocksToCommit(const std::vector<Block> &plan,
                                   int dirtyStart, int dirtyEnd) {
     std::vector<Block> selected;

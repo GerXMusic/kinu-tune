@@ -121,6 +121,11 @@ namespace
     std::vector<float> bakedDeltaPitch;
     std::vector<float> deltaPitch;
     float correctionSource; // Correct Pitch reference (the sung pitch)
+    // D-268: la transicion al siguiente (D-225) tambien es una edicion guardada:
+    // si no se limpia, la nota nunca es neutral y "restablecer" no devuelve la
+    // fuente (medido en REAPER: 75 ms persistidos dejaban la nota fuera de
+    // isNeutralForOriginalWaveform()).
+    int transitionOutMs;
     // D-258/T6: restablecer limpia tambien el motor elegido y el mute. Sin
     // esto, "restablecer original" dejaba la nota re-sintetizada con su motor
     // o silenciada, y no devolvia la fuente exacta.
@@ -135,7 +140,8 @@ namespace
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
               note.getBakedDeltaPitch(), note.getDeltaPitch(),
-              note.getLastNonMacroMidiNote(), note.getEngine(), note.isMuted(),
+              note.getLastNonMacroMidiNote(), note.getTransitionOutMs(),
+              note.getEngine(), note.isMuted(),
               note.getBlockEngineOverride()};
     }
 
@@ -143,7 +149,7 @@ namespace
     {
       return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
               0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
-              note.getOriginalMidiNote(), NoteEngine::Inherit, false,
+              note.getOriginalMidiNote(), 0, NoteEngine::Inherit, false,
               NoteEngine::Inherit};
     }
 
@@ -163,6 +169,7 @@ namespace
       note.setDeltaOffset(deltaOffset);
       note.setBakedDeltaPitch(bakedDeltaPitch);
       note.setDeltaPitch(deltaPitch);
+      note.setTransitionOutMs(transitionOutMs);
       note.setEngine(engine);
       note.setMuted(muted);
       note.setBlockEngineOverride(blockEngineOverride);
@@ -191,6 +198,7 @@ namespace
     const auto defaults = NoteEditState::defaultsFor(note);
     return current.midiNote != defaults.midiNote ||
            current.pitchOffset != defaults.pitchOffset ||
+           current.transitionOutMs != defaults.transitionOutMs ||
            current.tiltLeft != defaults.tiltLeft ||
            current.tiltRight != defaults.tiltRight ||
            current.vibrato != defaults.vibrato ||
@@ -4725,9 +4733,22 @@ std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
   return note.isSelected() && selected.size() > 1 ? selected : targets;
 }
 
-void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
+bool PianoRollComponent::resetNoteToOriginal(int index)
 {
   if (!project)
+    return false;
+  auto &notes = project->getNotes();
+  if (index < 0 || index >= static_cast<int>(notes.size()))
+    return false;
+  auto &note = notes[static_cast<size_t>(index)];
+  if (note.isRest())
+    return false;
+  resetNoteEdits(note, NoteRestoreMode::All);
+  return true;
+}
+
+void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
+{  if (!project)
     return;
 
   const auto targets = getResetTargetNotes(note);

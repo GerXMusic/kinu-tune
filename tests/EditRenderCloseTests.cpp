@@ -1,4 +1,4 @@
-﻿// S4d (pendiente 1 de la fase 3): el cierre del render del plugin.
+// S4d (pendiente 1 de la fase 3): el cierre del render del plugin.
 //
 // Criterio escrito ANTES de medir (no se ajusta despues del numero):
 //
@@ -162,7 +162,7 @@ struct MainComponentTestAccess {
   void bypassDebounce() {
     mc.editRenderRequestedAtMs = juce::Time::getMillisecondCounterHiRes() - 1000.0;
   }
-  bool editRenderInFlight() const { return mc.editRenderInFlight; }
+  bool editRenderInFlight() const { return mc.renderState.editRenderInFlight; }
 };
 
 namespace {

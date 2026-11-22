@@ -22,6 +22,7 @@
 //
 // Todos los tests comparan contra un render completo del estado final, como pide la Fase 1.
 
+#include "../Source/Audio/Synthesis/EngineBlocks.h"
 #include "../Source/Audio/Synthesis/IncrementalSynthesizer.h"
 #include "../Source/Models/Project.h"
 #include "../Source/Utils/Constants.h"
@@ -768,6 +769,152 @@ float rmsWindow(const juce::AudioBuffer<float> &a, int boundaryFrame,
   return static_cast<float>(std::sqrt(energy / (last - first)));
 }
 
+// D-265: discontinuidad de ENVOLVENTE en la frontera. Para cada bloque de 1 ms
+// (48 muestras) de la ventana de +-16 ms se compara el maximo de |x| contra el
+// del render completo del estado final (control) y de la fuente. Limite: si el
+// control suena (eControl > 1e-6) la salida no puede caer por debajo de
+// 0,5*eControl (6 dB); si el control es silencio digital (<= 1e-6) la salida
+// tambien. Devuelve el ratio minimo y los peores valores para el informe.
+struct EnvelopeReport {
+  float minRatio = 1.0f;
+  float worstOut = 0.0f;
+  float worstControl = 0.0f;
+  int worstSample = -1;
+  bool hole = false;
+};
+
+EnvelopeReport envelopeAt(const juce::AudioBuffer<float> &out,
+                          const juce::AudioBuffer<float> &control,
+                          int boundaryFrame, int halfWindowSamples = 768,
+                          int blockSamples = 48) {
+  constexpr float kNoiseFloor = 1.0e-6f;
+  constexpr float kMinRatio = 0.5f;
+  EnvelopeReport report;
+  const int center = boundaryFrame * kHop;
+  const int first = std::max(0, center - halfWindowSamples);
+  const int last = std::min({out.getNumSamples(), control.getNumSamples(),
+                             center + halfWindowSamples});
+  for (int block = first; block + blockSamples <= last; block += blockSamples) {
+    float outPeak = 0.0f;
+    float controlPeak = 0.0f;
+    for (int i = block; i < block + blockSamples; ++i) {
+      outPeak = std::max(outPeak, std::abs(out.getSample(0, i)));
+      controlPeak = std::max(controlPeak, std::abs(control.getSample(0, i)));
+    }
+    if (controlPeak <= kNoiseFloor) {
+      if (outPeak > kNoiseFloor) {
+        report.hole = true;
+        report.worstOut = outPeak;
+        report.worstControl = controlPeak;
+        report.worstSample = block;
+      }
+      continue;
+    }
+    const float ratio = outPeak / controlPeak;
+    if (ratio < report.minRatio) {
+      report.minRatio = ratio;
+      report.worstOut = outPeak;
+      report.worstControl = controlPeak;
+      report.worstSample = block;
+      report.hole = ratio < kMinRatio;
+    }
+  }
+  return report;
+}
+
+// Las dos fronteras que produciria el commit de las notas sucias, por las
+// mismas funciones del motor (D-250/D-262) y con el MISMO rango de render que
+// calcula el pase (IncrementalSynthesizer::computeSynthesisRange: puente de 16
+// frames sobre voicedMask y 24 frames de padding). Sin esto, el borde del
+// bloque del fixture no es el de produccion y la frontera se mide donde no cae.
+std::pair<int, int> productionSynthesisRange(const Project &project,
+                                             int dirtyStart, int dirtyEnd) {
+  const auto &voiceMask = project.getAudioData().voicedMask;
+  const int totalFrames = static_cast<int>(voiceMask.size());
+  if (totalFrames == 0)
+    return {dirtyStart, dirtyEnd};
+  constexpr int kPadFrames = 24;
+  constexpr int kGapBridgeFrames = 16;
+  const auto isVoiced = [&](int index) {
+    return index >= 0 && index < totalFrames &&
+           static_cast<bool>(voiceMask[static_cast<size_t>(index)]);
+  };
+  int start = std::max(0, dirtyStart);
+  int backGap = 0;
+  while (start > 0) {
+    if (isVoiced(start - 1)) {
+      --start;
+      backGap = 0;
+      continue;
+    }
+    if (backGap < kGapBridgeFrames) {
+      --start;
+      ++backGap;
+      continue;
+    }
+    break;
+  }
+  start = std::max(0, start - kPadFrames);
+  int end = std::min(totalFrames, dirtyEnd);
+  int fwdGap = 0;
+  while (end < totalFrames) {
+    if (isVoiced(end)) {
+      ++end;
+      fwdGap = 0;
+      continue;
+    }
+    if (fwdGap < kGapBridgeFrames) {
+      ++end;
+      ++fwdGap;
+      continue;
+    }
+    break;
+  }
+  end = std::min(totalFrames, end + kPadFrames);
+  return {start, end};
+}
+
+std::pair<int, int> commitBoundaries(const Project &project,
+                                     SynthesisEngineType engine) {
+  const auto &audio = project.getAudioData();
+  int dirtyStart = kThreeTotalFrames;
+  int dirtyEnd = 0;
+  for (const auto &note : project.getNotes()) {
+    if (note.isRest() || !note.isDirty())
+      continue;
+    dirtyStart = std::min(dirtyStart, note.getStartFrame());
+    dirtyEnd = std::max(dirtyEnd, note.getEndFrame());
+  }
+  if (dirtyEnd <= dirtyStart)
+    return {0, 0};
+  const auto renderRange = productionSynthesisRange(project, dirtyStart, dirtyEnd);
+  const auto plan = engineBlocks::buildPlan(
+      project.getNotes(), renderRange.first, renderRange.second, engine,
+      audio.originalWaveform.getNumSamples() > 0 ? audio.originalWaveform
+                                                 : audio.waveform,
+      audio.sampleRate, kHop);
+  const auto ranges = engineBlocks::commitRangesForNotes(
+      project.getNotes(), plan, true, -1, -1, renderRange.first,
+      renderRange.second);
+  if (ranges.empty())
+    return {0, 0};
+  return {ranges.front().startFrame, ranges.back().endFrame};
+}
+
+void reportEnvelope(const char *tag, const char *side, int boundaryFrame,
+                    const juce::AudioBuffer<float> &out,
+                    const juce::AudioBuffer<float> &control,
+                    const juce::AudioBuffer<float> &source) {
+  const auto envelope = envelopeAt(out, control, boundaryFrame);
+  const auto againstSource = envelopeAt(out, source, boundaryFrame);
+  std::printf("Sb env %s %s (%d): ratio min %.6f (lim 0.5) | peor salida "
+              "%.8f vs control %.8f | vs fuente %.6f | hueco %s\n",
+              tag, side, boundaryFrame, envelope.minRatio, envelope.worstOut,
+              envelope.worstControl, againstSource.minRatio,
+              envelope.hole ? "SI" : "no");
+  CHECK(!envelope.hole);
+}
+
 void testSbCommitBoundarySeam() {
   Project project = makeThreePhraseProject(NoteEngine::Psola);
   const juce::AudioBuffer<float> source =
@@ -791,6 +938,9 @@ void testSbCommitBoundarySeam() {
   notes[1].markSynthDirty();
   PitchCurveProcessor::rebuildBaseFromNotes(project);
   project.markNoteEditDirtyRange(kThreeB0, kThreeB1);
+  // Fronteras reales del pase (rango de render de produccion, D-265).
+  const auto productionBoundaries =
+      commitBoundaries(project, SynthesisEngineType::Psola);
   // Control: render completo del estado final, en una copia tomada antes del
   // segundo pase (D-259).
   Project control = fullRender(project, SynthesisEngineType::Psola, "B control");
@@ -832,6 +982,60 @@ void testSbCommitBoundarySeam() {
   };
   checkRms("izq", leftBoundary);
   checkRms("der", rightBoundary);
+
+  // D-265: envolvente en las dos fronteras (el criterio que describe "hueco").
+  reportEnvelope("sb", "izq", leftBoundary, out, full, source);
+  reportEnvelope("sb", "der", rightBoundary, out, full, source);
+  // Y en las fronteras del pase de produccion (rango de render expandido).
+  std::printf("Sb fronteras de produccion: [%d, %d)\n",
+              productionBoundaries.first, productionBoundaries.second);
+  reportEnvelope("sb-prod", "izq", productionBoundaries.first, out, full, source);
+  reportEnvelope("sb-prod", "der", productionBoundaries.second, out, full, source);
+}
+
+// D-265, segundo gesto: editar la nota del BORDE de la frase. En el primer caso
+// (nota 0) el commit se recorta al borde del bloque; en el segundo (nota 2) su
+// frontera izquierda tambien la fija el borde del bloque, no el punto medio del
+// silencio. Es el peor caso de emplazamiento del empalme.
+void testSbEdgeNoteBoundary() {
+  const auto runCase = [](int noteIndex, const char *tag) {
+    Project project = makeThreePhraseProject(NoteEngine::Psola);
+    const juce::AudioBuffer<float> source =
+        project.getAudioData().originalWaveform;
+    auto &notes = project.getNotes();
+
+    // Primera pasada: las tres frases editadas.
+    for (auto &note : notes) {
+      note.setPitchOffset(0.5f);
+      note.markDirty();
+      note.markSynthDirty();
+    }
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    project.markNoteEditDirtyRange(0, kThreeTotalFrames);
+    CHECK(renderAndWait(project, SynthesisEngineType::Psola, "B-edge inicial"));
+
+    // Segunda pasada: solo la nota del borde. Las fronteras se derivan del
+    // commit que va a escribir el motor (antes de renderizar).
+    notes[static_cast<size_t>(noteIndex)].setPitchOffset(-1.0f);
+    notes[static_cast<size_t>(noteIndex)].markDirty();
+    notes[static_cast<size_t>(noteIndex)].markSynthDirty();
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    project.markNoteEditDirtyRange(notes[static_cast<size_t>(noteIndex)].getStartFrame(),
+                                   notes[static_cast<size_t>(noteIndex)].getEndFrame());
+    const auto boundaries = commitBoundaries(project, SynthesisEngineType::Psola);
+
+    Project control =
+        fullRender(project, SynthesisEngineType::Psola, "B-edge control");
+    CHECK(renderAndWait(project, SynthesisEngineType::Psola, "B-edge segundo pase"));
+
+    const auto &out = project.getAudioData().waveform;
+    const auto &full = control.getAudioData().waveform;
+    reportEnvelope(tag, "izq", boundaries.first, out, full, source);
+    reportEnvelope(tag, "der", boundaries.second, out, full, source);
+  };
+
+  runCase(0, "edge0");
+  runCase(2, "edge2");
 }
 
 } // namespace
@@ -859,6 +1063,8 @@ int main(int argc, char **argv) {
     testScMacroZeroRestoresSource(NoteEngine::Psola, "motor explicito");
   } else if (group == "sb") {
     testSbCommitBoundarySeam();
+  } else if (group == "sb-edge") {
+    testSbEdgeNoteBoundary();
   } else {
     testS1ResetAll();
     testS2EngineChange();
@@ -870,6 +1076,7 @@ int main(int argc, char **argv) {
     testScMacroZeroRestoresSource(NoteEngine::Inherit, "inherit");
     testScMacroZeroRestoresSource(NoteEngine::Psola, "motor explicito");
     testSbCommitBoundarySeam();
+    testSbEdgeNoteBoundary();
   }
   std::printf("EditSymptomAudioTests [%s]: en verde\n", group.c_str());
   return 0;

@@ -573,10 +573,32 @@ void testCommitRangesUseTheWholeBlockForEveryEngine() {
     }
 }
 
+// D-267 (T5): el conteo que publica el canal es el mismo predicado del aviso.
+void testCountOutOfBenefitRange() {
+    std::vector<Note> notes;
+    notes.push_back(makeNote(0, 10, NoteEngine::Inherit, 60.0f));  // 0 st
+    notes.push_back(makeNote(10, 20, NoteEngine::Inherit, 60.0f));  // +2 st
+    notes.push_back(makeNote(20, 30, NoteEngine::Inherit, 60.0f));  // +2,5 st
+    notes.push_back(makeNote(30, 40, NoteEngine::Inherit, 60.0f));  // -1,5 st
+    notes.push_back(makeNote(40, 50, NoteEngine::Inherit, 60.0f));  // +2,6 st
+    notes[1].setMidiNote(62.0f);
+    notes[2].setMidiNote(62.5f);
+    notes[3].setMidiNote(58.5f);
+    notes[4].setMidiNote(62.6f);
+    Note rest(50, 60, 60.0f);
+    rest.setRest(true);
+    rest.setMidiNote(70.0f);
+    notes.push_back(rest);
+
+    // El limite es abierto: -1,5 y +2,5 estan dentro; +2,6 fuera.
+    const int count = engineBlocks::countOutOfBenefitRange(notes);
+    std::cout << "countOutOfBenefitRange = " << count << " (esperado 1)\n";
+    CHECK(count == 1);
+}
+
 }  // namespace
 
-int main() {
-    testFindSilenceRunNeedsTwentyMilliseconds();
+int main() {    testFindSilenceRunNeedsTwentyMilliseconds();
     testSilenceRunRejectsTone();
     testSingleEngineIsOneBlock();
     testDifferentEngineWithoutSilenceInherits();
@@ -599,6 +621,7 @@ int main() {
     testRefusalNamesTheNoteTheRequestAndTheCause();
     testBlocksToCommitSelectsWholeBlocks();
     testCommitRangesUseTheWholeBlockForEveryEngine();
+    testCountOutOfBenefitRange();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;

@@ -156,6 +156,17 @@ BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
                                     float benefitMaxSemitones = 2.5f);
 
 /**
+ * D-257/D-267 (T5): numero de notas del proyecto cuyo desplazamiento
+ * `getAdjustedMidiNote() - getOriginalMidiNote()` queda fuera del rango de
+ * beneficio del Vocoder. Es el mismo predicado que usa el aviso de D-258 y el
+ * que publica el canal de control (`out_of_range_count`), para que UI y canal
+ * no puedan discrepar. Las notas rest no cuentan.
+ */
+int countOutOfBenefitRange(const std::vector<Note> &notes,
+                           float benefitMinSemitones = -1.5f,
+                           float benefitMaxSemitones = 2.5f);
+
+/**
  * Blocks covering exactly [startFrame, endFrame), in order and contiguous.
  *
  * - Notes are the ones overlapping the range; rests do not carry an engine.

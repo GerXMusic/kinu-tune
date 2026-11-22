@@ -16,6 +16,7 @@
 #include "Components/AppFont.h"
 #include "Main/AuditionOutput.h"
 #include "Main/MenuHandler.h"
+#include "Main/RenderState.h"
 #include "Main/SettingsManager.h"
 #include "ParameterPanel.h"
 #include "TrackListPanel.h"
@@ -343,20 +344,21 @@ private:
   // ya esperando un flush.
   void serviceEditRender();
   double editRenderRequestedAtMs = 0.0;
-  bool editRenderScheduled = false;
-  bool editRenderInFlight = false;
+  // D-266 (T6): un unico estado derivado para el render de la UI. Agrupa
+  // editRenderScheduled, editRenderInFlight, mcpRenderPending, flushChainActive
+  // y deferredRenderPending con el mismo significado y la misma vida (D-261),
+  // y anade la revision/rango/generacion del pase en vuelo.
+  RenderState renderState;
   // P1b: renders the dirty blocks, one per pass, and only then starts the
   // transport. The cursor waits for the last block.
   void flushDirtyBlocks();
   // P1b fase 3: borde de arranque del Play del host. Devuelve true si el
   // transporte se retiene para renderizar y se reanuda al terminar la cadena.
   bool flushDirtyBlocksForHostPlay() override;
-  bool isFlushChainActive() const override { return flushChainActive; }
+  bool isFlushChainActive() const override { return renderState.flushChainActive; }
   // P1b fase 6: cola de bloques pendientes. El barrido se dibuja desde aqui.
   DeferredRenderQueue deferredRenders;
   void pushSweepState();
-  bool deferredRenderPending = false;
-  bool flushChainActive = false;
   bool playAfterFlush = false;
   // D-227: an edit made while a render is in flight must not be swallowed by
   // that render's completion. markRenderDirty bumps the revision; the flush
@@ -398,12 +400,18 @@ private:
   int applyNoteEngineToSelection(NoteEngine engine);
   int applyNoteEngineToIndices(const std::vector<int> &indices,
                                NoteEngine engine);
+  // D-267 (S5): conmuta el bypass del documento por el mismo camino que el
+  // boton del rail: estado, dirty, render y publicacion.
+  void applyBypassProcessing(bool bypassed);
   std::optional<NoteEngine> getSelectionNoteEngine() const;
   // D-258: resumen del ultimo cambio de motor por bloque, para la UI y el canal
   // de control (cuantas notas se sobrescriben y cuales quedan fuera del rango
   // de beneficio del Vocoder).
   int lastBlockEngineOverwritten = 0;
   std::vector<int> lastBlockEngineOutOfRange;
+  // D-267: indices de las notas del bloque cuyo motor almacenado cambia (la
+  // "lista de sobrescritas" del aviso) y el texto del aviso no modal.
+  std::vector<int> lastBlockEngineOverwrittenIndices;
   // D-258: aviso del ultimo cambio de motor por bloque (texto para la UI).
   // No se usa un dialogo modal dentro del plugin: el reporter de REAPER
   // convirtio ese callback en un cierre (c000041d).
@@ -464,10 +472,12 @@ private:
   juce::String mcpInstanceId { juce::Uuid().toString() };
   juce::uint32 mcpLastPollMs = 0;
   juce::uint32 mcpLastHeartbeatMs = 0;
-  juce::uint32 mcpRenderGeneration = 0;
-  bool mcpRenderPending = false;
+  // D-266: la generacion del render vive en renderState.generation.
   std::unique_ptr<PitchUndoManager> ownedUndoManager;
-  PitchUndoManager *undoManager = nullptr;
+  // D-267 (T2): canal de medida. `probe_audio` guarda el tramo medido para que
+  // la siguiente llamada pueda diffear contra el (audio viejo vs nuevo).
+  std::vector<float> lastProbeSamples;
+  int lastProbeFirstSample = 0;  PitchUndoManager *undoManager = nullptr;
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
   bool toolGroupEnabled = true;
   bool previewRegionActive = false;
