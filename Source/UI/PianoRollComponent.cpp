@@ -602,8 +602,9 @@ void PianoRollComponent::paint(juce::Graphics &g)
     drawGameChunksDebugOverlay(g);
     if (bypassView)
     {
-      // Tarea 3: solo la curva de la fuente, en gris. Ni bloques de nota ni
-      // curva editada (Melodyne: bypass = el original tal cual).
+      // Tarea 3: las notas en gris y en su posicion/altura de fuente (como la
+      // melodia original sin modificar) y la curva F0 de la fuente en gris.
+      drawNotes(g, NoteRenderPass::Body);
       drawBypassSourceCurve(g);
     }
     else
@@ -1543,6 +1544,10 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
   const bool splitModeActive = editMode == EditMode::Split;
   noteRenderer->setHoveredNote(hoveredNote);
   noteRenderer->setShowNoteFramesDebug(showNoteFramesDebug);
+  // Tarea 3: con el bypass, las notas se ven en gris y en su posicion y altura
+  // de fuente (la melodia original, sin las modificaciones).
+  noteRenderer->setGreyscale(bypassView);
+  noteRenderer->setOriginalPitchView(bypassView);
   noteRenderer->setPreviewPlaybackState(previewPlaybackActive,
                                         previewPlaybackStartFrame,
                                         previewPlaybackEndFrame,

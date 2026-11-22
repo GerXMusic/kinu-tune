@@ -280,16 +280,27 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (cullEnd < visibleStartTime || cullStart > visibleEndTime)
       continue;
 
-    const float x = static_cast<float>(noteStartTime * pixelsPerSecond);
-    const float w = framesToSeconds(note.getVisualDurationFrames()) *
-                    pixelsPerSecond;
+    const float x = originalPitchView
+                        ? static_cast<float>(
+                              framesToSeconds(note.getSrcStartFrame()) *
+                              pixelsPerSecond)
+                        : static_cast<float>(noteStartTime * pixelsPerSecond);
+    const float w = originalPitchView
+                        ? framesToSeconds(note.getSrcEndFrame() -
+                                          note.getSrcStartFrame()) *
+                              pixelsPerSecond
+                        : framesToSeconds(note.getVisualDurationFrames()) *
+                              pixelsPerSecond;
     const float h = pixelsPerSemitone;
     const float renderedWidth = std::max(w, 4.0f);
 
     // Position at grid cell center for MIDI note, then offset by pitch adjustment
+    const float noteMidi =
+        originalPitchView ? note.getOriginalMidiNote() : note.getMidiNote();
     const float baseGridCenterY =
-        coordMapper->midiToY(note.getMidiNote()) + pixelsPerSemitone * 0.5f;
-    const float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
+        coordMapper->midiToY(noteMidi) + pixelsPerSemitone * 0.5f;
+    const float pitchOffsetPixels =
+        originalPitchView ? 0.0f : -note.getPitchOffset() * pixelsPerSemitone;
     const float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
     const bool isPreviewPlaybackNote =
         previewPlaybackActive && note.getEndFrame() > previewStartFrame &&

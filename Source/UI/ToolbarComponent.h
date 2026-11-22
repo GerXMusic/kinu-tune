@@ -129,8 +129,7 @@ public:
     void setRecordControlVisible(bool visible);
     void setRecordArmed(bool armed);
     // Tarea 2 (2026-11-22): bypass del documento (D-260) en la barra superior,
-    // a la derecha del grupo de escala/tiempo/rejilla. Melodyne-style: un
-    // boton con indicador de activo, no un dialogo.
+    // a la derecha del grupo de escala/tiempo/rejilla. Icono tipo Melodyne.
     void setBypassState(bool active);
     bool isBypassActive() const { return bypassActive; }
     bool isBypassButtonVisible() const { return bypassButton.isVisible(); }
@@ -139,6 +138,14 @@ public:
     juce::Rectangle<int> getBypassButtonBounds() const { return bypassButton.getBounds(); }
     juce::Rectangle<int> getGridButtonBounds() const { return gridButton.getBounds(); }
     std::function<void()> onBypassClicked;
+
+    // Icono del bypass (estilo Melodyne): caja con la flecha que la atraviesa.
+    class BypassIconButton final : public juce::Button
+    {
+    public:
+        BypassIconButton() : juce::Button("Bypass") {}
+        void paintButton(juce::Graphics& g, bool over, bool down) override;
+    };
     // Progress bar control
     void showProgress(const juce::String &message);
     void hideProgress();
@@ -214,7 +221,7 @@ private:
     juce::TextButton scaleButton;
     juce::TextButton tempoButton;
     juce::TextButton gridButton;
-    juce::TextButton bypassButton;
+    BypassIconButton bypassButton;
     bool bypassActive = false;
     juce::TextButton engineButton;
     EditorUiMode uiMode = EditorUiMode::Basic;

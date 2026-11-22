@@ -156,11 +156,7 @@ ToolbarComponent::ToolbarComponent()
     styleFlatTextButton(tempoButton);
     styleFlatTextButton(gridButton);
     styleFlatTextButton(engineButton);
-    styleFlatTextButton(bypassButton);
-    bypassButton.setButtonText("Bypass");
     bypassButton.setTooltip(TR("engine.bypass_hint"));
-    bypassButton.setColour(juce::TextButton::buttonOnColourId, APP_COLOR_PRIMARY);
-    bypassButton.setColour(juce::TextButton::textColourOnId, APP_COLOR_TEXT_PRIMARY);
     bypassButton.onClick = [this]
     {
         if (onBypassClicked)
@@ -372,8 +368,9 @@ void ToolbarComponent::resized()
 
     placeRight(redoButton, 26);
     placeRight(undoButton, 26);
-    // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla.
-    placeRight(bypassButton, 72);
+    // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla. Icono
+    // cuadrado estilo Melodyne.
+    placeRight(bypassButton, 28);
     placeRight(gridButton, 48);
 
     tempoButton.setVisible(showTempo);
@@ -467,7 +464,53 @@ void ToolbarComponent::setBypassState(bool active)
 {
     bypassActive = active;
     bypassButton.setToggleState(active, juce::dontSendNotification);
-    bypassButton.setButtonText(active ? "Bypass *" : "Bypass");
+    bypassButton.repaint();
+}
+
+// Icono de bypass estilo Melodyne: una caja con la senal que la atraviesa y
+// sale por abajo (mismo dibujo que el boton del plugin de referencia).
+void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool over,
+                                                     bool down)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+    const bool active = getToggleState();
+    juce::Colour background = APP_COLOR_SURFACE_RAISED;
+    if (active)
+        background = APP_COLOR_PRIMARY;
+    else if (down)
+        background = APP_COLOR_SURFACE_RAISED.darker(0.25f);
+    else if (over)
+        background = APP_COLOR_SURFACE_RAISED.brighter(0.12f);
+    g.setColour(background);
+    g.fillRoundedRectangle(bounds, 4.0f);
+    g.setColour(active ? APP_COLOR_PRIMARY.brighter(0.35f)
+                       : APP_COLOR_BORDER_HIGHLIGHT);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+
+    g.setColour(APP_COLOR_TEXT_PRIMARY);
+    const auto centre = bounds.getCentre();
+    const float w = bounds.getWidth();
+    const float h = bounds.getHeight();
+    juce::Path icon;
+    // Caja pequena a la izquierda.
+    const auto box = juce::Rectangle<float>(centre.x - w * 0.28f,
+                                            centre.y - h * 0.16f,
+                                            w * 0.30f, h * 0.32f);
+    g.fillRoundedRectangle(box, 1.2f);
+    // Flecha: entra por la caja, sube y sale hacia abajo por la derecha.
+    icon.startNewSubPath(box.getRight(), box.getCentreY());
+    icon.lineTo(centre.x + w * 0.30f, box.getCentreY());
+    icon.lineTo(centre.x + w * 0.30f, centre.y + h * 0.30f);
+    g.strokePath(icon, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
+                                            juce::PathStrokeType::rounded));
+    juce::Path arrow;
+    const float tipY = centre.y + h * 0.34f;
+    const float tipX = centre.x + w * 0.30f;
+    arrow.startNewSubPath(tipX - 3.0f, tipY - 4.0f);
+    arrow.lineTo(tipX, tipY);
+    arrow.lineTo(tipX + 3.0f, tipY - 4.0f);
+    g.strokePath(arrow, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
+                                             juce::PathStrokeType::rounded));
 }
 
 void ToolbarComponent::setUiMode(EditorUiMode mode){
