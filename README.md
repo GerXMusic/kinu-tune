@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Kinu Tune</h1>
+  <h1>TuneX</h1>
   <p>Cubase VariAudio 風の操作で使える AI ボーカルピッチエディター(VST® 3 / ARA)。<br>
   A vocal pitch editor with Cubase VariAudio-style controls and one-click scale-degree harmony.</p>
 </div>
@@ -8,17 +8,17 @@
 
 ## 由来・著作権・ライセンス / Origin, attribution and license
 
-Kinu Tune は、Session Loops による [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 を Keinoaza が改変したものです(2026-10-19 から)。PitchNet は [HachiTune](https://github.com/KCKT0112/HachiTune) の派生物です。変更点は [MODIFICATIONS.md](MODIFICATIONS.md) にあります。
+TuneX は、Session Loops による [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 を Keinoaza が改変したものです(2026-10-19 から)。PitchNet は [HachiTune](https://github.com/KCKT0112/HachiTune) の派生物です。変更点は [MODIFICATIONS.md](MODIFICATIONS.md) にあります。
 
-Kinu Tune is a modified version of [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 by Session Loops, made by Keinoaza from 2026-10-19. PitchNet is itself a modified derivative of [HachiTune](https://github.com/KCKT0112/HachiTune) by the HachiTune contributors. Kinu Tune includes substantial code derived from PitchNet and HachiTune, along with the changes by Session Loops, other contributors and Keinoaza; this repository does not claim sole authorship of the derived work. The changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
+TuneX is a modified version of [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 by Session Loops, made by Keinoaza from 2026-10-19. PitchNet is itself a modified derivative of [HachiTune](https://github.com/KCKT0112/HachiTune) by the HachiTune contributors. TuneX includes substantial code derived from PitchNet and HachiTune, along with the changes by Session Loops, other contributors and Keinoaza; this repository does not claim sole authorship of the derived work. The changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
 
 - Copyright (C) 2026 Keinoaza (modifications)
 - Copyright (c) 2026 Session Loops and contributors (PitchNet)
 - Copyright the HachiTune contributors (HachiTune)
 
-Kinu Tune is free software, distributed under the [GNU Affero General Public License, version 3](LICENSE) (AGPLv3), WITHOUT ANY WARRANTY. When you convey copies or modified versions, keep all copyright, license and attribution notices and make the corresponding source available, as the AGPLv3 requires. Third-party components and model files keep their own licenses: see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+TuneX is free software, distributed under the [GNU Affero General Public License, version 3](LICENSE) (AGPLv3), WITHOUT ANY WARRANTY. When you convey copies or modified versions, keep all copyright, license and attribution notices and make the corresponding source available, as the AGPLv3 requires. Third-party components and model files keep their own licenses: see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
-Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
+TuneX is not affiliated with or endorsed by Session Loops, the HachiTune contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
 
 ---
 
@@ -42,48 +42,48 @@ PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が�
 
 ### インストール(配布版)
 
-[Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) のインストーラーを使うのが簡単です。
+[Releases](https://github.com/keinoaza666-stack/tunex/releases) のインストーラーを使うのが簡単です。
 
-Mac 版(`Kinu-Tune-<版>-macOS-arm64.pkg`):
+Mac 版(`TuneX-<版>-macOS-arm64.pkg`):
 
 1. ダウンロードした pkg を開きます
 2. 「開けません」と出た時は、「システム設定 > プライバシーとセキュリティ」の下に出る「このまま開く」を押して、もう一度開きます(Apple の公証を受けていないため)
 3. 「続ける」「インストール」と進めます。管理者のパスワードは要りません。AU 版が要らない場合は「カスタマイズ」で外せます
-4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「TuneX」が出ます)
 
-消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune`(モデルとライセンス文書)を削除します。
+消す時は、`~/Library/Audio/Plug-Ins/VST3/TuneX.vst3`、`~/Library/Audio/Plug-Ins/Components/TuneX.component`、`~/Library/Application Support/Keinoaza/TuneX`(モデルとライセンス文書)を削除します。
 
-Windows 版(`Kinu-Tune-<版>-Windows-x64-Setup.exe`):
+Windows 版(`TuneX-<版>-Windows-x64-Setup.exe`):
 
-1. 前に zip から手で入れていた場合は、`%APPDATA%\Keinoaza\Kinu Tune` フォルダーを先に削除します(残っていると、プラグインはそちらのモデルを使い続けます)
+1. 前に zip から手で入れていた場合は、`%APPDATA%\Keinoaza\TuneX` フォルダーを先に削除します(残っていると、プラグインはそちらのモデルを使い続けます)
 2. ダウンロードした exe を開きます
 3. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
 4. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
 5. DAW を起動し直し、プラグインを再スキャンします
 
-消す時は、Windows の「設定 > アプリ」から Kinu Tune をアンインストールします。
+消す時は、Windows の「設定 > アプリ」から TuneX をアンインストールします。
 
 #### zip から手で入れる場合
 
 Mac 版:
 
-1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
-2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
-3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
-4. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` などになる配置)
-5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
-6. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
+1. [Releases](https://github.com/keinoaza666-stack/tunex/releases) から `TuneX-<版>-macOS-arm64.zip` をダウンロードして展開します
+2. `TuneX.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`TuneX.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
+3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `TuneX` という名前のフォルダーを作ります
+4. zip の中の `models` フォルダーを、いま作った `TuneX` フォルダーの中に入れます(`~/Library/Application Support/Keinoaza/TuneX/models/fcpe.onnx` などになる配置)
+5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「TuneX」が出ます)
+6. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る TuneX の「このまま開く」を押してから、DAW をもう一度起動します
 7. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
 
    ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/TuneX.vst3 ~/Library/Audio/Plug-Ins/Components/TuneX.component
    ```
 
-Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
+Windows 版(`TuneX-<版>-Windows-x64.zip`):
 
-1. `Kinu Tune.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
-2. AI のモデルを置くフォルダーを作ります。エクスプローラーのアドレス欄に `%APPDATA%` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
-3. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
+1. `TuneX.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
+2. AI のモデルを置くフォルダーを作ります。エクスプローラーのアドレス欄に `%APPDATA%` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `TuneX` という名前のフォルダーを作ります
+3. zip の中の `models` フォルダーを、いま作った `TuneX` フォルダーの中に入れます(`%APPDATA%\Keinoaza\TuneX\models\fcpe.onnx` などになる配置)
 4. DAW を起動し直してプラグインを再スキャンします
 
 挿すと落ちる、または解析が始まらない場合は、[Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)](https://aka.ms/vc14/vc_redist.x64.exe)をインストールしてから DAW を起動し直してください。AI の部品(ONNX Runtime)がこれを必要とします。足りない時は、プラグインが画面で知らせて解析を止めます。
@@ -91,7 +91,7 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 ### Cubase でハモリを作る
 
 1. ボーカルトラックを複製し、複製側のオーディオイベントを選びます
-2. オーディオ > エクステンション > Kinu Tune で解析します
+2. オーディオ > エクステンション > TuneX で解析します
 3. 左のエディタースケールで曲のキーを選びます
 4. その下のハモリ欄で「3度 上」などを押します(何も選んでいなければ全ノート、選んでいればそのノートだけが動きます)
 
@@ -156,7 +156,7 @@ Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
 | Option + ドラッグ(空いている所) | 縦方向の拡大縮小 |
 | Option + ダブルクリック(空いている所) | 全体表示(Shift + F と同じ) |
 
-VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグでのズームと Option + クリックでの縮小(Option は縦の拡大縮小に割り当てました)。セグメントを削除するキーもありません。
+VariAudio にあって TuneX に無いもの: Option + 矩形ドラッグでのズームと Option + クリックでの縮小(Option は縦の拡大縮小に割り当てました)。セグメントを削除するキーもありません。
 
 ### AI モデルについて
 
@@ -168,15 +168,15 @@ VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグで
 | GAME | ノート分割 | 学習済みモデルは CC BY-NC-SA 4.0(ソースは MIT) |
 | PC-NSF-HiFiGAN | 再合成(ボコーダー) | 学習済みモデルは CC BY-NC-SA 4.0([OpenVPI の通知](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-- GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。Kinu Tune の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
+- GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。TuneX の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
 - モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
-- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/Kinu Tune/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\Kinu Tune\models`、zip から入れた場合 `%APPDATA%\Keinoaza\Kinu Tune\models`)
+- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/TuneX/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\TuneX\models`、zip から入れた場合 `%APPDATA%\Keinoaza\TuneX\models`)
 
 ### 通信とテレメトリー
 
-- Kinu Tune 自体はインターネットに接続しません。PitchNet にあった起動時の更新確認は止めてあります
-- AI モデルを動かす部品 ONNX Runtime(Microsoft 製)の Windows 版は、そのままだと使用状況の記録(テレメトリー)を Windows の記録の仕組み(TraceLogging)に渡します。Kinu Tune は ONNX Runtime を準備するたびに、これを止めています
-- ただし、ONNX Runtime 側の作りのため、次の2つは残ります。1つ目は、最初の準備の途中で1回だけ書かれる起動の記録(ONNX Runtime の版番号など)で、止める処理より先に出ます。2つ目は、Windows のイベント記録の仕組みがあとから ONNX Runtime の記録を有効にし直した場合で、そのとき ONNX Runtime は記録を再開します(Kinu Tune が次に ONNX Runtime を準備する時に、また止めます)
+- TuneX 自体はインターネットに接続しません。PitchNet にあった起動時の更新確認は止めてあります
+- AI モデルを動かす部品 ONNX Runtime(Microsoft 製)の Windows 版は、そのままだと使用状況の記録(テレメトリー)を Windows の記録の仕組み(TraceLogging)に渡します。TuneX は ONNX Runtime を準備するたびに、これを止めています
+- ただし、ONNX Runtime 側の作りのため、次の2つは残ります。1つ目は、最初の準備の途中で1回だけ書かれる起動の記録(ONNX Runtime の版番号など)で、止める処理より先に出ます。2つ目は、Windows のイベント記録の仕組みがあとから ONNX Runtime の記録を有効にし直した場合で、そのとき ONNX Runtime は記録を再開します(TuneX が次に ONNX Runtime を準備する時に、また止めます)
 - ONNX Runtime の説明では、Windows が集めた記録は、利用者の同意に基づいて Microsoft に送られることがあるとされています。macOS 版の ONNX Runtime にはテレメトリーがありません
 
 ### 自分でビルドする
@@ -189,7 +189,7 @@ VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグで
 
 ### Overview
 
-Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. Its main goal is quick harmony creation on a duplicated vocal track.
+TuneX reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. Its main goal is quick harmony creation on a duplicated vocal track.
 
 - VariAudio-style rectangular segments with pitch names and smart controls on hover (straighten curve, correct pitch, glue, tilt, formant, volume)
 - Pitch Snap Mode Absolute / Relative / Off, with Shift / Cmd / Option overrides while dragging, and arrow-key editing
@@ -201,52 +201,52 @@ Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. I
 
 - macOS 13 or later on Apple silicon (arm64). The released macOS build does not run on Intel Macs.
 - Windows 10/11 (x64). The Windows build is made on GitHub Actions and checked there by creating it the way a host does; it has not been used in a real DAW on Windows yet.
-- An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
+- An ARA 2 host such as Cubase. Without ARA, TuneX works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
 
 ### Installing a release
 
-The installers on [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) are the easy way.
+The installers on [Releases](https://github.com/keinoaza666-stack/tunex/releases) are the easy way.
 
-macOS (`Kinu-Tune-<version>-macOS-arm64.pkg`):
+macOS (`TuneX-<version>-macOS-arm64.pkg`):
 
 1. Open the downloaded package.
 2. If macOS says it cannot be opened, click "Open Anyway" in System Settings > Privacy & Security and open it again (the release is not notarized).
 3. Click Continue and Install. No administrator password is needed. To leave out the Audio Unit, use Customize.
 4. Restart your DAW and rescan plugins.
 
-To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune` (the models and licence texts).
+To remove it, delete `~/Library/Audio/Plug-Ins/VST3/TuneX.vst3`, `~/Library/Audio/Plug-Ins/Components/TuneX.component` and `~/Library/Application Support/Keinoaza/TuneX` (the models and licence texts).
 
-Windows (`Kinu-Tune-<version>-Windows-x64-Setup.exe`):
+Windows (`TuneX-<version>-Windows-x64-Setup.exe`):
 
-1. If you installed from the zip before, delete the `%APPDATA%\Keinoaza\Kinu Tune` folder first (while it is there, the plug-in keeps using the models in it).
+1. If you installed from the zip before, delete the `%APPDATA%\Keinoaza\TuneX` folder first (while it is there, the plug-in keeps using the models in it).
 2. Open the downloaded installer.
 3. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
 4. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
 5. Restart your DAW and rescan plugins.
 
-To remove it, uninstall Kinu Tune in Windows Settings > Apps.
+To remove it, uninstall TuneX in Windows Settings > Apps.
 
 #### Installing from the zip by hand
 
 macOS:
 
-1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
-2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
-3. Create a folder for the AI models: in Finder choose Go > Go to Folder…, enter `~/Library/Application Support`, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
-4. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` exists).
+1. Download `TuneX-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/tunex/releases) and unzip it.
+2. Copy `TuneX.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `TuneX.component` to `~/Library/Audio/Plug-Ins/Components/`.
+3. Create a folder for the AI models: in Finder choose Go > Go to Folder…, enter `~/Library/Application Support`, create a folder named `Keinoaza` there, and a folder named `TuneX` inside it.
+4. Move the `models` folder from the zip into that `TuneX` folder (so that `~/Library/Application Support/Keinoaza/TuneX/models/fcpe.onnx` exists).
 5. Restart your DAW and rescan plugins.
-6. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
+6. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for TuneX in System Settings > Privacy & Security, then restart your DAW.
 7. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
 
    ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/TuneX.vst3 ~/Library/Audio/Plug-Ins/Components/TuneX.component
    ```
 
-Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
+Windows (`TuneX-<version>-Windows-x64.zip`):
 
-1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
-2. Create a folder for the AI models: in File Explorer type `%APPDATA%` in the address bar, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
-3. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
+1. Copy the `TuneX.vst3` folder to `C:\Program Files\Common Files\VST3\`.
+2. Create a folder for the AI models: in File Explorer type `%APPDATA%` in the address bar, create a folder named `Keinoaza` there, and a folder named `TuneX` inside it.
+3. Move the `models` folder from the zip into that `TuneX` folder (so that `%APPDATA%\Keinoaza\TuneX\models\fcpe.onnx` exists).
 4. Restart your DAW and rescan plugins.
 
 If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
@@ -312,7 +312,7 @@ Zoom and navigation
 | Option + drag on empty space | Zoom vertically |
 | Option + double-click on empty space | Zoom to fit (same as Shift + F) |
 
-Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Option + click to zoom out (Option is used for vertical zoom here). There is no key for deleting a segment.
+Not in TuneX although VariAudio has them: Option + rubber-band zoom and Option + click to zoom out (Option is used for vertical zoom here). There is no key for deleting a segment.
 
 ### Model files
 
@@ -322,13 +322,13 @@ Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Opti
 | GAME | Note segmentation | Model weights: CC BY-NC-SA 4.0 (source: MIT) |
 | PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
+The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". TuneX releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/TuneX/models`; Windows: `%PROGRAMDATA%\Keinoaza\TuneX\models` after the installer, `%APPDATA%\Keinoaza\TuneX\models` after a manual install).
 
 ### Network and telemetry
 
-- Kinu Tune itself does not connect to the internet. PitchNet's update check at launch is disabled.
-- ONNX Runtime (by Microsoft, runs the AI models) passes usage telemetry to Windows TraceLogging by default in its official Windows builds. Kinu Tune turns this off every time it sets up ONNX Runtime.
-- Two limits of the official ONNX Runtime binary remain. One start-up event that ONNX Runtime writes while it is first set up (the ONNX Runtime version and build type) comes before the call that turns telemetry off. And if a Windows event-tracing session later enables ONNX Runtime's events again, ONNX Runtime resumes them (Kinu Tune turns them off again the next time it sets up ONNX Runtime).
+- TuneX itself does not connect to the internet. PitchNet's update check at launch is disabled.
+- ONNX Runtime (by Microsoft, runs the AI models) passes usage telemetry to Windows TraceLogging by default in its official Windows builds. TuneX turns this off every time it sets up ONNX Runtime.
+- Two limits of the official ONNX Runtime binary remain. One start-up event that ONNX Runtime writes while it is first set up (the ONNX Runtime version and build type) comes before the call that turns telemetry off. And if a Windows event-tracing session later enables ONNX Runtime's events again, ONNX Runtime resumes them (TuneX turns them off again the next time it sets up ONNX Runtime).
 - ONNX Runtime's privacy notice says that Windows may send the collected events to Microsoft based on user consent. ONNX Runtime has no telemetry on macOS.
 
 ### Build
@@ -345,11 +345,11 @@ On macOS the default is a universal (arm64 + x86_64) build; the released binary 
 
 The build expects these files in `Resources/models`: `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin` and `pc_nsf_hifigan.onnx` are in this repository; `pc_nsf_hifigan.mlmodelc` (required on macOS) is not, so take it from the `models` folder of a release zip. The GAME models are downloaded into `Resources/models/GAME` during configure if missing. `rmvpe.onnx` is optional.
 
-Options added or used by Kinu Tune:
+Options added or used by TuneX:
 
 - `-DPITCHNET_BUILD_TESTS=ON` builds the unit tests (`ctest --test-dir build`)
-- `-DPITCHNET_DEV_BUILD=ON` builds with a separate development plugin identity (`Kntd`)
-- `-DPITCHNET_ARA_DIAGNOSTICS=ON` writes ARA diagnostics to `~/Library/Logs/Kinu Tune/`
+- `-DPITCHNET_DEV_BUILD=ON` builds with a separate development plugin identity (`TunD`)
+- `-DPITCHNET_ARA_DIAGNOSTICS=ON` writes ARA diagnostics to `~/Library/Logs/TuneX/`
 
 Other options from PitchNet:
 
@@ -357,7 +357,7 @@ Other options from PitchNet:
 - `-DUSE_BUNDLED_CUDA_RUNTIME=ON`, `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` (Windows)
 - ONNX Runtime 1.19.2 is downloaded during configure
 
-VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository and the GAME models that CMake downloads). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
+VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository and the GAME models that CMake downloads). ARA is enabled when the `third_party/ARA_SDK` submodule is present. TuneX has been tested on macOS (Apple silicon) with Cubase only.
 
 ### Project structure
 

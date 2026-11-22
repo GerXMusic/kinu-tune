@@ -1,20 +1,20 @@
-Kinu Tune - Windows (x64) インストール / Install
+TuneX - Windows (x64) インストール / Install
 
 このビルドは GitHub Actions で自動ビルドし、Windows 上で DAW と同じ手順で読み込めることを検査しています。実際の DAW での操作はまだ確認していません。
 This build is made on GitHub Actions and checked there by creating it the way a host does; it has not been used in a real DAW on Windows yet.
 
-1. "Kinu Tune.vst3" フォルダーを次の場所にコピーします。
-   Copy the "Kinu Tune.vst3" folder to:
+1. "TuneX.vst3" フォルダーを次の場所にコピーします。
+   Copy the "TuneX.vst3" folder to:
      C:\Program Files\Common Files\VST3\
 
 2. AI のモデルを置くフォルダーを作ります。
    エクスプローラーのアドレス欄に %APPDATA% と入力して開き、
-   その中に「Keinoaza」という名前のフォルダーを、さらにその中に「Kinu Tune」という名前のフォルダーを作ります。
+   その中に「Keinoaza」という名前のフォルダーを、さらにその中に「TuneX」という名前のフォルダーを作ります。
    Create a folder for the AI models: in File Explorer type %APPDATA% in the address bar,
-   create a folder named "Keinoaza" there, and a folder named "Kinu Tune" inside it.
+   create a folder named "Keinoaza" there, and a folder named "TuneX" inside it.
 
-3. この zip の中の "models" フォルダーを、いま作った「Kinu Tune」フォルダーの中に入れます。
-   Move the "models" folder from this zip into that "Kinu Tune" folder.
+3. この zip の中の "models" フォルダーを、いま作った「TuneX」フォルダーの中に入れます。
+   Move the "models" folder from this zip into that "TuneX" folder.
 
 4. DAW を起動し直し、プラグインを再スキャンします。
    Restart your DAW and rescan plugins.
@@ -28,4 +28,4 @@ If Windows blocks the downloaded files, open the zip's Properties, tick "Unblock
 
 ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses\
 The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
-Source code: https://github.com/keinoaza666-stack/kinu-tune
+Source code: https://github.com/keinoaza666-stack/tunex

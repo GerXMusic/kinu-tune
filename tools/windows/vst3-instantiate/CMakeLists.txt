@@ -1,5 +1,5 @@
-# Kinu Tune - Copyright (C) 2026 Keinoaza
-# Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+# TuneX - Copyright (C) 2026 Keinoaza
+# Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
 # A minimal VST3 host used by CI to check that the Windows plug-in can be

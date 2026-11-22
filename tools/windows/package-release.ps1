@@ -1,11 +1,11 @@
-# Kinu Tune - packaging de publicación (Windows)
+# TuneX - packaging de publicación (Windows)
 # Copyright (C) 2026 Keinoaza. AGPL-3.0; ver LICENSE y MODIFICATIONS.md.
 #
 # Arma el paquete de publicación a partir del bundle YA COMPILADO:
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass `
 #       -File tools\windows\package-release.ps1 `
-#       -Vst3 "build-dml\PitchNetPlugin_artefacts\Release\VST3\Kinu Tune.vst3" `
+#       -Vst3 "build-dml\PitchNetPlugin_artefacts\Release\VST3\TuneX.vst3" `
 #       -Version 0.1.0
 #
 # Qué garantiza (lecciones D-240):
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)  # repo root
 $Vst3 = (Resolve-Path $Vst3).Path
-$bundleName = Split-Path -Leaf $Vst3                      # "Kinu Tune.vst3"
+$bundleName = Split-Path -Leaf $Vst3                      # "TuneX.vst3"
 $dllDir = Join-Path $Vst3 "Contents\x86_64-win"
 
 if (-not (Test-Path $dllDir)) { throw "no existe $dllDir" }
@@ -35,8 +35,8 @@ if ($vst3Files.Count -ne 1) {
     throw "el bundle debe tener exactamente un .vst3 en x86_64-win; hay $($vst3Files.Count): $($vst3Files.Name -join ', ')"
 }
 $pluginDll = $vst3Files[0].FullName
-if ($vst3Files[0].Name -ne "Kinu Tune.vst3") {
-    throw "el .vst3 del bundle se llama '$($vst3Files[0].Name)'; debe ser 'Kinu Tune.vst3'"
+if ($vst3Files[0].Name -ne "TuneX.vst3") {
+    throw "el .vst3 del bundle se llama '$($vst3Files[0].Name)'; debe ser 'TuneX.vst3'"
 }
 
 $backups = @(Get-ChildItem $Vst3 -Recurse -File | Where-Object {
@@ -48,7 +48,7 @@ if ($backups.Count -gt 0) {
 
 # --- 2. Salida limpia -------------------------------------------------------
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
-$pkg = Join-Path $Out "Kinu Tune $Version"
+$pkg = Join-Path $Out "TuneX $Version"
 New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
 Copy-Item -Recurse $Vst3 (Join-Path $pkg $bundleName)
@@ -59,7 +59,7 @@ Copy-Item (Join-Path $root "THIRD_PARTY_NOTICES.txt") (Join-Path $pkg "THIRD_PAR
 Copy-Item (Join-Path $root "packaging\INSTALL-Windows.txt") (Join-Path $pkg "INSTALL-Windows.txt")
 
 # --- 3. Pesos del vocoder, APARTE (CC BY-NC-SA 4.0) -------------------------
-$weightsName = "Kinu Tune $Version - pesos del vocoder"
+$weightsName = "TuneX $Version - pesos del vocoder"
 $weights = Join-Path $Out $weightsName
 New-Item -ItemType Directory -Force -Path $weights | Out-Null
 $vocoder = Join-Path $root "Resources\models\pc_nsf_hifigan.onnx"
@@ -72,7 +72,7 @@ $pluginHash = (Get-FileHash -Algorithm SHA256 $pluginDll).Hash
 $pluginSize = (Get-Item $pluginDll).Length
 
 $release = @"
-Kinu Tune $Version (Windows x64, VST3/ARA2)
+TuneX $Version (Windows x64, VST3/ARA2)
 Empaquetado: $(Get-Date -Format 'yyyy-MM-dd HH:mm')
 
 Plugin: $bundleName
@@ -103,8 +103,8 @@ $weightsSums = Get-ChildItem $weights -File |
 Set-Content -Path (Join-Path $weights "SHA256SUMS.txt") -Value $weightsSums -Encoding utf8
 
 # --- 5. ZIPs ----------------------------------------------------------------
-$pluginZip = Join-Path $Out ("Kinu Tune {0} - Windows x64.zip" -f $Version)
-$weightsZip = Join-Path $Out ("Kinu Tune {0} - pesos del vocoder.zip" -f $Version)
+$pluginZip = Join-Path $Out ("TuneX {0} - Windows x64.zip" -f $Version)
+$weightsZip = Join-Path $Out ("TuneX {0} - pesos del vocoder.zip" -f $Version)
 Compress-Archive -Path $pkg -DestinationPath $pluginZip -CompressionLevel Optimal
 Compress-Archive -Path $weights -DestinationPath $weightsZip -CompressionLevel Optimal
 

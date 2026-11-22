@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 // The scale name tables are taken from PitchNet's ScaleSelectionControl.cpp,
 // Copyright (c) 2026 Session Loops and contributors.

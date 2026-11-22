@@ -1,8 +1,8 @@
 # Copyright (C) 2026 Keinoaza
-# This file is part of Kinu Tune and is licensed under the GNU Affero General
+# This file is part of TuneX and is licensed under the GNU Affero General
 # Public License, version 3. See LICENSE.
 #
-# SHA-256 of every archive that CMake downloads while configuring Kinu Tune.
+# SHA-256 of every archive that CMake downloads while configuring TuneX.
 #
 # Each value was taken on 2026-10-23 by downloading the archive twice and
 # comparing the hashes; the NuGet packages also match the SHA-512 that nuget.org

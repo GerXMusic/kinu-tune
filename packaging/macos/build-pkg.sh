@@ -1,10 +1,10 @@
 #!/bin/bash
-# Kinu Tune - Copyright (C) 2026 Keinoaza
-# Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+# TuneX - Copyright (C) 2026 Keinoaza
+# Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
 # Builds the macOS installer from an unpacked macOS release folder (the one
-# that goes into Kinu-Tune-<version>-macOS-arm64.zip), so the installer holds
+# that goes into TuneX-<version>-macOS-arm64.zip), so the installer holds
 # exactly the files of the zip:
 #
 #   packaging/macos/build-pkg.sh <release folder> <version> <output .pkg>
@@ -13,9 +13,9 @@
 # places as the manual steps in INSTALL-macOS.txt, so it replaces a manual
 # install instead of adding a second copy, and needs no administrator
 # password:
-#   ~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3
-#   ~/Library/Audio/Plug-Ins/Components/Kinu Tune.component (can be left out)
-#   ~/Library/Application Support/Keinoaza/Kinu Tune/models, with the licence
+#   ~/Library/Audio/Plug-Ins/VST3/TuneX.vst3
+#   ~/Library/Audio/Plug-Ins/Components/TuneX.component (can be left out)
+#   ~/Library/Application Support/Keinoaza/TuneX/models, with the licence
 #   texts of the zip next to it (LICENSE, THIRD_PARTY_NOTICES.txt,
 #   MODIFICATIONS.md, licenses/)
 # Files installed by Installer are not quarantined, so the plug-ins need no
@@ -32,7 +32,7 @@ out=$3
 here=$(cd "$(dirname "$0")" && pwd)
 
 docs=(LICENSE THIRD_PARTY_NOTICES.txt MODIFICATIONS.md licenses)
-for item in "Kinu Tune.vst3" "Kinu Tune.component" models "${docs[@]}"; do
+for item in "TuneX.vst3" "TuneX.component" models "${docs[@]}"; do
     [ -e "$src/$item" ] || { echo "missing: $src/$item" >&2; exit 1; }
 done
 
@@ -62,7 +62,7 @@ component() {
     done
     pkgbuild --root "$work/root-$name" \
         --component-plist "$work/$name.plist" \
-        --identifier "com.keinoaza.kinutune.$name" \
+        --identifier "com.keinoaza.tunex.$name" \
         --version "$version" \
         --install-location "$location" \
         "$work/built-$name.pkg" >/dev/null
@@ -95,9 +95,9 @@ strip_xattrs() {
 }
 
 mkdir -p "$work/pkgs"
-component vst3 "/Library/Audio/Plug-Ins/VST3" "Kinu Tune.vst3"
-component au "/Library/Audio/Plug-Ins/Components" "Kinu Tune.component"
-component models "/Library/Application Support/Keinoaza/Kinu Tune" models "${docs[@]}"
+component vst3 "/Library/Audio/Plug-Ins/VST3" "TuneX.vst3"
+component au "/Library/Audio/Plug-Ins/Components" "TuneX.component"
+component models "/Library/Application Support/Keinoaza/TuneX" models "${docs[@]}"
 
 mkdir -p "$work/resources"
 for lang in en ja; do
