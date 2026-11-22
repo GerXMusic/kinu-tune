@@ -49,6 +49,8 @@ set(PITCHNET_TEST_SOURCES
     NoteEditPredicateTests.cpp
     # Fase 1 de la edicion: S1/S2/S3/S6 en audio contra el render completo.
     EditSymptomAudioTests.cpp
+    # R4 (2026-11-21): union de notas con consonante no vocalizada.
+    NoteBoundaryHoleTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
     # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
     # aplanado audible en D-214; el criterio de 1 c/ms queda descartado.
