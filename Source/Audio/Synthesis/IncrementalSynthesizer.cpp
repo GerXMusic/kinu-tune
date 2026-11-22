@@ -1735,11 +1735,29 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             // Notes are not guaranteed to be in frame order, so collect and
             // sort before looking for contiguity.
             std::vector<std::pair<int, int>> neutralFrameRanges;
-            for (const auto &note : capturedProject->getNotes()) {
+            // Tarea B (2026-11-22): la cola que sigue a una nota neutral
+            // tambien es fuente. El detector suele terminar la nota antes de
+            // que acabe el material (decaimiento) y esa cola se re-sintetizaba:
+            // restablecer dejaba la cola distinta de la fuente (medido
+            // 0,048508478 en REAPER; 0,272575378 en el fixture). El tramo
+            // neutral se extiende hasta la siguiente nota (o el final del pase):
+            // el guardia `editedAudioNear` sigue recortando contra notas
+            // editadas.
+            const auto &allNotes = capturedProject->getNotes();
+            for (const auto &note : allNotes) {
               if (!capturedProject->shouldResetNeutralNoteToOriginal(note))
                 continue;
-              neutralFrameRanges.emplace_back(note.getStartFrame(),
-                                              note.getEndFrame());
+              int neutralEnd = note.getEndFrame();
+              int nextNoteStart = capturedStartFrame + samplesToWrite / hopSize;
+              for (const auto &other : allNotes) {
+                if (other.isRest() || &other == &note)
+                  continue;
+                if (other.getStartFrame() >= note.getEndFrame())
+                  nextNoteStart = std::min(nextNoteStart,
+                                            other.getStartFrame());
+              }
+              neutralEnd = std::max(neutralEnd, nextNoteStart);
+              neutralFrameRanges.emplace_back(note.getStartFrame(), neutralEnd);
             }
             std::sort(neutralFrameRanges.begin(), neutralFrameRanges.end());
 

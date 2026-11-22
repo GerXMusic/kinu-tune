@@ -209,6 +209,13 @@ target_link_libraries(EnginePanelTests PRIVATE pitchnet_ui)
 target_compile_features(EnginePanelTests PRIVATE cxx_std_17)
 add_test(NAME EnginePanelTests COMMAND EnginePanelTests)
 
+# Tarea A/B (2026-11-22): el reset borra la transicion (D-225) y la cola de la
+# ultima nota vuelve a la fuente. Usa el camino de produccion del reset.
+add_executable(NoteTransitionResetTests NoteTransitionResetTests.cpp)
+target_link_libraries(NoteTransitionResetTests PRIVATE pitchnet_ui)
+target_compile_features(NoteTransitionResetTests PRIVATE cxx_std_17)
+add_test(NAME NoteTransitionResetTests COMMAND NoteTransitionResetTests)
+
 add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
 target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)
 target_compile_features(OnnxRuntimeAvailabilityTests PRIVATE cxx_std_17)
