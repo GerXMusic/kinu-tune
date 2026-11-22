@@ -25,7 +25,7 @@ public:
     static constexpr int preferredWidth = 240;
 
     // Slider order matches PianoRollComponent::InspectorParam.
-    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
+    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };
 
@@ -79,6 +79,9 @@ public:
     std::function<void()> onPitchCenterMacro;
     // M5 v1 (D-245): silenciar o reactivar las notas seleccionadas.
     std::function<void()> onMuteNotesMacro;
+    // Smart-control glue, moved from the note overlay to the inspector.
+    std::function<bool(bool)> canGlueTarget;
+    std::function<void(bool)> onGlueNoteMacro;
 
     // D-185: what the note renders with, and — when the last request was
     // refused by D-129 — what was asked. Transparency only; the rule does not
@@ -152,10 +155,12 @@ private:
     juce::ComboBox engineBox;
     juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
-    std::array<std::unique_ptr<ValueRow>, 6> rows;
+    std::array<std::unique_ptr<ValueRow>, 8> rows;
     std::array<std::unique_ptr<DisabledRow>, 2> placeholderRows;
     juce::TextButton muteButton;
     juce::TextButton deleteButton;
+    juce::TextButton glueLeftButton;
+    juce::TextButton glueRightButton;
     juce::TextButton correctPitchButton;
     juce::TextButton quantizeButton;
     juce::TextButton levelingButton;

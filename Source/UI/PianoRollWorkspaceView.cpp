@@ -204,33 +204,10 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   { toolPill.updateHoverFromScreen(screenPoint); };
   pianoRoll.onToolPillRelease = [this](juce::Point<int> screenPoint)
   { toolPill.releaseAtScreen(screenPoint); };
+  pianoRoll.onEditorToolRequested = [this](EditorTool tool)
+  { applyEditorTool(tool); };
   toolPill.onToolSelected = [this](EditorTool tool)
-  {
-    setCurrentTool(tool);
-    if (tool == EditorTool::Formant || tool == EditorTool::Amplitude)
-    {
-      // These tools only focus their inspector group today; selection mode
-      // keeps the canvas usable while the placeholder is active.
-      if (pianoRoll.onEditModeRequested)
-        pianoRoll.onEditModeRequested(EditMode::Select);
-      else
-        pianoRoll.setEditMode(EditMode::Select);
-    }
-    else
-    {
-      const EditMode mode = tool == EditorTool::Pitch      ? EditMode::PitchDrawing
-                            : tool == EditorTool::Separation ? EditMode::Split
-                            : tool == EditorTool::Timing     ? EditMode::Timing
-                                                             : EditMode::Select;
-      if (pianoRoll.onEditModeRequested)
-        pianoRoll.onEditModeRequested(mode);
-      else
-        pianoRoll.setEditMode(mode);
-    }
-    if (onToolSelected)
-      onToolSelected(tool);
-    repaint();
-  };
+  { applyEditorTool(tool); };
   toolPill.onMenuRequested = [this]
   {
     pianoRoll.showCanvasMenuAt(juce::Desktop::getInstance()
@@ -612,6 +589,7 @@ void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
 void PianoRollWorkspaceView::setEditorMode(EditorUiMode mode)
 {
   editorMode = mode;
+  pianoRoll.setEditorUiMode(mode);
   toolPill.setEditorMode(mode);
   repaint();
 }
@@ -619,6 +597,25 @@ void PianoRollWorkspaceView::setEditorMode(EditorUiMode mode)
 void PianoRollWorkspaceView::setCurrentTool(EditorTool tool)
 {
   toolPill.setCurrentTool(tool);
+  pianoRoll.setCurrentEditorTool(tool);
+}
+
+void PianoRollWorkspaceView::applyEditorTool(EditorTool tool)
+{
+  setCurrentTool(tool);
+  const EditMode mode = tool == EditorTool::Formant || tool == EditorTool::Amplitude
+                            ? EditMode::Select
+                            : tool == EditorTool::Pitch      ? EditMode::PitchDrawing
+                            : tool == EditorTool::Separation ? EditMode::Split
+                            : tool == EditorTool::Timing     ? EditMode::Timing
+                                                             : EditMode::Select;
+  if (pianoRoll.onEditModeRequested)
+    pianoRoll.onEditModeRequested(mode);
+  else
+    pianoRoll.setEditMode(mode);
+  if (onToolSelected)
+    onToolSelected(tool);
+  repaint();
 }
 
 void PianoRollWorkspaceView::showToolPillAt(juce::Point<int> screenPoint)

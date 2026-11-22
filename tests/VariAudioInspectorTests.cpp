@@ -165,6 +165,48 @@ int main()
         CHECK(near(f.note(2).getVolumeDb(), 0.0f));
     }
 
+    // --- Tilt moved from the note overlay to the inspector ----------------
+    {
+        Fixture f;
+        f.note(0).setSelected(true);
+        const float beforeMidi = f.note(0).getMidiNote();
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltLeft), 0.0f));
+        f.roll.beginInspectorEdit(Param::TiltLeft);
+        f.roll.setInspectorEditValue(1.0f);
+        f.roll.endInspectorEdit();
+        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltLeft), 1.0f));
+        CHECK(f.history.getUndoName() == "Tilt Left");
+        f.history.undo();
+        CHECK(near(f.note(0).getTiltLeft(), 0.0f));
+        CHECK(near(f.note(0).getMidiNote(), beforeMidi));
+
+        f.roll.beginInspectorEdit(Param::TiltRight);
+        f.roll.setInspectorEditValue(-1.5f);
+        f.roll.endInspectorEdit();
+        CHECK(near(f.note(0).getTiltRight(), -1.5f));
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltRight), -1.5f));
+        CHECK(f.history.getUndoName() == "Tilt Right");
+        f.history.undo();
+        CHECK(near(f.note(0).getTiltRight(), 0.0f));
+        CHECK(near(f.note(0).getMidiNote(), beforeMidi));
+    }
+
+    // --- Glue moved from the note overlay to the inspector ----------------
+    {
+        Fixture f;
+        CHECK(!f.roll.canGlueTarget(true)); // no selection: never "all notes"
+        f.note(0).setSelected(true);
+        CHECK(!f.roll.canGlueTarget(false)); // no previous note
+        CHECK(f.roll.canGlueTarget(true));   // note 0 touches note 1
+        const size_t before = f.project.getNotes().size();
+        CHECK(f.roll.glueTargetNote(true));
+        CHECK(f.project.getNotes().size() == before - 1);
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(f.project.getNotes().size() == before);
+    }
+
     // --- Transition: one undo step, valid action name ----------------------
     // Regression: the undo-name table had five entries, so releasing this
     // slider indexed past it and built the action name from garbage (crash).

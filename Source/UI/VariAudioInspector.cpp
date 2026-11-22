@@ -22,7 +22,7 @@ constexpr int kToggleHeight = 24;
 constexpr int kTargetLabelHeight = 20;
 constexpr int kEngineStatusHeight = 34;
 constexpr int kValueRowHeight = 38;
-constexpr int kNumRows = 6;
+constexpr int kNumRows = 8;
 constexpr int kPlaceholderRowHeight = 34;
 constexpr int kPlaceholderBoxHeight = 2 * kPlaceholderRowHeight + 4;
 constexpr int kActionRowHeight = 26;
@@ -33,8 +33,8 @@ constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 3 + kRowGap +
     kEngineStatusHeight + kRowGap + kTargetLabelHeight + kActionRowHeight +
-    kRowGap + kRowsBoxHeight + kRowGap + kPlaceholderBoxHeight + kRowGap +
-    kMacrosCardHeight;
+    kRowGap + kActionRowHeight + kRowGap + kRowsBoxHeight + kRowGap +
+    kPlaceholderBoxHeight + kRowGap + kMacrosCardHeight;
 constexpr int kRootMenuWidth = 50;
 constexpr int kMenuGap = 4;
 constexpr int kScrollBarThickness = 8;
@@ -221,6 +221,8 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::PitchDrift:
             return juce::String(juce::roundToInt(value)) + " %";
         case Param::Formant:
+        case Param::TiltLeft:
+        case Param::TiltRight:
             return (value > 0.0 ? "+" : "") + juce::String(value, 1) + " st";
         case Param::Volume:
             return value <= -59.9 ? juce::String::fromUTF8("-\xe2\x88\x9e dB")
@@ -309,6 +311,9 @@ VariAudioInspector::VariAudioInspector()
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
     rows[4] = std::make_unique<ValueRow>(Param::Volume, -60.0, 12.0, 0.0, 0.1);
     rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
+    // Tilt moved here from the retired per-note smart-control cluster.
+    rows[6] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
+    rows[7] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
     for (auto& row : rows)
     {
         auto* r = row.get();
@@ -365,6 +370,26 @@ VariAudioInspector::VariAudioInspector()
     {
         if (onMuteNotesMacro)
             onMuteNotesMacro();
+    };
+
+    // Smart-control glue, now an inspector action instead of a square on the
+    // hovered note.
+    for (auto *button : {&glueLeftButton, &glueRightButton})
+    {
+        button->setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
+        button->setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+        button->setEnabled(false);
+        content.addAndMakeVisible(*button);
+    }
+    glueLeftButton.onClick = [this]
+    {
+        if (onGlueNoteMacro)
+            onGlueNoteMacro(false);
+    };
+    glueRightButton.onClick = [this]
+    {
+        if (onGlueNoteMacro)
+            onGlueNoteMacro(true);
     };
 
     auto setupMacro = [this](juce::TextButton& button, bool enabled)
@@ -506,13 +531,21 @@ void VariAudioInspector::refreshLocalisedText()
     rows[3]->caption = TR("inspector.formant");
     rows[4]->caption = TR("inspector.amplitude");
     rows[5]->caption = TR("inspector.transition");
+    rows[6]->caption = TR("inspector.tilt_left");
+    rows[7]->caption = TR("inspector.tilt_right");
     // D-225: the control belongs to the union with the next note.
     rows[5]->setTooltip(TR("inspector.transition_hint"));
+    rows[6]->setTooltip(TR("inspector.tilt_left_hint"));
+    rows[7]->setTooltip(TR("inspector.tilt_right_hint"));
     placeholderRows[0]->caption = TR("inspector.sibilant");
     placeholderRows[1]->caption = TR("inspector.attack_speed");
     muteButton.setButtonText(TR("inspector.mute_note"));
     muteButton.setTooltip(TR("menu.mute_note") + " / " + TR("menu.unmute_note"));
     deleteButton.setButtonText(TR("inspector.delete_note"));
+    glueLeftButton.setButtonText(TR("inspector.glue_left"));
+    glueLeftButton.setTooltip(TR("inspector.glue_left_hint"));
+    glueRightButton.setButtonText(TR("inspector.glue_right"));
+    glueRightButton.setTooltip(TR("inspector.glue_right_hint"));
     correctPitchButton.setButtonText(TR("macro.correct_pitch"));
     quantizeButton.setButtonText(TR("macro.quantize_time"));
     levelingButton.setButtonText(TR("macro.leveling"));
@@ -612,7 +645,9 @@ void VariAudioInspector::refreshFromProject()
     {
         const auto value = getParamValue ? getParamValue(rows[i]->param) : std::nullopt;
         const bool advancedOnly = rows[i]->param == Param::Formant ||
-                                  rows[i]->param == Param::Volume;
+                                  rows[i]->param == Param::Volume ||
+                                  rows[i]->param == Param::TiltLeft ||
+                                  rows[i]->param == Param::TiltRight;
         const bool enabled = value.has_value() &&
                              (!advancedOnly || editorMode == EditorUiMode::Advanced);
         rows[i]->setEnabled(enabled);
@@ -622,6 +657,8 @@ void VariAudioInspector::refreshFromProject()
             rows[i]->repaint();
         }
     }
+    glueLeftButton.setEnabled(canGlueTarget && canGlueTarget(false));
+    glueRightButton.setEnabled(canGlueTarget && canGlueTarget(true));
 }
 
 void VariAudioInspector::setSnapModeInternal(SnapMode mode, bool notify)
@@ -782,6 +819,12 @@ void VariAudioInspector::layoutContent(int width)
     muteButton.setBounds(actionRow.removeFromLeft(actionRow.getWidth() / 2 - 3));
     actionRow.removeFromLeft(6);
     deleteButton.setBounds(actionRow);
+    card.removeFromTop(kRowGap);
+
+    auto glueRow = card.removeFromTop(kActionRowHeight);
+    glueLeftButton.setBounds(glueRow.removeFromLeft(glueRow.getWidth() / 2 - 3));
+    glueRow.removeFromLeft(6);
+    glueRightButton.setBounds(glueRow);
     card.removeFromTop(kRowGap);
 
     rowsBoxBounds = card.removeFromTop(kRowsBoxHeight);

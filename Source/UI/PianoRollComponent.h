@@ -9,6 +9,7 @@
 #include "../Utils/BasePitchPreview.h"
 #include "../Undo/UndoActions.h"
 #include "Commands.h"
+#include "GuiTypes.h"
 #include "PianoRoll/BoxSelector.h"
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/GridRenderer.h"
@@ -85,7 +86,7 @@ public:
   // Inspector sliders (VariAudio section). They act on the selected
   // segments, or on every segment when nothing is selected; one slider
   // gesture is one undo step.
-  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
+  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
   std::vector<Note *> getInspectorTargets() const;
   // Value shown for the first target, or nullopt when there are no targets.
   std::optional<float> getInspectorValue(InspectorParam param) const;
@@ -97,6 +98,17 @@ public:
   // VariAudio "Show All Smart Controls" (false = default set only).
   void setShowAllSmartControls(bool showAll);
   bool getShowAllSmartControls() const { return showAllSmartControls; }
+
+  // The Basic/Advanced choice also decides whether the Formant and Amplitude
+  // tools appear in the unified context menu.
+  void setEditorUiMode(EditorUiMode mode) { editorUiMode = mode; }
+  void setCurrentEditorTool(EditorTool tool) { currentEditorTool = tool; }
+
+  // Glue a selected note with its contiguous neighbour (VariAudio
+  // smart-control glue, moved from the note overlay to the inspector). It
+  // requires a selection and the merge is undoable through NoteSplitter.
+  bool canGlueTarget(bool next) const;
+  bool glueTargetNote(bool next);
 
   // Moves the selected notes (or every note when nothing is selected) by a
   // scale-degree interval in the project key, as one undoable step.
@@ -157,9 +169,10 @@ public:
 
   void requestCanvasKeyboardFocus();
 
-  /** Melodyne canvas menu, reachable from the tool pill's "more" slot. */
-  void showCanvasMenuAt(juce::Point<int> screenPoint);
-  /** Melodyne note context menu: mute / unmute / delete / restore. */
+  /** Melodyne canvas menu: one popup with the note actions (when `note` is
+      given), undo/redo, select all and the tool strip. */
+  void showCanvasMenuAt(juce::Point<int> screenPoint, Note* note = nullptr);
+  /** Kept for callers that already have a note; same unified popup. */
   void showNoteMenuAt(Note& note, juce::Point<int> screenPoint);
 
   // ScrollBar::Listener
@@ -325,6 +338,9 @@ public:
 
   // Callbacks
   std::function<void(EditMode)> onEditModeRequested;
+  // A tool chosen in the unified context menu; the workspace updates the top
+  // bar through the same path as the floating pill.
+  std::function<void(EditorTool)> onEditorToolRequested;
   // Melodyne: a right click on the canvas asks the workspace for the tool pill
   // instead of opening the menu directly. The pill's "more" slot calls back
   // to show the same canvas menu.
@@ -484,6 +500,8 @@ private:
   // VariAudio look and smart controls (see NoteRenderer::setSegmentStyle).
   bool segmentStyle = true;
   bool showAllSmartControls = true; // VariAudio "Show All", the default here
+  EditorUiMode editorUiMode = EditorUiMode::Basic;
+  EditorTool currentEditorTool = EditorTool::Main;
   // Inspector slider gesture in progress.
   bool inspectorEditActive = false;
   InspectorParam inspectorEditParam = InspectorParam::CorrectPitch;
@@ -678,6 +696,10 @@ private:
   // Re-applies the hover-button tooltips after a language change; the menus
   // and handle labels are built on demand, so they need nothing here.
   void refreshLocalisedText();
+
+  // Shared bottom block of the canvas/note menu: undo, redo, select all and
+  // the tool strip. `choice` is the 1-based id set by the content.
+  void applyCanvasMenuChoice(int choice);
 
   LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 

@@ -68,6 +68,7 @@ private:
 
   void updateOverviewVisibility();
   void updateOverviewAnimation();
+  void applyEditorTool(EditorTool tool);
   PianoRollComponent &pianoRoll;
   OverviewPanel overviewPanel;
   ToolPill toolPill;

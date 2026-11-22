@@ -2049,18 +2049,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 
   if (e.mods.isPopupMenu() && isCanvasPoint(e))
   {
-    if (auto *noteUnder = findNoteAt(adjustedX, adjustedY))
-    {
-      showNoteMenuAt(*noteUnder, e.getScreenPosition());
-      return;
-    }
-    if (onShowToolPill)
-    {
-      toolPillGesture = true;
-      onShowToolPill(e.getScreenPosition());
-      return;
-    }
-    showCanvasMenuAt(e.getScreenPosition());
+    // One menu for the whole piano roll: note actions when the pointer is on a
+    // segment, the edit block and the tool strip in the same popup. The old
+    // floating pill is hidden first so the two never coexist.
+    if (onHideToolPill)
+      onHideToolPill();
+    showCanvasMenuAt(e.getScreenPosition(), findNoteAt(adjustedX, adjustedY));
     return;
   }
   if (onHideToolPill)
@@ -2259,45 +2253,108 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   }
 }
 
-void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint)
+void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint, Note* note)
 {
+  canvasPopupMenu::Content::State state;
+  state.hasNote = note != nullptr;
+  state.noteMuted = note != nullptr && note->isMuted();
+  state.showAdvancedTools = editorUiMode == EditorUiMode::Advanced;
+  state.canUndo = undoManager && undoManager->canUndo() && bool(onUndoRequested);
+  state.canRedo = undoManager && undoManager->canRedo() && bool(onRedoRequested);
+  state.activeToolIndex = static_cast<int>(currentEditorTool);
+
+  if (note != nullptr)
+  {
+    const auto targets = getResetTargetNotes(*note);
+    const auto anyTarget = [&targets](bool (*predicate)(const Note&))
+    {
+      return std::any_of(targets.begin(), targets.end(),
+                         [predicate](const Note* n) { return n && predicate(*n); });
+    };
+    state.canRestore = anyTarget(hasPitchEdits) || anyTarget(hasFormantEdits) ||
+                       anyTarget(hasAmplitudeEdits) || anyTarget(hasTimingEdits);
+  }
+
   juce::PopupMenu menu;
+  // The custom item paints the two cards; the menu window itself is invisible.
   menu.setLookAndFeel(&canvasPopupMenu::getLookAndFeel());
   auto choice = std::make_shared<int>(0);
-  menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(
-      choice, undoManager && undoManager->canUndo() && bool(onUndoRequested),
-      undoManager && undoManager->canRedo() && bool(onRedoRequested)));
+  menu.addCustomItem(1, std::make_unique<canvasPopupMenu::Content>(choice, state));
+
   juce::Component::SafePointer<PianoRollComponent> safeThis(this);
-  menu.showMenuAsync(juce::PopupMenu::Options()
-                         .withTargetScreenArea(canvasPopupMenu::Content::getTargetArea(
-                             screenPoint))
-                         .withDeletionCheck(*this),
-                     [safeThis, choice](int result)
+  Note* notePtr = note;
+  menu.showMenuAsync(
+      juce::PopupMenu::Options()
+          .withTargetScreenArea(juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1))
+          .withDeletionCheck(*this),
+      [safeThis, notePtr, choice, screenPoint](int result)
+      {
+        if (safeThis == nullptr || !safeThis->project || result == 0)
+          return;
+        const int action = *choice;
+        // Tools, select all, undo and redo do not need the note.
+        if ((action >= 20 && action <= 25) || action == 4 || action == 5 ||
+            action == 6)
+        {
+          safeThis->applyCanvasMenuChoice(action);
+          return;
+        }
+        if (notePtr == nullptr)
+          return;
+        auto& notes = safeThis->project->getNotes();
+        if (std::none_of(notes.begin(), notes.end(),
+                         [notePtr](const Note& candidate)
+                         { return &candidate == notePtr; }))
+          return;
+        if (action == 1 || action == 2)
+        {
+          // D-245: si la nota forma parte de la seleccion, se silencia la
+          // seleccion; si no, solo esta nota.
+          auto selected = safeThis->getSelectedNotes();
+          const bool inSelection =
+              std::find(selected.begin(), selected.end(), notePtr) != selected.end();
+          if (!inSelection)
+            selected.assign(1, notePtr);
+          safeThis->setMutedForNotes(selected, action == 1);
+        }
+        else if (action == 7)
+          safeThis->showResetMenu(*notePtr, screenPoint);
+      });
+}
+void PianoRollComponent::applyCanvasMenuChoice(int choice)
+{
+  if (choice >= 20 && choice <= 25)
   {
-    if (safeThis == nullptr || !safeThis->project || result == 0)
+    const auto tool = static_cast<EditorTool>(choice - 20);
+    if (onEditorToolRequested)
+    {
+      onEditorToolRequested(tool);
       return;
-    if (*choice == 1)
-    {
-      safeThis->project->selectAllNotes();
-      safeThis->updatePitchToolHandlesFromSelection();
-      safeThis->updatePreviewButtonBounds();
-      safeThis->repaint();
     }
-    else if (*choice == 6 && safeThis->onUndoRequested)
-      safeThis->onUndoRequested();
-    else if (*choice == 7 && safeThis->onRedoRequested)
-      safeThis->onRedoRequested();
-    else if (*choice >= 2 && *choice <= 5)
-    {
-      const EditMode modes[] = {EditMode::Select, EditMode::Split,
-                                EditMode::PitchDrawing, EditMode::Timing};
-      const auto mode = modes[*choice - 2];
-      if (safeThis->onEditModeRequested)
-        safeThis->onEditModeRequested(mode);
-      else
-        safeThis->setEditMode(mode);
-    }
-  });
+    const EditMode mode = tool == EditorTool::Pitch        ? EditMode::PitchDrawing
+                          : tool == EditorTool::Separation ? EditMode::Split
+                          : tool == EditorTool::Timing     ? EditMode::Timing
+                                                           : EditMode::Select;
+    if (onEditModeRequested)
+      onEditModeRequested(mode);
+    else
+      setEditMode(mode);
+    return;
+  }
+
+  if (!project)
+    return;
+  if (choice == 4)
+  {
+    project->selectAllNotes();
+    updatePitchToolHandlesFromSelection();
+    updatePreviewButtonBounds();
+    repaint();
+  }
+  else if (choice == 5 && onUndoRequested)
+    onUndoRequested();
+  else if (choice == 6 && onRedoRequested)
+    onRedoRequested();
 }
 
 void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
@@ -2477,34 +2534,15 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
     return;
   }
 
-  // Handle rows (including their gaps) keep their owner. Everywhere else,
-  // a note directly under the pointer takes priority over the old layout.
-  const bool overCurrentHandleArea = hoveredNote && pitchToolHandles &&
-      pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
-  Note *noteUnderMouse = overCurrentHandleArea ? hoveredNote : noteAtPointer;
-  if (!noteUnderMouse && hoveredNote)
-  {
-    auto hoverLayoutBounds = getPreviewHoverBounds(*hoveredNote);
-    if (pitchToolHandles && !pitchToolHandles->isEmpty())
-      hoverLayoutBounds = hoverLayoutBounds.getUnion(
-          pitchToolHandles->getLayoutBounds());
-
-    // Keep controls reachable across empty canvas without masking other notes.
-    if (hoverLayoutBounds.expanded(4.0f).contains(adjustedX, adjustedY))
-      noteUnderMouse = hoveredNote;
-  }
-  if (!noteUnderMouse)
-    noteUnderMouse = findPreviewButtonNoteAt(adjustedX, adjustedY);
+  // A note directly under the pointer owns the hover. The retired per-note
+  // controls no longer extend that area, so leaving the note clears it.
+  Note *noteUnderMouse = noteAtPointer;
   if (!noteUnderMouse && hoveredNote && pitchToolHandles &&
       !pitchToolHandles->isEmpty() &&
       pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0)
   {
-    // Keep the note's hover controls visible while moving onto a handle.
-    noteUnderMouse = hoveredNote;
-  }
-  if (!noteUnderMouse && hoveredNote &&
-      getPreviewHoverBounds(*hoveredNote).contains(adjustedX, adjustedY))
-  {
+    // Kept for the future floating tools section: a handle hit keeps the
+    // owner visible.
     noteUnderMouse = hoveredNote;
   }
   // Pitch Drawing mode uses its own point hover treatment. Split mode must wait until
@@ -3393,6 +3431,10 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
       if (!note.isSelected())
         return std::nullopt;
       return static_cast<float>(note.getTransitionOutMs());
+    case InspectorParam::TiltLeft:
+      return note.getTiltLeft();
+    case InspectorParam::TiltRight:
+      return note.getTiltRight();
   }
   return std::nullopt;
 }
@@ -3470,6 +3512,27 @@ void PianoRollComponent::setInspectorEditValue(float value)
       case InspectorParam::Transition:
         note->setTransitionOutMs(juce::roundToInt(value));
         break;
+      case InspectorParam::TiltLeft:
+      case InspectorParam::TiltRight:
+      {
+        // Tilt changes the segment's mean pitch, so it goes through NotePitch
+        // like the old smart-control handle: restore the gesture's baseline,
+        // write both tilt values, then carry the Correct Pitch reference.
+        const auto &original = inspectorEditOldParams[i];
+        const float originalMean =
+            (original.tiltLeft + original.tiltRight) * 0.5f;
+        const float baselineMidi = original.midiNote - originalMean;
+        const float tiltLeft = inspectorEditParam == InspectorParam::TiltLeft
+                                   ? value : original.tiltLeft;
+        const float tiltRight = inspectorEditParam == InspectorParam::TiltRight
+                                    ? value : original.tiltRight;
+        note->setTiltLeft(tiltLeft);
+        note->setTiltRight(tiltRight);
+        const float newMean = (tiltLeft + tiltRight) * 0.5f;
+        NotePitch::applyEdit(*note, *project, original.correctionSource,
+                             original.midiNote, baselineMidi + newMean);
+        break;
+      }
     }
     note->markDirty();
     minFrame = std::min(minFrame, note->getStartFrame());
@@ -3588,9 +3651,10 @@ void PianoRollComponent::endInspectorEdit()
   // garbage pointer (crash on slider release). The static_assert keeps the two
   // lists in sync at compile time.
   static const char *names[] = {"Correct Pitch", "Flatten Curve", "Pitch Drift",
-                                "Shift Formant", "Change Volume", "Transition"};
+                                "Shift Formant", "Change Volume", "Transition",
+                                "Tilt Left", "Tilt Right"};
   static_assert(sizeof(names) / sizeof(names[0]) ==
-                    static_cast<size_t>(InspectorParam::Transition) + 1,
+                    static_cast<size_t>(InspectorParam::TiltRight) + 1,
                 "undo name table out of sync with InspectorParam");
   if (undoManager)
     undoManager->addAction(std::make_unique<InspectorEditAction>(
@@ -4546,55 +4610,15 @@ std::vector<Note *> PianoRollComponent::getSelectedNotes() const
 
 void PianoRollComponent::updatePitchToolHandlesFromSelection()
 {
-  if (!pitchToolHandles || !coordMapper)
+  // The per-note smart-control cluster was retired (2026-11-22): its
+  // parameters now live in the left inspector, so hovering a note no longer
+  // draws a second floating tool menu around it. The class stays for the
+  // layout tests and for the future floating tools section.
+  if (!pitchToolHandles)
     return;
-
-  const bool isChangingPitch =
-      (selectHandler_ && (selectHandler_->isSingleNoteDragging() ||
-                          selectHandler_->getIsDeltaScaleDragging() ||
-                          selectHandler_->getIsDeltaOffsetDragging())) ||
-      (pitchToolController && pitchToolController->isDragging()) ||
-      (pitchEditor && (pitchEditor->isDraggingNote() ||
-                       pitchEditor->isDraggingMultiNotes()));
-
-  if (!project || editMode != EditMode::Select)
-  {
-    pitchToolHandles->clear();
-    hoveredPitchToolHandle = -1;
-    pitchToolHandles->setHoveredHandleIndex(-1);
-    return;
-  }
-
-  if (isChangingPitch)
-  {
-    pitchToolHandles->clear();
-    hoveredPitchToolHandle = -1;
-    pitchToolHandles->setHoveredHandleIndex(-1);
-    return;
-  }
-
-  // Vibrato is a hover control: no hovered note means no visible handle.
-  std::vector<Note *> targetNotes;
-  if (hoveredNote)
-    targetNotes.push_back(hoveredNote);
-
-  const auto hoverBounds = hoveredNote ? getNoteHoverShadowBounds(*hoveredNote)
-                                       : juce::Rectangle<float>();
-  PitchToolHandles::Options options;
-  options.showAll = showAllSmartControls;
-  if (hoveredNote)
-  {
-    options.canGlueLeft = findContiguousNeighbour(*hoveredNote, false) != nullptr;
-    options.canGlueRight = findContiguousNeighbour(*hoveredNote, true) != nullptr;
-  }
-  pitchToolHandles->setOptions(options);
-  pitchToolHandles->updateHandles(targetNotes, *coordMapper, hoverBounds);
-  if (hoveredPitchToolHandle >=
-      static_cast<int>(pitchToolHandles->getHandles().size()))
-  {
-    hoveredPitchToolHandle = -1;
-    pitchToolHandles->setHoveredHandleIndex(-1);
-  }
+  pitchToolHandles->clear();
+  hoveredPitchToolHandle = -1;
+  pitchToolHandles->setHoveredHandleIndex(-1);
 }
 
 Note *PianoRollComponent::findNoteAt(float x, float y)
@@ -4761,51 +4785,18 @@ PianoRollComponent::getResetButtonLocalBounds(const Note &note) const
 
 void PianoRollComponent::updatePreviewButtonBounds()
 {
-  const bool isChangingPitch =
-      (selectHandler_ && (selectHandler_->isSingleNoteDragging() ||
-                          selectHandler_->getIsDeltaScaleDragging() ||
-                          selectHandler_->getIsDeltaOffsetDragging())) ||
-      (pitchToolController && pitchToolController->isDragging()) ||
-      (pitchEditor && (pitchEditor->isDraggingNote() ||
-                       pitchEditor->isDraggingMultiNotes()));
-
-  const bool supportsNoteHoverControls =
-      editMode == EditMode::Select || editMode == EditMode::Split ||
-      editMode == EditMode::Timing;
-  if (!hoveredNote || !project || !supportsNoteHoverControls ||
-      isChangingPitch)
-  {
-    previewButton.setVisible(false);
-    resetButton.setVisible(false);
-    return;
-  }
-
-  const auto previewBounds = getPreviewButtonLocalBounds(*hoveredNote);
-  const auto resetBounds = getResetButtonLocalBounds(*hoveredNote);
-  const int horizontalScrollBarSize =
-      showHorizontalScrollBar ? APP_SCROLLBAR_THICKNESS : 0;
-  constexpr int verticalScrollBarSize = APP_SCROLLBAR_THICKNESS;
-  const auto mainArea = getLocalBounds()
-                            .withTrimmedLeft(pianoKeysWidth)
-                            .withTrimmedTop(headerHeight)
-                            .withTrimmedBottom(horizontalScrollBarSize)
-                            .withTrimmedRight(verticalScrollBarSize);
-
-  previewButton.setBounds(previewBounds);
-  previewButton.setVisible(previewBounds.intersects(mainArea));
-  resetButton.setBounds(resetBounds);
-  resetButton.setVisible(resetBounds.intersects(mainArea));
+  // The audition/reset pair that used to float beside the hovered note moved
+  // out of the note: restore lives in the note context menu and the left
+  // inspector, and audition is available from the top bar. Keep the child
+  // components hidden so no second menu appears around the note.
+  previewButton.setVisible(false);
+  resetButton.setVisible(false);
 }
 
 Note *PianoRollComponent::findPreviewButtonNoteAt(float x, float y) const
 {
-  if (!hoveredNote || !project)
-    return nullptr;
-
-  return (getPreviewButtonBounds(*hoveredNote).contains(x, y) ||
-          getResetButtonBounds(*hoveredNote).contains(x, y))
-             ? hoveredNote
-             : nullptr;
+  juce::ignoreUnused(x, y);
+  return nullptr;
 }
 
 std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
@@ -4819,6 +4810,41 @@ std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
     if (!candidate.isRest() && candidate.isSelected())
       selected.push_back(&candidate);
   return note.isSelected() && selected.size() > 1 ? selected : targets;
+}
+
+bool PianoRollComponent::canGlueTarget(bool next) const
+{
+  if (!project)
+    return false;
+  // Glue is a per-note structural edit: unlike the sliders it never falls
+  // back to "all segments" when there is no selection.
+  for (auto *note : getSelectedNotes())
+    if (note != nullptr && !note->isRest() &&
+        findContiguousNeighbour(*note, next) != nullptr)
+      return true;
+  return false;
+}
+
+bool PianoRollComponent::glueTargetNote(bool next)
+{
+  if (!project || !noteSplitter)
+    return false;
+
+  for (auto *note : getSelectedNotes())
+  {
+    if (note == nullptr || note->isRest())
+      continue;
+    auto *neighbour = findContiguousNeighbour(*note, next);
+    if (neighbour == nullptr)
+      continue;
+    const bool changed = next ? noteSplitter->mergeNotes(note, neighbour)
+                              : noteSplitter->mergeNotes(neighbour, note);
+    // mergeNotes rebuilds the note list; pointers into it are no longer safe.
+    dropTransientNotePointers();
+    repaint();
+    return changed;
+  }
+  return false;
 }
 
 bool PianoRollComponent::resetNoteToOriginal(int index)
@@ -4901,111 +4927,7 @@ void PianoRollComponent::refreshLocalisedText()
 
 void PianoRollComponent::showNoteMenuAt(Note &note, juce::Point<int> screenPoint)
 {
-  juce::PopupMenu menu;
-  menu.setLookAndFeel(&pitchPopupMenu::getLookAndFeel());
-
-  const auto addItem = [&menu](int id, const juce::String& label, bool enabled)
-  {
-    juce::PopupMenu::Item item(label);
-    item.itemID = id;
-    item.isEnabled = enabled;
-    item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
-        label, false, std::function<void()>{}, false).release();
-    menu.addItem(std::move(item));
-  };
-
-  addItem(1, TR("menu.mute_note"), !note.isMuted());
-  addItem(2, TR("menu.unmute_note"), note.isMuted());
-  addItem(3, TR("menu.delete_note"), false);
-  menu.addSeparator();
-
-  const auto targets = getResetTargetNotes(note);
-  const auto anyTarget = [&targets](bool (*predicate)(const Note&))
-  {
-    return std::any_of(targets.begin(), targets.end(),
-                       [predicate](const Note* n) { return n && predicate(*n); });
-  };
-  const bool pitchChanged = anyTarget(hasPitchEdits);
-  const bool formantChanged = anyTarget(hasFormantEdits);
-  const bool amplitudeChanged = anyTarget(hasAmplitudeEdits);
-  const bool timingChanged = anyTarget(hasTimingEdits);
-  const bool anyChanged =
-      pitchChanged || formantChanged || amplitudeChanged || timingChanged;
-
-  juce::PopupMenu reset;
-  {
-    const auto addReset = [&reset](int id, const juce::String& label, bool enabled)
-    {
-      juce::PopupMenu::Item item(label);
-      item.itemID = id;
-      item.isEnabled = enabled;
-      item.customComponent = std::make_unique<pitchPopupMenu::MenuItemComponent>(
-          label, false, std::function<void()>{}, false).release();
-      reset.addItem(std::move(item));
-    };
-    addReset(10, TR("restore.pitch"), pitchChanged);
-    addReset(11, TR("restore.formant"), formantChanged);
-    addReset(12, TR("restore.amplitude"), amplitudeChanged);
-    addReset(13, TR("restore.timing"), timingChanged);
-    reset.addSeparator();
-    addReset(14, TR("restore.all"), anyChanged);
-  }
-  menu.addSubMenu(TR("menu.restore"), reset);
-  menu.addSeparator();
-  addItem(20, TR("menu.canvas_tools"), true);
-
-  juce::Component::SafePointer<PianoRollComponent> safeThis(this);
-  Note *notePtr = &note;
-  menu.showMenuAsync(
-      juce::PopupMenu::Options().withTargetScreenArea(
-          juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1, 1)),
-      [safeThis, notePtr](int result)
-      {
-        if (safeThis == nullptr || !safeThis->project || result == 0)
-          return;
-        auto &notes = safeThis->project->getNotes();
-        if (std::none_of(notes.begin(), notes.end(),
-                         [notePtr](const Note &candidate)
-                         { return &candidate == notePtr; }))
-          return;
-        if (result == 1)
-        {
-          // D-245: si la nota forma parte de la seleccion, se silencia la
-          // seleccion; si no, solo esta nota.
-          auto selected = safeThis->getSelectedNotes();
-          const bool inSelection =
-              std::find(selected.begin(), selected.end(), notePtr) !=
-              selected.end();
-          if (!inSelection)
-            selected.assign(1, notePtr);
-          safeThis->setMutedForNotes(selected, true);
-        }
-        else if (result == 2)
-        {
-          auto selected = safeThis->getSelectedNotes();
-          const bool inSelection =
-              std::find(selected.begin(), selected.end(), notePtr) !=
-              selected.end();
-          if (!inSelection)
-            selected.assign(1, notePtr);
-          safeThis->setMutedForNotes(selected, false);
-        }
-        else if (result == 10)
-          safeThis->resetNoteEdits(*notePtr);
-        else if (result == 11)
-          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Formant);
-        else if (result == 12)
-          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::Amplitude);
-        else if (result == 13)
-          safeThis->resetNoteTiming(*notePtr);
-        else if (result == 14)
-          safeThis->resetNoteEdits(*notePtr, NoteRestoreMode::All);
-        else if (result == 20)
-          safeThis->showCanvasMenuAt(juce::Desktop::getInstance()
-                                         .getMainMouseSource()
-                                         .getScreenPosition()
-                                         .roundToInt());
-      });
+  showCanvasMenuAt(screenPoint, &note);
 }
 
 void PianoRollComponent::showResetMenu(Note &note, juce::Point<int> screenPoint)
