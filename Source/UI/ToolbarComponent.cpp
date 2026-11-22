@@ -486,8 +486,10 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
         g.fillRoundedRectangle(bounds, 4.0f);
     }
 
-    const auto inner = bounds.reduced(bounds.getWidth() * 0.13f,
-                                       bounds.getHeight() * 0.13f);
+    // Glifo con aire: lineas finas y huecos claros entre barra, desvio y
+    // flecha, para que a 30 px no se apelotone.
+    const auto inner = bounds.reduced(bounds.getWidth() * 0.10f,
+                                       bounds.getHeight() * 0.10f);
     const float x = inner.getX();
     const float y = inner.getY();
     const float w = inner.getWidth();
@@ -497,30 +499,31 @@ void ToolbarComponent::BypassIconButton::paintButton(juce::Graphics& g, bool ove
     };
 
     g.setColour(APP_COLOR_TEXT_PRIMARY);
-    const float stroke = std::max(1.8f, w * 0.15f);
+    const float stroke = std::max(1.2f, w * 0.075f);
 
-    // Barra gruesa (la senal), centrada a la izquierda.
-    const auto bar = juce::Rectangle<float>(at(0.14f, 0.37f), at(0.72f, 0.57f));
+    // Barra (algo mas gruesa que las lineas, pero con aire alrededor).
+    const auto bar = juce::Rectangle<float>(at(0.10f, 0.43f), at(0.60f, 0.57f));
     g.fillRect(bar);
 
-    // Tallo superior que baja hasta la barra, y desvio que la abraza por la
-    // derecha hasta salir por debajo.
+    // Tallo superior, corto y fino.
+    g.drawLine(juce::Line<float>(at(0.34f, 0.04f), at(0.34f, 0.30f)), stroke);
+
+    // Desvio: sale del tallo, va a la derecha, baja por fuera de la barra y
+    // vuelve a entrar por debajo; termina justo encima de la flecha.
     juce::Path detour;
-    detour.startNewSubPath(at(0.46f, 0.02f));
-    detour.lineTo(at(0.46f, 0.30f));
-    detour.lineTo(at(0.86f, 0.30f));
-    detour.lineTo(at(0.86f, 0.60f));
-    detour.lineTo(at(0.52f, 0.60f));
-    detour.lineTo(at(0.52f, 0.72f));
+    detour.startNewSubPath(at(0.34f, 0.30f));
+    detour.lineTo(at(0.84f, 0.30f));
+    detour.lineTo(at(0.84f, 0.72f));
+    detour.lineTo(at(0.44f, 0.72f));
     g.strokePath(detour, juce::PathStrokeType(stroke,
                                               juce::PathStrokeType::curved,
                                               juce::PathStrokeType::butt));
 
-    // Flecha abajo, bajo la barra.
+    // Flecha abajo, separada de la barra.
     juce::Path arrow;
-    arrow.startNewSubPath(at(0.34f, 0.72f));
-    arrow.lineTo(at(0.60f, 0.72f));
-    arrow.lineTo(at(0.47f, 0.98f));
+    arrow.startNewSubPath(at(0.31f, 0.80f));
+    arrow.lineTo(at(0.57f, 0.80f));
+    arrow.lineTo(at(0.44f, 0.98f));
     arrow.closeSubPath();
     g.fillPath(arrow);
 }
