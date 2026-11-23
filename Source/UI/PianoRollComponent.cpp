@@ -2060,17 +2060,25 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
   if (onHideToolPill)
     onHideToolPill();
 
-  // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
-  // (ruler or note area) to move the playback cursor, mirroring Reaper's
-  // own middle-button scrub. Takes priority over every other gesture so
-  // held modifier keys never redirect it into zoom/pan.
+  // Boton central: sobre el ruler, scrub de transporte (como REAPER); sobre el
+  // lienzo, herramienta de mano para moverse por el piano roll (Melodyne, pedido
+  // 2026-11-23).
   if (e.mods.isMiddleButtonDown() && e.x >= pianoKeysWidth)
   {
-    middleButtonScrubActive = true;
-    double time = std::max(getTimelineStart(), xToTime(adjustedX));
-    setCursorTime(time);
-    if (onSeek)
-      onSeek(time);
+    if (e.y < headerHeight)
+    {
+      middleButtonScrubActive = true;
+      double time = std::max(getTimelineStart(), xToTime(adjustedX));
+      setCursorTime(time);
+      if (onSeek)
+        onSeek(time);
+    }
+    else
+    {
+      middlePanActive = true;
+      middlePanLastPosition = e.position;
+      setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    }
     return;
   }
 
@@ -2271,8 +2279,12 @@ void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint, Note* no
       return std::any_of(targets.begin(), targets.end(),
                          [predicate](const Note* n) { return n && predicate(*n); });
     };
-    state.canRestore = anyTarget(hasPitchEdits) || anyTarget(hasFormantEdits) ||
-                       anyTarget(hasAmplitudeEdits) || anyTarget(hasTimingEdits);
+    // Con varias notas seleccionadas el menu ofrece siempre restablecer: tras
+    // cortar y seleccionar las dos mitades los predicados de "editada" no lo ven
+    // (pedido 2026-11-23).
+    state.canRestore = targets.size() > 1 || anyTarget(hasPitchEdits) ||
+                       anyTarget(hasFormantEdits) || anyTarget(hasAmplitudeEdits) ||
+                       anyTarget(hasTimingEdits);
   }
 
   juce::PopupMenu menu;
@@ -2411,6 +2423,14 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   if (swallowGestureUntilMouseUp)
     return;
+  if (middlePanActive)
+  {
+    const auto delta = e.position - middlePanLastPosition;
+    middlePanLastPosition = e.position;
+    horizontalScrollBar.setCurrentRangeStart(clampScrollX(scrollX - delta.x));
+    verticalScrollBar.setCurrentRangeStart(scrollY - delta.y);
+    return;
+  }
   if (middleButtonScrubActive)
   {
     float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
@@ -2497,6 +2517,13 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
   if (middleButtonScrubActive)
   {
     middleButtonScrubActive = false;
+    return;
+  }
+
+  if (middlePanActive)
+  {
+    middlePanActive = false;
+    updateMouseCursorForEditMode();
     return;
   }
 
@@ -2641,7 +2668,15 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   }
   else if (editMode == EditMode::Select)
   {
-    setMouseCursor(juce::MouseCursor::NormalCursor);
+    // Melodyne: sobre la franja superior de la nota el cursor anuncia el corte.
+    const Note *noteUnderPointer =
+        (isCanvasPoint(e) && e.y >= headerHeight)
+            ? findNoteAt(adjustedX, adjustedY)
+            : nullptr;
+    if (noteUnderPointer != nullptr && isNoteTopZone(*noteUnderPointer, adjustedY))
+      setMouseCursor(splitMouseCursor);
+    else
+      setMouseCursor(juce::MouseCursor::NormalCursor);
   }
   else if (editMode == EditMode::Split)
   {
@@ -2836,8 +2871,30 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
 
+  // Melodyne: doble clic en el cuerpo de la nota (fuera de la franja superior)
+  // afina al 100 % hacia el semitono mas cercano. Pasa por el inspector para que
+  // sea un paso de undo como los sliders.
+  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+  {
+    if (auto *note = findNoteAt(adjustedX, adjustedY))
+    {
+      if (!isNoteTopZone(*note, adjustedY) &&
+          !(pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0))
+      {
+        project->deselectAllNotes();
+        note->setSelected(true);
+        beginInspectorEdit(InspectorParam::CorrectPitch);
+        setInspectorEditValue(100.0f);
+        endInspectorEdit();
+        updatePitchToolHandlesFromSelection();
+        repaint();
+        return;
+      }
+    }
+  }
+
   // Restablecer a original: Option/Alt + doble clic en el segmento. El doble clic
-  // simple ahora corta (pedido 2026-11-23), y el menu contextual sigue teniendo
+  // simple afina (arriba corta), y el menu contextual sigue teniendo
   // «Restablecer original».
   if (editMode == EditMode::Select && e.mods.isAltDown() && !e.mods.isCommandDown())
     if (auto *note = findNoteAt(adjustedX, adjustedY))
@@ -4763,10 +4820,18 @@ PianoRollComponent::getPreviewButtonBounds(const Note &note) const
   return {buttonX, buttonY, buttonWidth, buttonHeight};
 }
 
+bool PianoRollComponent::isNoteTopZone(const Note &note, float worldY) const
+{
+  // La franja superior de la nota: ahi el cursor se vuelve herramienta de corte.
+  // Se mide desde la parte alta de la nota hacia abajo, en coordenadas del lienzo.
+  const float top = midiToY(note.getAdjustedMidiNote());
+  const float band = juce::jmax(4.0f, pixelsPerSemitone * noteTopZoneRatio);
+  return worldY >= top && worldY <= top + band;
+}
+
 juce::Rectangle<float>
 PianoRollComponent::getPreviewHoverBounds(const Note &note) const
-{
-  const float noteStartTime =
+{  const float noteStartTime =
       static_cast<float>(framesToSeconds(note.getStartFrame()));
   const float noteEndTime =
       static_cast<float>(framesToSeconds(note.getEndFrame()));

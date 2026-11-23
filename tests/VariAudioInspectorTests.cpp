@@ -576,10 +576,19 @@ int main()
         const size_t before = f.project.getNotes().size();
         const auto left = juce::ModifierKeys::leftButtonModifier;
         // Primer clic (selecciona) y segundo clic del doble clic (corta).
-        f.roll.mouseDown(event(f.roll, {xAt(50), yAt(60.0f)}, left, 1));
-        f.roll.mouseUp(event(f.roll, {xAt(50), yAt(60.0f)}, left, 1));
-        f.roll.mouseDown(event(f.roll, {xAt(50), yAt(60.0f)}, left, 2));
-        f.roll.mouseUp(event(f.roll, {xAt(50), yAt(60.0f)}, left, 2));
+        // El corte es el doble clic en la franja SUPERIOR de la nota (Melodyne); en
+        // el cuerpo el doble clic afina. Aqui se apunta a la franja superior.
+        const auto yTop = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.15f -
+                   static_cast<float>(f.roll.getScrollY());
+        };
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop(60.0f)}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop(60.0f)}, left, 1));
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop(60.0f)}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop(60.0f)}, left, 2));
         CHECK(f.project.getNotes().size() == before + 1);
         for (size_t i = 0; i < 2; ++i)
         {
@@ -677,14 +686,15 @@ int main()
                                       juce::ModifierKeys::leftButtonModifier, 2));
         CHECK(requests == 1);
 
-        // Un doble clic cuyo primer clic cayó en un segmento (y lo cortó) no es
-        // un zoom, aunque al final el puntero quede sobre espacio vacío.
+        // Un doble clic cuyo primer clic cayo en la franja superior de un segmento
+        // (y lo corto) no es un zoom, aunque al final el puntero quede en vacio.
         const size_t notesBefore = f.project.getNotes().size();
         const auto left = juce::ModifierKeys::leftButtonModifier;
-        f.roll.mouseDown(event(f.roll, {xFor(50), yFor(60.3f)}, left, 1));
-        f.roll.mouseUp(event(f.roll, {xFor(50), yFor(60.3f)}, left, 1));
-        f.roll.mouseDown(event(f.roll, {xFor(50), yFor(60.3f)}, left, 2));
-        f.roll.mouseUp(event(f.roll, {xFor(50), yFor(60.3f)}, left, 2));
+        const float yTop = yFor(60.3f) - f.roll.getPixelsPerSemitone() * 0.35f;
+        f.roll.mouseDown(event(f.roll, {xFor(50), yTop}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xFor(50), yTop}, left, 1));
+        f.roll.mouseDown(event(f.roll, {xFor(50), yTop}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xFor(50), yTop}, left, 2));
         CHECK(f.project.getNotes().size() == notesBefore + 1); // doble clic: corte
         f.roll.mouseDoubleClick(event(f.roll, {xFor(50), yFor(64.0f)}, altLeft, 2));
         CHECK(requests == 1);

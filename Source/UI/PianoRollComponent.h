@@ -471,6 +471,11 @@ private:
   juce::Rectangle<float> getNoteHoverShadowBounds(const Note &note) const;
   juce::Rectangle<float> getResetButtonBounds(const Note &note) const;
   juce::Rectangle<float> getPreviewHoverBounds(const Note &note) const;
+
+  // Melodyne: la franja superior de la nota es la zona de corte (el cursor cambia)
+  // y el doble clic ahi separa; el doble clic en el cuerpo afina al 100 %.
+  bool isNoteTopZone(const Note &note, float worldY) const;
+  static constexpr float noteTopZoneRatio = 0.32f;
   juce::Rectangle<int> getPreviewButtonLocalBounds(const Note &note) const;
   juce::Rectangle<int> getResetButtonLocalBounds(const Note &note) const;
   void updatePreviewButtonBounds();
@@ -696,6 +701,9 @@ private:
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
   bool middleButtonScrubActive = false;
+  // Boton central sobre el lienzo: herramienta de mano (pan mientras se mantiene).
+  bool middlePanActive = false;
+  juce::Point<float> middlePanLastPosition;
   MainViewRegionPreviewList regionPreviews;
   bool trackViewMode = false;
   double regionPreviewsEndSeconds = 0.0;
