@@ -57,8 +57,25 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # Reparto estable: targets en orden alfabetico, uno de cada tres por shard.
           # Se leen del propio ctest para que anadir un test no obligue a tocar el CI.
-          $json = ctest --test-dir build -C Release --show-only=json-v1 | ConvertFrom-Json
-          $tests = $json.tests
+          # Defensivo: si el JSON no trae 'command' (paso el 2026-11-23 en el runner),
+          # se construye y se ejecuta TODO en vez de fallar sin compilar nada.
+          $raw = ctest --test-dir build -C Release --show-only=json-v1
+          $parsed = $null
+          try { $parsed = $raw | ConvertFrom-Json } catch { $parsed = $null }
+          $tests = @()
+          if ($parsed -and $parsed.tests) {
+            $tests = @($parsed.tests | Where-Object { $_.command -and @($_.command).Count -ge 1 })
+          }
+          if ($tests.Count -eq 0) {
+            Write-Host "aviso: ctest no dio una lista util; se compila y ejecuta la suite completa"
+            Write-Host "primeras lineas del JSON: $((@($raw) | Select-Object -First 2) -join ' | ')"
+            cmake --build build --config Release --parallel 4
+            if ($LASTEXITCODE -ne 0) { throw "build completo fallo con $LASTEXITCODE" }
+            ctest --test-dir build -C Release --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "ctest completo fallo con $LASTEXITCODE" }
+            exit 0
+          }
+
           $targets = $tests |
             ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.command[0]) } |
             Select-Object -Unique | Sort-Object
