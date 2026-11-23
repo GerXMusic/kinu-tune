@@ -1,0 +1,25 @@
+# Sonda temporal (D-284): comprobar si esta cuenta/repo obtiene runner de macOS.
+# No construye nada: solo pide el runner y escribe una linea. Se borra cuando D-284
+# este cerrado. Lanza a mano: Actions > sonda-macos > Run workflow.
+name: sonda-macos
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-15:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: hola
+        run: echo "macos-15 asignado: $(sw_vers -productVersion) $(uname -m)"
+
+  macos-14:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: hola
+        run: echo "macos-14 asignado: $(sw_vers -productVersion) $(uname -m)"
