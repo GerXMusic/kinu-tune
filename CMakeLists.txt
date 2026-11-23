@@ -345,13 +345,13 @@ option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF
 # TuneX is a modified version of PitchNet (Session Loops), itself derived
 # from HachiTune. It ships under its own vendor identity so it installs next to
 # PitchNet instead of replacing it.
-set(PITCHNET_COMPANY_NAME "Keinoaza")
+set(PITCHNET_COMPANY_NAME "GerX")
 set(PITCHNET_MANUFACTURER_CODE Kein)
 set(PITCHNET_COPYRIGHT
-    "Copyright 2026 Session Loops, HachiTune contributors and Keinoaza")
+    "Copyright 2026 Session Loops, HachiTune contributors, Keinoaza and GerX")
 if(PITCHNET_DEV_BUILD)
     set(PITCHNET_PRODUCT_NAME "TuneX Dev")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.tunex.dev")
+    set(PITCHNET_BUNDLE_ID "com.gerx.tunex.dev")
     set(PITCHNET_PLUGIN_CODE TunD)
     message(STATUS
         "TuneX: side-by-side DEV build "
@@ -359,7 +359,7 @@ if(PITCHNET_DEV_BUILD)
         "bundle id ${PITCHNET_BUNDLE_ID})")
 else()
     set(PITCHNET_PRODUCT_NAME "TuneX")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.tunex")
+    set(PITCHNET_BUNDLE_ID "com.gerx.tunex")
     set(PITCHNET_PLUGIN_CODE TunX)
 endif()
 
