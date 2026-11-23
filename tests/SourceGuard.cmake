@@ -1,4 +1,4 @@
-# TuneX - Copyright (C) 2026 Keinoaza
+﻿# TuneX - Copyright (C) 2026 Keinoaza
 # Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
@@ -25,19 +25,19 @@ if(NOT SOURCE_DIR OR NOT RULE)
     message(FATAL_ERROR "SourceGuard: pass -DSOURCE_DIR=<repo>/Source -DRULE=<rule>")
 endif()
 
-if(RULE STREQUAL "pitch-writes")
+if("${RULE}" STREQUAL "pitch-writes")
     set(scan_dir "${SOURCE_DIR}")
     set(allowed "${SOURCE_DIR}/Models/Note.h" "${SOURCE_DIR}/Utils/NotePitch.h")
     set(pattern "(setMidiNote|setLastNonMacroMidiNote|setMidiNoteFromPitchCorrection)[ \t]*\\(")
     set(hint "Use NotePitch::applyEdit / restore / applyCorrection / setCorrectionSource / setSungPitch instead (see Source/Utils/NotePitch.h).")
-elseif(RULE STREQUAL "audition-output")
+elseif("${RULE}" STREQUAL "audition-output")
     set(scan_dir "${SOURCE_DIR}")
     set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h"
                 "${SOURCE_DIR}/Audio/AudioEngine.h"
                 "${SOURCE_DIR}/Audio/AudioEngine.cpp")
     set(pattern "(beginAuditionLoop|endAuditionLoop)[ \t]*\\(")
     set(hint "Use AuditionOutput::playLoop / stopLoop instead (see Source/UI/Main/AuditionOutput.h).")
-elseif(RULE STREQUAL "render-controllers")
+elseif("${RULE}" STREQUAL "render-controllers")
     set(scan_dir "${SOURCE_DIR}/Plugin")
     set(allowed "${SOURCE_DIR}/Plugin/RenderControllers.h")
     set(pattern "make_unique<EditorController>[ \t]*\\([ \t]*false")
