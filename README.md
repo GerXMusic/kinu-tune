@@ -58,8 +58,11 @@ principal es sacar armonías rápido duplicando una pista de voz.
 - **Windows 10/11 (x64).** La build de Windows se compila y se valida en CI; en un
   DAW real de Windows la prueba todavía es manual.
 - Un host con **ARA 2** (Cubase y similares). Sin ARA funciona como inserto normal
-  en modo captura. La entrega de macOS incluye VST3 y Audio Unit (para Logic Pro y
-  otros hosts AU); Logic Pro no está probado.
+  en modo captura. La entrega de macOS incluye VST3 y Audio Unit. **En Mac el ARA va
+  por VST3:** REAPER no soporta ARA en AU (su ARA es VST3), y Logic en Apple Silicon
+  nativo ejecuta los AU fuera de proceso y no soporta ARA; para ARA en Logic haría
+  falta Rosetta y un AU x86_64, que esta build arm64 no incluye. El AU sirve como
+  inserto normal en hosts AU; Logic Pro no está probado.
 
 ## Instalación
 
@@ -72,7 +75,8 @@ principal es sacar armonías rápido duplicando una pista de voz.
    seguridad* y pulsa «Abrir igualmente»; vuelve a abrirlo (la entrega no está
    notarizada).
 3. «Continuar» e «Instalar». No hace falta contraseña de administrador. Si no
-   quieres el Audio Unit, quítalo en «Personalizar».
+   quieres el Audio Unit, quítalo en «Personalizar» (en Mac el ARA se usa con el
+   VST3; el AU queda para inserto normal en hosts AU).
 4. Reinicia el DAW y vuelve a escanear plugins.
 
 Para desinstalar: borra `~/Library/Audio/Plug-Ins/VST3/TuneX.vst3`,
@@ -98,7 +102,8 @@ Para desinstalar: *Configuración > Aplicaciones > TuneX*.
 
 1. Descomprime `TuneX-<versión>-macOS-arm64.zip`.
 2. Copia `TuneX.vst3` a `~/Library/Audio/Plug-Ins/VST3/`. Para el Audio Unit,
-   copia `TuneX.component` a `~/Library/Audio/Plug-Ins/Components/`.
+   copia `TuneX.component` a `~/Library/Audio/Plug-Ins/Components/` (el AU es
+   para inserto normal; el ARA en Mac se usa con el VST3).
 3. Crea la carpeta de modelos: en Finder, *Ir > Ir a la carpeta…*, escribe
    `~/Library/Application Support`, crea dentro `GerX` y, dentro, `TuneX`.
 4. Mueve la carpeta `models` del ZIP a esa carpeta `TuneX`, de modo que exista

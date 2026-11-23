@@ -439,7 +439,7 @@ else()
     message(STATUS "ARA SDK not found - run: git submodule update --init --recursive")
 endif()
 
-# D-277: this value must be a literal, not a generator expression. JUCE also
+# D-278: this value must be a literal, not a generator expression. JUCE also
 # writes it to JuceLibraryCode/Info.txt, which juceaide reads to generate the
 # AU Info.plist. With `$<BOOL:${ARA_AVAILABLE}>` the compile definition still
 # resolved to 1 (so VST3 ARA worked), but Info.txt contained the literal

@@ -384,6 +384,13 @@ private:
   // Engine change: the audio was rendered by the previous engine, so every
   // edited note is rendered again by the new one (Project::markEditedNotesDirty).
   void rerenderEditedNotes();
+  // D-279: one path for the inspector button, the canvas menu and the
+  // Melodyne keyboard commands.
+  void applyCorrectPitchMacro();
+  void showQuantizeTimeMacroMenu(juce::Component* anchor = nullptr,
+                                 juce::Point<int> screenPoint = {});
+  void resetSelection(PianoRollComponent::NoteRestoreMode mode);
+  int lastQuantizeStrengthPercent = 100;
   // Status line under the engine radios (ParameterPanel::setRenderStatus). Fed
   // from every place a render starts or finishes.
   void showRenderStatus(ParameterPanel::RenderStatus status);

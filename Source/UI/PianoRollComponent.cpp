@@ -2292,33 +2292,74 @@ void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint, Note* no
         if (safeThis == nullptr || !safeThis->project || result == 0)
           return;
         const int action = *choice;
+        // The note may have been deleted while the async menu was open; drop
+        // the pointer before any action touches it.
+        Note* clickedNote = notePtr;
+        if (clickedNote != nullptr)
+        {
+          auto& notes = safeThis->project->getNotes();
+          if (std::none_of(notes.begin(), notes.end(),
+                           [clickedNote](const Note& candidate)
+                           { return &candidate == clickedNote; }))
+            clickedNote = nullptr;
+        }
+        // Melodyne applies a context-menu action to the clicked note. If it
+        // was not part of the selection, make it the selection first (the
+        // mute path below already does the same for a single note).
+        const auto ensureClickedNoteSelected = [&]()
+        {
+          if (clickedNote == nullptr)
+            return;
+          auto selected = safeThis->getSelectedNotes();
+          if (std::find(selected.begin(), selected.end(), clickedNote) !=
+              selected.end())
+            return;
+          safeThis->project->deselectAllNotes();
+          clickedNote->setSelected(true);
+          safeThis->updatePitchToolHandlesFromSelection();
+          safeThis->repaint();
+        };
+        // Macros act on the selection (or on every note when nothing is
+        // selected), exactly like the inspector buttons.
+        if (action == 1)
+        {
+          ensureClickedNoteSelected();
+          if (safeThis->onCorrectPitchMacroRequested)
+            safeThis->onCorrectPitchMacroRequested();
+          return;
+        }
+        if (action == 2)
+        {
+          ensureClickedNoteSelected();
+          if (safeThis->onQuantizeTimeMenuRequested)
+            safeThis->onQuantizeTimeMenuRequested(screenPoint);
+          return;
+        }
+        if (action == 3)
+          return; // Leveling is not implemented; the row is disabled.
         // Tools, select all, undo and redo do not need the note.
-        if ((action >= 20 && action <= 25) || action == 4 || action == 5 ||
-            action == 6)
+        if ((action >= 20 && action <= 25) || action == 7 || action == 8 ||
+            action == 9)
         {
           safeThis->applyCanvasMenuChoice(action);
           return;
         }
-        if (notePtr == nullptr)
+        if (clickedNote == nullptr)
           return;
-        auto& notes = safeThis->project->getNotes();
-        if (std::none_of(notes.begin(), notes.end(),
-                         [notePtr](const Note& candidate)
-                         { return &candidate == notePtr; }))
-          return;
-        if (action == 1 || action == 2)
+        if (action == 4 || action == 5)
         {
           // D-245: si la nota forma parte de la seleccion, se silencia la
           // seleccion; si no, solo esta nota.
           auto selected = safeThis->getSelectedNotes();
           const bool inSelection =
-              std::find(selected.begin(), selected.end(), notePtr) != selected.end();
+              std::find(selected.begin(), selected.end(), clickedNote) != selected.end();
           if (!inSelection)
-            selected.assign(1, notePtr);
-          safeThis->setMutedForNotes(selected, action == 1);
+            selected.assign(1, clickedNote);
+          safeThis->setMutedForNotes(selected, action == 4);
         }
-        else if (action == 7)
-          safeThis->showResetMenu(*notePtr, screenPoint);
+        else if (action == 10)
+          safeThis->showResetMenu(*clickedNote, screenPoint);
+        // action 6 (Delete) is inactive until note deletion is implemented.
       });
 }
 void PianoRollComponent::applyCanvasMenuChoice(int choice)
@@ -2344,16 +2385,16 @@ void PianoRollComponent::applyCanvasMenuChoice(int choice)
 
   if (!project)
     return;
-  if (choice == 4)
+  if (choice == 7)
   {
     project->selectAllNotes();
     updatePitchToolHandlesFromSelection();
     updatePreviewButtonBounds();
     repaint();
   }
-  else if (choice == 5 && onUndoRequested)
+  else if (choice == 8 && onUndoRequested)
     onUndoRequested();
-  else if (choice == 6 && onRedoRequested)
+  else if (choice == 9 && onRedoRequested)
     onRedoRequested();
 }
 
@@ -4845,6 +4886,32 @@ bool PianoRollComponent::glueTargetNote(bool next)
     return changed;
   }
   return false;
+}
+
+void PianoRollComponent::resetSelection(NoteRestoreMode mode)
+{
+  auto selected = getSelectedNotes();
+  if (selected.empty())
+    return;
+  if (mode == NoteRestoreMode::Timing)
+  {
+    // Timing has its own action (createResetTimingAction); resetNoteTiming
+    // also expands the first note to the whole selection.
+    resetNoteTiming(*selected.front());
+    return;
+  }
+  // resetNoteEdits expands a note to the whole selection, so the first one is
+  // enough and every target receives the same restore.
+  resetNoteEdits(*selected.front(), mode);
+}
+
+bool PianoRollComponent::mergeSelectedNotes()
+{
+  // Melodyne disables Merge Notes unless exactly one note is selected.
+  auto selected = getSelectedNotes();
+  if (selected.size() != 1)
+    return false;
+  return glueTargetNote(true);
 }
 
 bool PianoRollComponent::resetNoteToOriginal(int index)

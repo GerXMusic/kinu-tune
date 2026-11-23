@@ -15,15 +15,21 @@ enum class EditorUiMode
     Advanced = 1
 };
 
-/** The tool row shared by the top bar and the floating tool pill. */
+/** The tool row shared by the top bar and the floating tool pill.
+ *
+ * D-279: the order is Melodyne's toolbox order, because the tool shortcuts
+ * follow it (F1 Main, F2 Pitch, F3 Formant, F4 Amplitude, F5 Timing,
+ * F6 Note Separation). Formant and Amplitude have no engine behind them yet,
+ * so their commands exist but are inactive; the gap is deliberate.
+ */
 enum class EditorTool
 {
     Main = 0,
     Pitch = 1,
     Formant = 2,
     Amplitude = 3,
-    Separation = 4,
-    Timing = 5
+    Timing = 4,
+    Separation = 5
 };
 
 inline GuiIcon iconForTool(EditorTool tool)

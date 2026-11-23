@@ -44,6 +44,13 @@ jobs:
             echo "No se encontraron los bundles (VST3='$vst3', AU='$au')" >&2
             exit 1
           fi
+          # D-278: sin esta etiqueta los hosts que detectan ARA desde la cache
+          # de AudioComponents no ofrecen ARA para el AU. El VST3 no la usa.
+          if ! grep -q '<string>ARA</string>' "$au/Contents/Info.plist"; then
+            echo "El AU no declara la etiqueta ARA en AudioComponents" >&2
+            plutil -p "$au/Contents/Info.plist" || true
+            exit 1
+          fi
           codesign --force --deep --sign - "$vst3"
           codesign --force --deep --sign - "$au"
           codesign --verify --deep --strict --verbose=2 "$vst3" || true

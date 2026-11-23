@@ -87,6 +87,8 @@ public:
   // segments, or on every segment when nothing is selected; one slider
   // gesture is one undo step.
   enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
+  // D-279: Melodyne's Reset Individual Edits categories.
+  enum class NoteRestoreMode { Pitch, Formant, Amplitude, Timing, All };
   std::vector<Note *> getInspectorTargets() const;
   // Value shown for the first target, or nullopt when there are no targets.
   std::optional<float> getInspectorValue(InspectorParam param) const;
@@ -134,6 +136,16 @@ public:
   // mute, con undo y re-render). Devuelve false si el indice no es valido, la
   // nota es una pausa o no hay proyecto.
   bool resetNoteToOriginal(int index);
+  // D-279: Melodyne's Edit > Reset Individual Edits, applied to the selection.
+  // With no selection they are no-ops, exactly like Melodyne grays them out.
+  void resetSelection(NoteRestoreMode mode);
+  // D-279: Melodyne's "Merge Notes": one selected note plus the next one.
+  bool mergeSelectedNotes();
+
+  // D-279: the canvas context menu asks MainComponent for the two macros, so
+  // the menu, the inspector button and the keyboard command share one path.
+  std::function<void()> onCorrectPitchMacroRequested;
+  std::function<void(juce::Point<int>)> onQuantizeTimeMenuRequested;
 
   // Tarea 3 (2026-11-22): vista de bypass estilo Melodyne. Con el bypass
   // activo se dibuja solo la curva F0 de la FUENTE en gris, sin bloques de nota
@@ -464,7 +476,6 @@ private:
   void updatePreviewButtonBounds();
   void triggerPreviewForNote(Note &note);
   std::vector<Note *> getResetTargetNotes(Note &note) const;
-  enum class NoteRestoreMode { Pitch, Formant, Amplitude, All };
   void resetNoteEdits(Note &note, NoteRestoreMode mode = NoteRestoreMode::Pitch);
   std::unique_ptr<UndoableAction> createResetTimingAction(Note &note);
   void resetNoteTiming(Note &note);

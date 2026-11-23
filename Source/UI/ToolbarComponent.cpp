@@ -45,12 +45,20 @@ ToolbarComponent::ToolIconButton::ToolIconButton(EditorTool toolToUse, GuiIcon i
 
 void ToolbarComponent::ToolIconButton::refreshTooltip()
 {
-    setTooltip(TR(toolLabelKey(tool)));
+    // D-279: Melodyne's Formant and Amplitude tools have no engine here yet.
+    // They stay in the row in Advanced, visibly disabled, instead of pretending
+    // to edit.
+    if (!isEnabled())
+        setTooltip(TR(toolLabelKey(tool)) + " - " +
+                   TR("macro.not_implemented"));
+    else
+        setTooltip(TR(toolLabelKey(tool)));
 }
 
 void ToolbarComponent::ToolIconButton::paintButton(juce::Graphics& g, bool over,
                                                    bool down)
 {
+    g.setOpacity(isEnabled() ? 1.0f : 0.35f);
     const auto bounds = getLocalBounds().toFloat().reduced(1.0f);
     if (active)
     {
@@ -136,10 +144,11 @@ ToolbarComponent::ToolbarComponent()
     // Melodyne tool row.
     const EditorTool tools[] = {EditorTool::Main, EditorTool::Pitch,
                                 EditorTool::Formant, EditorTool::Amplitude,
-                                EditorTool::Separation, EditorTool::Timing};
+                                EditorTool::Timing, EditorTool::Separation};
     for (size_t i = 0; i < toolButtons.size(); ++i)
     {
         toolButtons[i] = std::make_unique<ToolIconButton>(tools[i], iconForTool(tools[i]));
+        toolButtons[i]->setEnabled(!isAdvancedOnlyTool(tools[i]));
         toolButtons[i]->onClick = [this, tool = tools[i]] {
             setActiveTool(tool);
             if (onToolSelected)
@@ -749,7 +758,8 @@ void ToolbarComponent::setToolGroupEnabled(bool enabled)
     timingModeButton.setEnabled(enabled);
     for (auto& button : toolButtons)
         if (button)
-            button->setEnabled(enabled);
+            button->setEnabled(enabled &&
+                              !isAdvancedOnlyTool(button->getTool()));
     scaleButton.setEnabled(enabled);
     gridButton.setEnabled(enabled);
 }

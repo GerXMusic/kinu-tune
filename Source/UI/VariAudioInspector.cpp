@@ -412,21 +412,8 @@ VariAudioInspector::VariAudioInspector()
     // en vez de aplicar 100 % a ciegas. 100 % va primero.
     quantizeButton.onClick = [this]
     {
-        juce::PopupMenu menu;
-        for (const int percent : {100, 75, 50, 25})
-            menu.addItem(percent, juce::String(percent) + " %", true,
-                         percent == quantizeStrengthPercent);
-        juce::Component::SafePointer<VariAudioInspector> safe(this);
-        menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetComponent(&quantizeButton),
-            [safe](int result)
-            {
-                if (safe == nullptr || result <= 0)
-                    return;
-                safe->quantizeStrengthPercent = result;
-                if (safe->onQuantizeTimeMacro)
-                    safe->onQuantizeTimeMacro(result);
-            });
+        if (onQuantizeTimeMenuRequested)
+            onQuantizeTimeMenuRequested(&quantizeButton);
     };
 
     useProjectKeyToggle.onClick = [this]

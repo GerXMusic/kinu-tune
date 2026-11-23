@@ -65,6 +65,7 @@ public:
 
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
+        g.setOpacity(isEnabled() ? 1.0f : 0.35f);
         const auto slot = getLocalBounds().toFloat().reduced(2.0f);
         if (active)
         {
@@ -111,7 +112,7 @@ public:
     {
         const GuiIcon icons[] = {GuiIcon::MainTool, GuiIcon::PitchTool,
                                  GuiIcon::FormantTool, GuiIcon::AmplitudeTool,
-                                 GuiIcon::SeparationTool, GuiIcon::TimingTool};
+                                 GuiIcon::TimingTool, GuiIcon::SeparationTool};
         for (int i = 0; i < 6; ++i)
         {
             toolButtons[static_cast<size_t>(i)] =
@@ -122,20 +123,24 @@ public:
                 triggerMenuItem();
             };
             toolButtons[static_cast<size_t>(i)]->setActive(i == state.activeToolIndex);
+            // D-279: Formant (2) and Amplitude (3) have no engine yet.
+            toolButtons[static_cast<size_t>(i)]->setEnabled(i != 2 && i != 3);
             toolButtons[static_cast<size_t>(i)]->setVisible(
                 i < 2 || i > 3 || state.showAdvancedTools);
             addAndMakeVisible(*toolButtons[static_cast<size_t>(i)]);
         }
 
-        // Top card, in the order requested: mute, unmute, delete, select all,
-        // undo, redo, restore.
+        // Top card, Melodyne's order: the three macros first, then the note
+        // commands and the history. Leveling and Delete are visible but
+        // inactive because their engines are not implemented yet.
         static const char* keys[] = {
+            "macro.correct_pitch", "macro.quantize_time", "macro.leveling",
             "menu.mute_note", "menu.unmute_note", "menu.delete_note",
             "canvas.select_all", "command.undo", "command.redo", "menu.restore"};
-        for (int i = 0; i < 7; ++i)
+        for (int i = 0; i < 10; ++i)
         {
             juce::String label = TR(keys[i]);
-            if (i == 6)
+            if (i == 9)
                 label += "   >";
             menuButtons[static_cast<size_t>(i)] =
                 std::make_unique<ActionButton>(label);
@@ -144,21 +149,26 @@ public:
                 *choice = i + 1;
                 triggerMenuItem();
             };
+            // Without a note the menu keeps only select-all/undo/redo; the
+            // macros and the note commands need something to act on.
             menuButtons[static_cast<size_t>(i)]->setVisible(
-                (i <= 2 || i == 6) ? state.hasNote : true);
+                state.hasNote || (i >= 6 && i <= 8));
             addAndMakeVisible(*menuButtons[static_cast<size_t>(i)]);
         }
 
         menuButtons[0]->setEnabled(state.hasNote && !state.noteMuted);
-        menuButtons[1]->setEnabled(state.hasNote && state.noteMuted);
+        menuButtons[1]->setEnabled(state.hasNote && !state.noteMuted);
         menuButtons[2]->setEnabled(false);
-        menuButtons[3]->setEnabled(true);
-        menuButtons[4]->setEnabled(state.canUndo);
-        menuButtons[5]->setEnabled(state.canRedo);
-        menuButtons[6]->setEnabled(state.hasNote && state.canRestore);
+        menuButtons[3]->setEnabled(state.hasNote && !state.noteMuted);
+        menuButtons[4]->setEnabled(state.hasNote && state.noteMuted);
+        menuButtons[5]->setEnabled(false);
+        menuButtons[6]->setEnabled(true);
+        menuButtons[7]->setEnabled(state.canUndo);
+        menuButtons[8]->setEnabled(state.canRedo);
+        menuButtons[9]->setEnabled(state.hasNote && state.canRestore);
 
         int widest = 0;
-        for (int i = 0; i < 7; ++i)
+        for (int i = 0; i < 10; ++i)
         {
             if (!menuButtons[static_cast<size_t>(i)]->isVisible())
                 continue;
@@ -207,19 +217,14 @@ public:
         };
         if (state.hasNote)
         {
-            place(0);
-            place(1);
-            place(2);
-            place(3);
-            place(4);
-            place(5);
-            place(6);
+            for (int i = 0; i < 10; ++i)
+                place(i);
         }
         else
         {
-            place(3);
-            place(4);
-            place(5);
+            place(6);
+            place(7);
+            place(8);
         }
 
         const int toolX = juce::jmax(0, (width - toolRowWidth()) / 2);
@@ -247,7 +252,7 @@ private:
         const int count = state.showAdvancedTools ? 6 : 4;
         return count * toolButtonSize + (count - 1) * toolGap;
     }
-    int menuRowCount() const { return state.hasNote ? 7 : 3; }
+    int menuRowCount() const { return state.hasNote ? 10 : 3; }
     int menuPanelHeight() const
     {
         return menuPadY * 2 + menuRowCount() * rowHeight;
@@ -257,6 +262,6 @@ private:
     int menuWidth = 0;
     std::shared_ptr<int> choice;
     std::array<std::unique_ptr<ToolButton>, 6> toolButtons;
-    std::array<std::unique_ptr<ActionButton>, 7> menuButtons;
+    std::array<std::unique_ptr<ActionButton>, 10> menuButtons;
 };
 }

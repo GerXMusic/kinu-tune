@@ -7,8 +7,8 @@ ToolPill::ToolPill()
              {EditorTool::Pitch, GuiIcon::PitchTool, false},
              {EditorTool::Formant, GuiIcon::FormantTool, true},
              {EditorTool::Amplitude, GuiIcon::AmplitudeTool, true},
-             {EditorTool::Separation, GuiIcon::SeparationTool, false},
-             {EditorTool::Timing, GuiIcon::TimingTool, false}};
+             {EditorTool::Timing, GuiIcon::TimingTool, false},
+             {EditorTool::Separation, GuiIcon::SeparationTool, false}};
     setVisible(false);
     setInterceptsMouseClicks(true, false);
 }

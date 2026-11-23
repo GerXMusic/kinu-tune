@@ -5,36 +5,86 @@ MenuHandler::MenuHandler() = default;
 juce::StringArray MenuHandler::getMenuBarNames() {
 #if JUCE_MAC
     if (pluginMode)
-        return {TR("menu.edit")};
-    return {TR("menu.file"), TR("menu.edit")};
+        return {TR("menu.edit"), TR("menu.options")};
+    return {TR("menu.file"), TR("menu.edit"), TR("menu.options")};
 #else
     if (pluginMode)
-        return {TR("menu.edit"), TR("menu.settings")};
-    return {TR("menu.file"), TR("menu.edit")};
+        return {TR("menu.edit"), TR("menu.options"), TR("menu.settings")};
+    return {TR("menu.file"), TR("menu.edit"), TR("menu.options")};
 #endif
 }
 
 juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& /*menuName*/) {
     juce::PopupMenu menu;
 
+    const auto addEditMenu = [this, &menu]()
+    {
+        if (!commandManager)
+            return;
+
+        menu.addCommandItem(commandManager, CommandIDs::undo);
+        menu.addCommandItem(commandManager, CommandIDs::redo);
+        menu.addSeparator();
+        // Melodyne's clipboard commands are visible and inactive until the
+        // audio clipboard exists; a disabled item is clearer than hiding them.
+        menu.addCommandItem(commandManager, CommandIDs::cutNotes);
+        menu.addCommandItem(commandManager, CommandIDs::copyNotes);
+        menu.addCommandItem(commandManager, CommandIDs::pasteNotes);
+        menu.addSeparator();
+        menu.addCommandItem(commandManager, CommandIDs::deleteNotes);
+        menu.addCommandItem(commandManager, CommandIDs::selectAll);
+        menu.addSeparator();
+        menu.addCommandItem(commandManager, CommandIDs::muteNotes);
+        menu.addCommandItem(commandManager, CommandIDs::unmuteNotes);
+        menu.addSeparator();
+        menu.addCommandItem(commandManager, CommandIDs::correctPitch);
+        menu.addCommandItem(commandManager, CommandIDs::quantizeTime);
+        menu.addCommandItem(commandManager, CommandIDs::leveling);
+        menu.addSeparator();
+
+        juce::PopupMenu resetMenu;
+        resetMenu.addCommandItem(commandManager, CommandIDs::resetPitch);
+        resetMenu.addCommandItem(commandManager, CommandIDs::resetFormant);
+        resetMenu.addCommandItem(commandManager, CommandIDs::resetAmplitude);
+        resetMenu.addCommandItem(commandManager, CommandIDs::resetTiming);
+        resetMenu.addSeparator();
+        resetMenu.addCommandItem(commandManager, CommandIDs::resetAllEdits);
+        menu.addSubMenu(TR("menu.reset"), resetMenu);
+
+        menu.addSeparator();
+        menu.addCommandItem(commandManager, CommandIDs::mergeNotes);
+        menu.addSeparator();
+
+        juce::PopupMenu toolsMenu;
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activateMainTool);
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activatePitchTool);
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activateFormantTool);
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activateAmplitudeTool);
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activateTimingTool);
+        toolsMenu.addCommandItem(commandManager, CommandIDs::activateSeparationTool);
+        menu.addSubMenu(TR("menu.tools"), toolsMenu);
+    };
+
+    const auto addOptionsMenu = [this, &menu]()
+    {
+        if (!commandManager)
+            return;
+        menu.addCommandItem(commandManager, CommandIDs::showDeltaPitch);
+        menu.addCommandItem(commandManager, CommandIDs::showBasePitch);
+        menu.addSeparator();
+        menu.addCommandItem(commandManager, CommandIDs::zoomFull);
+    };
+
     if (pluginMode) {
         if (menuIndex == 0) {
-            // Edit menu
-            if (commandManager) {
-                menu.addCommandItem(commandManager, CommandIDs::undo);
-                menu.addCommandItem(commandManager, CommandIDs::redo);
-                menu.addSeparator();
-                menu.addCommandItem(commandManager, CommandIDs::selectAll);
-                menu.addSeparator();
-                menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
-            }
+            addEditMenu();
+        } else if (menuIndex == 1) {
+            addOptionsMenu();
         }
 #if !JUCE_MAC
-        else if (menuIndex == 1) {
-            // Settings menu
-            if (commandManager) {
+        else if (menuIndex == 2) {
+            if (commandManager)
                 menu.addCommandItem(commandManager, CommandIDs::showSettings);
-            }
         }
 #endif
     } else {
@@ -71,15 +121,9 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::quit);
             }
         } else if (menuIndex == 1) {
-            // Edit menu
-            if (commandManager) {
-                menu.addCommandItem(commandManager, CommandIDs::undo);
-                menu.addCommandItem(commandManager, CommandIDs::redo);
-                menu.addSeparator();
-                menu.addCommandItem(commandManager, CommandIDs::selectAll);
-                menu.addSeparator();
-                menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
-            }
+            addEditMenu();
+        } else if (menuIndex == 2) {
+            addOptionsMenu();
         }
     }
 

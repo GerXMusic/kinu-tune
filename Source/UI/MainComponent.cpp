@@ -814,15 +814,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
   variAudioInspector.onNoteEngineChanged = [this](NoteEngine engine)
   { applyNoteEngineToSelection(engine); };
   variAudioInspector.onCorrectPitchMacro = [this]
-  {
-    pianoRoll.beginInspectorEdit(
-        PianoRollComponent::InspectorParam::CorrectPitch);
-    pianoRoll.setInspectorEditValue(100.0f);
-    pianoRoll.endInspectorEdit();
-  };
+  { applyCorrectPitchMacro(); };
   // M4 v1 (D-242): la fuerza la elige el menu del boton Cuantizar tiempo.
-  variAudioInspector.onQuantizeTimeMacro = [this](int strengthPercent)
-  { pianoRoll.quantizeTimeSelection(strengthPercent); };
+  // D-279: el mismo menu sirve al comando de teclado y al menu contextual.
+  variAudioInspector.onQuantizeTimeMenuRequested = [this](juce::Component* anchor)
+  { showQuantizeTimeMacroMenu(anchor); };
   // M5 v1 (D-245): silenciar/reactivar la seleccion (o la nota del menu).
   variAudioInspector.onMuteNotesMacro = [this]
   { pianoRoll.muteSelection(); };
@@ -1246,6 +1242,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
+  // D-279: the canvas menu uses the same two macro paths as the inspector.
+  pianoRoll.onCorrectPitchMacroRequested = [this]
+  { applyCorrectPitchMacro(); };
+  pianoRoll.onQuantizeTimeMenuRequested = [this](juce::Point<int> screenPoint)
+  { showQuantizeTimeMacroMenu(nullptr, screenPoint); };
   pianoRoll.onPitchPreviewRenderRequested = [this]()
   {
     markRenderDirty();
@@ -4680,6 +4681,50 @@ void MainComponent::rerenderEditedNotes()
     onPitchEditFinished();
 }
 
+void MainComponent::applyCorrectPitchMacro()
+{
+  if (getProject() == nullptr)
+    return;
+  // Same gesture as the inspector's Correct Pitch macro: one undoable step at
+  // 100 %, which is what Melodyne's macro applies when its default is kept.
+  pianoRoll.beginInspectorEdit(
+      PianoRollComponent::InspectorParam::CorrectPitch);
+  pianoRoll.setInspectorEditValue(100.0f);
+  pianoRoll.endInspectorEdit();
+}
+
+void MainComponent::showQuantizeTimeMacroMenu(juce::Component* anchor,
+                                               juce::Point<int> screenPoint)
+{
+  if (getProject() == nullptr)
+    return;
+
+  juce::PopupMenu menu;
+  for (const int percent : {100, 75, 50, 25})
+    menu.addItem(percent, juce::String(percent) + " %", true,
+                 percent == lastQuantizeStrengthPercent);
+
+  auto options = screenPoint.isOrigin()
+                     ? juce::PopupMenu::Options().withTargetComponent(
+                           anchor != nullptr ? anchor : &toolbar)
+                     : juce::PopupMenu::Options().withTargetScreenArea(
+                           juce::Rectangle<int>(screenPoint.x, screenPoint.y, 1,
+                                                1));
+  juce::Component::SafePointer<MainComponent> safeThis(this);
+  menu.showMenuAsync(options, [safeThis](int result)
+  {
+    if (safeThis == nullptr || result <= 0)
+      return;
+    safeThis->lastQuantizeStrengthPercent = result;
+    safeThis->pianoRoll.quantizeTimeSelection(result);
+  });
+}
+
+void MainComponent::resetSelection(PianoRollComponent::NoteRestoreMode mode)
+{
+  pianoRoll.resetSelection(mode);
+}
+
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
 {
   const auto engine = editorController ? editorController->getSynthesisEngineType()
@@ -6346,11 +6391,30 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
       CommandIDs::goToStart,
       CommandIDs::goToEnd,
 
-      // Edit mode commands
+      // Editing tools, Melodyne order and shortcuts (F1..F6).
       CommandIDs::activateMainTool,
-      CommandIDs::activateSplitTool,
-      CommandIDs::activatePitchDrawingTool,
-      CommandIDs::activateTimingTool};
+      CommandIDs::activatePitchTool,
+      CommandIDs::activateFormantTool,
+      CommandIDs::activateAmplitudeTool,
+      CommandIDs::activateTimingTool,
+      CommandIDs::activateSeparationTool,
+
+      // Melodyne macros and note commands.
+      CommandIDs::correctPitch,
+      CommandIDs::quantizeTime,
+      CommandIDs::leveling,
+      CommandIDs::cutNotes,
+      CommandIDs::copyNotes,
+      CommandIDs::pasteNotes,
+      CommandIDs::deleteNotes,
+      CommandIDs::muteNotes,
+      CommandIDs::unmuteNotes,
+      CommandIDs::mergeNotes,
+      CommandIDs::resetPitch,
+      CommandIDs::resetFormant,
+      CommandIDs::resetAmplitude,
+      CommandIDs::resetTiming,
+      CommandIDs::resetAllEdits};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
 }
@@ -6417,7 +6481,9 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 #if JUCE_MAC
     result.addDefaultKeypress('z', primaryModifier | juce::ModifierKeys::shiftModifier);
 #else
+    // Melodyne's "Redo (alternative)" and the Windows convention.
     result.addDefaultKeypress('y', primaryModifier);
+    result.addDefaultKeypress('z', primaryModifier | juce::ModifierKeys::shiftModifier);
 #endif
     result.setActive(isPluginMode() ||
                      (undoManager != nullptr && undoManager->canRedo()));
@@ -6469,7 +6535,12 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
    #else
     if (!isPluginMode())
+    {
       result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+      // Melodyne's stand-alone Play is the numeric keypad Enter. JUCE exposes
+      // it as returnKey; Space stays as the DAW-style alternative.
+      result.addDefaultKeypress(juce::KeyPress::returnKey, juce::ModifierKeys::noModifiers);
+    }
    #endif
     // Non-ARA plugin mode has no host transport to drive.
     result.setActive(project != nullptr && hostTransportControlAvailable);
@@ -6478,6 +6549,9 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   case CommandIDs::stop:
     result.setInfo(TR("command.stop"), TR("command.stop.desp"), TR("category.transport"), 0);
     result.addDefaultKeypress(juce::KeyPress::escapeKey, juce::ModifierKeys::noModifiers);
+    if (!isPluginMode())
+      result.addDefaultKeypress(juce::KeyPress::numberPad0,
+                                juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && isPlaying &&
                      hostTransportControlAvailable);
     break;
@@ -6494,38 +6568,149 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setActive(project != nullptr);
     break;
 
-  // Edit mode commands
+  // Editing tools, Melodyne order. F1..F6 are Melodyne's defaults; F3 and F4
+  // stay reserved for the Formant and Amplitude tools until their engine
+  // exists, so the commands are visible but inactive (D-279).
   case CommandIDs::activateMainTool:
     result.setInfo(TR("command.main_tool"), TR("command.main_tool.desp"),
                    TR("category.edit_mode"), 0);
-    result.addDefaultKeypress('1', juce::ModifierKeys::noModifiers);
+    result.addDefaultKeypress(juce::KeyPress::F1Key,
+                              juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Select);
     break;
 
-  case CommandIDs::activateSplitTool:
-    result.setInfo(TR("command.split_tool"), TR("command.split_tool.desp"),
+  case CommandIDs::activatePitchTool:
+    result.setInfo(TR("command.pitch_tool"), TR("command.pitch_tool.desp"),
                    TR("category.edit_mode"), 0);
-    result.addDefaultKeypress('2', juce::ModifierKeys::noModifiers);
-    result.setActive(project != nullptr && toolGroupEnabled);
-    result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
-    break;
-
-  case CommandIDs::activatePitchDrawingTool:
-    result.setInfo(TR("command.pitch_drawing_tool"), TR("command.pitch_drawing_tool.desp"),
-                   TR("category.edit_mode"), 0);
-    result.addDefaultKeypress('3', juce::ModifierKeys::noModifiers);
+    result.addDefaultKeypress(juce::KeyPress::F2Key,
+                              juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::PitchDrawing);
+    break;
+
+  case CommandIDs::activateFormantTool:
+    result.setInfo(TR("command.formant_tool"), TR("command.formant_tool.desp"),
+                   TR("category.edit_mode"), 0);
+    result.addDefaultKeypress(juce::KeyPress::F3Key,
+                              juce::ModifierKeys::noModifiers);
+    result.setActive(false); // no engine yet: honest, like the disabled row
+    break;
+
+  case CommandIDs::activateAmplitudeTool:
+    result.setInfo(TR("command.amplitude_tool"),
+                   TR("command.amplitude_tool.desp"),
+                   TR("category.edit_mode"), 0);
+    result.addDefaultKeypress(juce::KeyPress::F4Key,
+                              juce::ModifierKeys::noModifiers);
+    result.setActive(false); // no engine yet
     break;
 
   case CommandIDs::activateTimingTool:
     result.setInfo(TR("command.timing_tool"), TR("command.timing_tool.desp"),
                    TR("category.edit_mode"), 0);
-    result.addDefaultKeypress('4', juce::ModifierKeys::noModifiers);
+    result.addDefaultKeypress(juce::KeyPress::F5Key,
+                              juce::ModifierKeys::noModifiers);
     result.setActive(project != nullptr && toolGroupEnabled);
     result.setTicked(pianoRoll.getEditMode() == EditMode::Timing);
     break;
+
+  case CommandIDs::activateSeparationTool:
+    result.setInfo(TR("command.split_tool"), TR("command.split_tool.desp"),
+                   TR("category.edit_mode"), 0);
+    result.addDefaultKeypress(juce::KeyPress::F6Key,
+                              juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr && toolGroupEnabled);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
+    break;
+
+  // Melodyne macros.
+  case CommandIDs::correctPitch:
+    result.setInfo(TR("command.correct_pitch"), TR("command.correct_pitch.desp"),
+                   TR("category.macros"), 0);
+    result.addDefaultKeypress('p', primaryModifier | juce::ModifierKeys::shiftModifier);
+    result.setActive(project != nullptr);
+    break;
+
+  case CommandIDs::quantizeTime:
+    result.setInfo(TR("command.quantize_time"), TR("command.quantize_time.desp"),
+                   TR("category.macros"), 0);
+    result.addDefaultKeypress('t', primaryModifier | juce::ModifierKeys::shiftModifier);
+    result.setActive(project != nullptr);
+    break;
+
+  case CommandIDs::leveling:
+    result.setInfo(TR("command.leveling"), TR("command.leveling.desp"),
+                   TR("category.macros"), 0);
+    result.setActive(false); // not implemented
+    break;
+
+  // Note commands. Cut/Copy/Paste/Delete are Melodyne's, but the audio
+  // clipboard and note deletion are not implemented yet, so they stay
+  // inactive instead of promising an edit that would do nothing.
+  case CommandIDs::cutNotes:
+    result.setInfo(TR("command.cut_notes"), TR("command.cut_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(false);
+    break;
+
+  case CommandIDs::copyNotes:
+    result.setInfo(TR("command.copy_notes"), TR("command.copy_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(false);
+    break;
+
+  case CommandIDs::pasteNotes:
+    result.setInfo(TR("command.paste_notes"), TR("command.paste_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(false);
+    break;
+
+  case CommandIDs::deleteNotes:
+    result.setInfo(TR("command.delete_notes"), TR("command.delete_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(false);
+    break;
+
+  case CommandIDs::muteNotes:
+    result.setInfo(TR("command.mute_notes"), TR("command.mute_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(project != nullptr &&
+                     !pianoRoll.getSelectedNotes().empty());
+    break;
+
+  case CommandIDs::unmuteNotes:
+    result.setInfo(TR("command.unmute_notes"), TR("command.unmute_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(project != nullptr &&
+                     !pianoRoll.getSelectedNotes().empty());
+    break;
+
+  case CommandIDs::mergeNotes:
+    result.setInfo(TR("command.merge_notes"), TR("command.merge_notes.desp"),
+                   TR("menu.edit"), 0);
+    result.setActive(project != nullptr &&
+                     pianoRoll.getSelectedNotes().size() == 1 &&
+                     pianoRoll.canGlueTarget(true));
+    break;
+
+  // Melodyne's Reset Individual Edits submenu.
+  case CommandIDs::resetPitch:
+  case CommandIDs::resetFormant:
+  case CommandIDs::resetAmplitude:
+  case CommandIDs::resetTiming:
+  case CommandIDs::resetAllEdits:
+  {
+    const char* key = commandID == CommandIDs::resetPitch      ? "command.reset_pitch"
+                      : commandID == CommandIDs::resetFormant   ? "command.reset_formant"
+                      : commandID == CommandIDs::resetAmplitude ? "command.reset_amplitude"
+                      : commandID == CommandIDs::resetTiming    ? "command.reset_timing"
+                                                                : "command.reset_all";
+    result.setInfo(TR(key), juce::String(), TR("menu.reset"), 0);
+    result.setActive(project != nullptr &&
+                     !pianoRoll.getSelectedNotes().empty());
+    break;
+  }
 
   default:
     break;
@@ -6647,18 +6832,13 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     }
     return true;
 
-  // Edit mode commands
+  // Editing tools, Melodyne order.
   case CommandIDs::activateMainTool:
     if (toolGroupEnabled)
       setEditMode(EditMode::Select);
     return true;
 
-  case CommandIDs::activateSplitTool:
-    if (toolGroupEnabled)
-      setEditMode(EditMode::Split);
-    return true;
-
-  case CommandIDs::activatePitchDrawingTool:
+  case CommandIDs::activatePitchTool:
     if (toolGroupEnabled)
       setEditMode(EditMode::PitchDrawing);
     return true;
@@ -6666,6 +6846,60 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
   case CommandIDs::activateTimingTool:
     if (toolGroupEnabled)
       setEditMode(EditMode::Timing);
+    return true;
+
+  case CommandIDs::activateSeparationTool:
+    if (toolGroupEnabled)
+      setEditMode(EditMode::Split);
+    return true;
+
+  case CommandIDs::activateFormantTool:
+  case CommandIDs::activateAmplitudeTool:
+  case CommandIDs::leveling:
+  case CommandIDs::cutNotes:
+  case CommandIDs::copyNotes:
+  case CommandIDs::pasteNotes:
+  case CommandIDs::deleteNotes:
+    return true; // visible but inactive; the command manager never calls them
+
+  case CommandIDs::correctPitch:
+    applyCorrectPitchMacro();
+    return true;
+
+  case CommandIDs::quantizeTime:
+    showQuantizeTimeMacroMenu(&toolbar);
+    return true;
+
+  case CommandIDs::muteNotes:
+    pianoRoll.setMutedForNotes(pianoRoll.getSelectedNotes(), true);
+    return true;
+
+  case CommandIDs::unmuteNotes:
+    pianoRoll.setMutedForNotes(pianoRoll.getSelectedNotes(), false);
+    return true;
+
+  case CommandIDs::mergeNotes:
+    pianoRoll.mergeSelectedNotes();
+    return true;
+
+  case CommandIDs::resetPitch:
+    resetSelection(PianoRollComponent::NoteRestoreMode::Pitch);
+    return true;
+
+  case CommandIDs::resetFormant:
+    resetSelection(PianoRollComponent::NoteRestoreMode::Formant);
+    return true;
+
+  case CommandIDs::resetAmplitude:
+    resetSelection(PianoRollComponent::NoteRestoreMode::Amplitude);
+    return true;
+
+  case CommandIDs::resetTiming:
+    resetSelection(PianoRollComponent::NoteRestoreMode::Timing);
+    return true;
+
+  case CommandIDs::resetAllEdits:
+    resetSelection(PianoRollComponent::NoteRestoreMode::All);
     return true;
 
   default:

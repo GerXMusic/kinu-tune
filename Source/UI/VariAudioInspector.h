@@ -75,7 +75,9 @@ public:
     // Macros (Melodyne's Correct Pitch / Quantize Time / Leveling row).
     std::function<void()> onCorrectPitchMacro;
     // M4 v1 (D-242): cuantizacion de tiempo con la fuerza elegida (0..100).
-    std::function<void(int)> onQuantizeTimeMacro;
+    // D-279: el menu de fuerza vive en MainComponent, para que el boton, el
+    // menu contextual y el comando de teclado abran exactamente el mismo.
+    std::function<void(juce::Component*)> onQuantizeTimeMenuRequested;
     std::function<void()> onPitchCenterMacro;
     // M5 v1 (D-245): silenciar o reactivar las notas seleccionadas.
     std::function<void()> onMuteNotesMacro;
@@ -166,8 +168,6 @@ private:
     juce::TextButton levelingButton;
     juce::Rectangle<int> macrosCardBounds;
     bool editingRow = false;
-    // D-242: last strength picked in the Quantize Time menu (100 % default).
-    int quantizeStrengthPercent = 100;
     EditorUiMode editorMode = EditorUiMode::Basic;
     bool absoluteSelected = true; // Absolute unless the user picks Relative
     juce::Rectangle<int> variAudioCardBounds;
