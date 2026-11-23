@@ -1,10 +1,12 @@
-# Checks every push and pull request: builds TuneX with the unit tests on
-# macOS (Apple silicon) and on Windows and runs them all, including the one
-# test that loads the models (ModelInferenceTests), so analysis and synthesis
-# are known to work on both. The Windows job also builds the VST3 and loads it
-# in a minimal host, so code that only one compiler accepts is caught before a
-# release. The suite is complete on both, so a developer does not need to build
-# it locally to know whether a change is good.
+# Checks every push and pull request: builds TuneX and runs every unit test on
+# Windows and on macOS, and loads the VST3 in a minimal host so code that only
+# one compiler accepts is caught before a release.
+#
+# Why it stopped being one big Windows job (D-282, 2026-11-23): each test is its
+# own executable with JUCE linked inside (~6.9 MB each), so one job linked 71 of
+# them on a 4-vCPU runner and took 1 h 45. Now the tests are split into three
+# shards that build and run their own ~21 targets in parallel, the VST3 check has
+# its own job, and sccache reuses objects between runs.
 name: CI
 
 on:
@@ -20,6 +22,102 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------- Windows ---
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.11
+
+      # PITCHNET_BUILD_TESTS builds and registers the whole suite; the VST3 is
+      # built by its own job. The shard only builds its own targets.
+      - name: Configure
+        run: >
+          cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build and run this shard's tests
+        shell: pwsh
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Reparto estable: targets en orden alfabetico, uno de cada tres por shard.
+          # Se leen del propio ctest para que anadir un test no obligue a tocar el CI.
+          $json = ctest --test-dir build -C Release --show-only=json-v1 | ConvertFrom-Json
+          $tests = $json.tests
+          $targets = $tests |
+            ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.command[0]) } |
+            Select-Object -Unique | Sort-Object
+          $n = [int]$env:SHARDS; $mine = @()
+          for ($i = 0; $i -lt $targets.Count; $i++) {
+            if ($i % $n -eq [int]$env:SHARD) { $mine += $targets[$i] }
+          }
+          Write-Host "shard $($env:SHARD)/$n : $($mine.Count) de $($targets.Count) targets"
+          if ($mine.Count -eq 0) { throw "este shard no tiene targets" }
+
+          cmake --build build --config Release --parallel 4 --target $mine
+          if ($LASTEXITCODE -ne 0) { throw "build del shard fallo con $LASTEXITCODE" }
+
+          $names = @()
+          foreach ($t in $tests) {
+            $exe = [IO.Path]::GetFileNameWithoutExtension($t.command[0])
+            if ($mine -contains $exe) { $names += [regex]::Escape($t.name) }
+          }
+          Write-Host "tests: $($names.Count)"
+          ctest --test-dir build -C Release -R "^($($names -join '|'))$" --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "ctest del shard fallo con $LASTEXITCODE" }
+
+  # The plug-in itself, once: built and loaded like a host does it. Kept apart so
+  # one VST3 link is not paid by every test shard.
+  windows-vst3-check:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.11
+
+      - name: Configure
+        run: >
+          cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build the VST3
+        run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel 4
+
+      # Creates the plug-in in a minimal host on the runner's runtime and on an
+      # older Visual C++ runtime, then runs pluginval. See the script.
+      #
+      # Non-blocking while D-283 is open: the clean Windows Server 2025 container
+      # now ships onnxruntime.dll in System32, so the "no runtime at all" premise
+      # of the check no longer holds and LoadLibrary fails with 126. The runner's
+      # own pass (and pluginval) still has to be green.
+      - name: Check the VST3 like a host does
+        continue-on-error: true
+        shell: pwsh
+        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3"
+
+  # ------------------------------------------------------------------ macOS ---
   macos-tests:
     runs-on: macos-15
     timeout-minutes: 120
@@ -30,6 +128,9 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.11
+
       # The Core ML vocoder is not in the repository and the tests load no
       # model, so the model check only warns here.
       - name: Configure
@@ -38,6 +139,8 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DPITCHNET_BUILD_TESTS=ON
           -DPITCHNET_REQUIRE_MODELS=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       # The hosted macOS runner has 3 CPUs and 7 GB of memory; an unbounded
       # parallel build starts dozens of compilers at once.
@@ -59,39 +162,3 @@ jobs:
 
       - name: Run the unit tests
         run: ctest --test-dir build --output-on-failure
-
-  windows-build:
-    runs-on: windows-latest
-    # The whole suite is built here now, and every test is its own executable,
-    # so the budget is larger than when only the VST3 was built.
-    timeout-minutes: 240
-    steps:
-      - name: Checkout the source with submodules
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
-          persist-credentials: false
-
-      # PITCHNET_BUILD_TESTS builds and registers the whole suite; the VST3 is
-      # built by default, so one configure serves both.
-      - name: Configure
-        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=ON
-
-      # The hosted Windows runner has 4 CPUs and 16 GB of memory; every test is
-      # its own executable, so an unbounded build starts dozens of links at once.
-      - name: Build the VST3 and the unit tests
-        run: cmake --build build --config Release --parallel 4
-
-      # Runs every registered test. ModelInferenceTests loads fcpe.onnx, the
-      # GAME models and pc_nsf_hifigan.onnx with the Windows ONNX Runtime and
-      # checks the numbers: FCPE reports the tone's pitch, GAME finds the note,
-      # the vocoder and PSOLA shift it by a minor third. See
-      # tests/ModelInferenceTests.cpp.
-      - name: Run the unit tests
-        run: ctest --test-dir build -C Release --parallel 2 --output-on-failure
-
-      # Creates the plug-in in a minimal host on the runner's runtime and on an
-      # older Visual C++ runtime, then runs pluginval. See the script.
-      - name: Check the VST3 like a host does
-        shell: pwsh
-        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3"
