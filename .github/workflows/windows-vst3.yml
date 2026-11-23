@@ -1,0 +1,78 @@
+# Builds the Windows x64 VST3 with the SAME configuration as the production build:
+# DirectML ON, bundled DirectML runtime, ARA diagnostics off, unit tests off. The
+# bundle goes up as a workflow artifact so it can be installed and listened to
+# without compiling on the developer machine.
+#
+# Why this exists: compiling on a 19.8 GB / 8-core machine froze it for hours
+# (see D-276 in Pitchcore). The runner does the build; the local machine only
+# installs and listens. Whether it sounds right is still decided locally, with a
+# DAW and an ARA host, which the runner does not have.
+#
+# Rules kept from windows-pkg.yml: one .vst3 inside the bundle and no backups
+# (D-240). The vocoder, fcpe.onnx and the tables are in the repository.
+name: Windows VST3 (DirectML)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build (empty = the ref this run is dispatched from)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-vst3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-vst3:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure (Release, DirectML, production flags)
+        run: >
+          cmake -B build -A x64
+          -DCMAKE_BUILD_TYPE=Release
+          -DUSE_DIRECTML=ON
+          -DUSE_BUNDLED_DIRECTML_RUNTIME=ON
+          -DUSE_ASIO=OFF
+          -DPITCHNET_ARA_DIAGNOSTICS=OFF
+          -DPITCHNET_BUILD_TESTS=OFF
+
+      - name: Build the VST3
+        run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel 4
+
+      - name: Check the bundle and zip it (D-240)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vst3 = Get-ChildItem 'build' -Recurse -Directory -Filter 'TuneX.vst3' | Select-Object -First 1
+          if (-not $vst3) { throw 'no encontre TuneX.vst3' }
+          $dllDir = Join-Path $vst3.FullName 'Contents/x86_64-win'
+          $files = @(Get-ChildItem $dllDir -Filter *.vst3 -File)
+          if ($files.Count -ne 1) { throw "el bundle tiene $($files.Count) .vst3 en x86_64-win" }
+          if ($files[0].Name -ne 'TuneX.vst3') { throw "el .vst3 se llama $($files[0].Name)" }
+          $backups = @(Get-ChildItem $vst3.FullName -Recurse -File | Where-Object { $_.Name -match '\.old\.' })
+          if ($backups.Count -ne 0) { throw "el bundle lleva $($backups.Count) fichero(s) de respaldo" }
+          "inner: {0} ({1:N1} MB)" -f $files[0].Name, ($files[0].Length / 1MB)
+          "SHA256 $((Get-FileHash $files[0].FullName -Algorithm SHA256).Hash)"
+          Compress-Archive -Path $vst3.FullName -DestinationPath 'TuneX.vst3.zip'
+          "zip: {0:N1} MB" -f ((Get-Item 'TuneX.vst3.zip').Length / 1MB)
+
+      - name: Upload the VST3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-vst3-Windows-x64
+          path: TuneX.vst3.zip
+          retention-days: 7
+          if-no-files-found: error
