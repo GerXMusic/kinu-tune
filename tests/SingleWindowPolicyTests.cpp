@@ -1,4 +1,4 @@
-// D-178: a new Kinu Tune editor closes the previous host window, so only one
+// D-178: a new TuneX editor closes the previous host window, so only one
 // editor remains.
 #include "../Source/Plugin/SingleWindowPolicy.h"
 #include "TestAssert.h"

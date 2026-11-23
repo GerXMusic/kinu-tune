@@ -1,13 +1,15 @@
 # Modifications
 
-Kinu Tune is a modified version of [PitchNet](https://github.com/SessionLoops/PitchNet)
+TuneX is a modified version of [PitchNet](https://github.com/SessionLoops/PitchNet)
 0.7.2 by Session Loops, which is itself a modified derivative of
 [HachiTune](https://github.com/KCKT0112/HachiTune). This file is the notice of
 modification required by section 5(a) of the GNU Affero General Public License,
 version 3.
 
-- Modified by: Keinoaza
-- Date of modification: 2026-10-19 (first release, Kinu Tune 0.1.0); continued through 2026-10-22 (Kinu Tune 0.1.3)
+- Modified by: Keinoaza (2026-10-19 to 2026-10-22, TuneX 0.1.0 - 0.1.3) and
+  GerX (from 2026-11-22: own vendor identity, macOS CI build and validation,
+  model packaging, model-folder migration, editor and engine changes)
+- Date of modification: 2026-10-19 (first release, TuneX 0.1.0); continued through 2026-10-22 (TuneX 0.1.3) and from 2026-11-22 onwards
 - Based on: SessionLoops/PitchNet commit `8787321` ("Disable file logging in release builds")
 - License of the modified work: GNU Affero General Public License, version 3 (see [LICENSE](LICENSE))
 
@@ -16,10 +18,15 @@ The full history of the changes is in the git log of this repository.
 ## Summary of changes
 
 ### Identity
-- Product name Kinu Tune, vendor Keinoaza, plugin codes `Kein` / `Kntu`
-  (`Kntd` for development builds), bundle id `com.keinoaza.kinutune`.
-- Settings folder `~/Library/Kinu Tune/` (macOS), logs `~/Library/Logs/Kinu Tune/`, models
-  `~/Library/Application Support/Keinoaza/Kinu Tune/models/`.
+- Product name TuneX; vendor identity **GerX** since 2026-11-22 (earlier
+  builds used the vendor of the Keinoaza fork). Plugin codes `Kein` / `TunX`
+  (`TunD` for development builds) are unchanged, so existing sessions keep
+  finding the plug-in. Bundle id `com.gerx.tunex` (`com.gerx.tunex.dev` for
+  development builds).
+- Settings folder `~/Library/TuneX/` (macOS), logs `~/Library/Logs/TuneX/`, models
+  `~/Library/Application Support/GerX/TuneX/models/`. Builds before the rename
+  read `~/Library/Application Support/Keinoaza/TuneX/models/` as a read-only
+  fallback, so an existing install keeps finding its models.
 - New icon and logo images.
 - Version number set to 0.1.0, then 0.1.1, 0.1.2 and 0.1.3.
 
@@ -33,7 +40,7 @@ The full history of the changes is in the git log of this repository.
   start-up event that ONNX Runtime writes while creating its first
   environment (the ONNX Runtime version and build type) comes before this
   call, and ONNX Runtime turns its events back on when a Windows
-  event-tracing session enables them again later (until Kinu Tune next
+  event-tracing session enables them again later (until TuneX next
   creates an environment). ONNX Runtime has no telemetry on other platforms.
 
 ### Windows loading
@@ -125,9 +132,9 @@ The full history of the changes is in the git log of this repository.
   roll, for new projects. Saved projects keep their saved settings.
 
 ### Notices
-- THIRD_PARTY_NOTICES.txt: Kinu Tune notice added at the top; GAME and
+- THIRD_PARTY_NOTICES.txt: TuneX notice added at the top; GAME and
   PC-NSF-HiFiGAN model weights are listed with their CC BY-NC-SA 4.0 license;
-  VST 3 SDK notice added; Kinu Tune binary releases do not include rmvpe.onnx.
+  VST 3 SDK notice added; TuneX binary releases do not include rmvpe.onnx.
 - licenses/: the vocoder notice from OpenVPI (unchanged), ONNX Runtime license
   and third-party notices, Apache License 2.0, ARA SDK notice, and the licenses
   of the components compiled in through JUCE.
@@ -135,10 +142,10 @@ The full history of the changes is in the git log of this repository.
 - `.github/workflows/build.yml` (upstream CI) removed; `.github/workflows/windows-release.yml`
   builds the Windows release; packaging/INSTALL-*.txt are the install notes in
   the release zips. From 0.1.1 the macOS release also contains the Audio Unit
-  (`Kinu Tune.component`) besides the VST3.
+  (`TuneX.component`) besides the VST3.
 - Installers: the upstream PitchNet.pkgproj and PitchNet.iss are not used.
   `packaging/macos/build-pkg.sh` builds a macOS package that installs into the
-  user's home; `packaging/windows/KinuTune.iss` is the Windows installer, built
+  user's home; `packaging/windows/TuneX.iss` is the Windows installer, built
   and checked by `.github/workflows/windows-installer.yml`. Both are made from
   the files of the release zips.
 
@@ -180,7 +187,7 @@ New files:
 - `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
   `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
 - `.github/workflows/windows-installer.yml`, `packaging/macos/build-pkg.sh`,
-  `packaging/macos/installer/*`, `packaging/windows/KinuTune.iss`,
+  `packaging/macos/installer/*`, `packaging/windows/TuneX.iss`,
   `tools/windows/check-installer.ps1`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`

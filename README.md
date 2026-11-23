@@ -1,387 +1,305 @@
 <div align="center">
-  <h1>Kinu Tune</h1>
-  <p>Cubase VariAudio 風の操作で使える AI ボーカルピッチエディター(VST® 3 / ARA)。<br>
-  A vocal pitch editor with Cubase VariAudio-style controls and one-click scale-degree harmony.</p>
+  <h1>TuneX</h1>
+  <p>Editor de afinación vocal con controles estilo VariAudio (Cubase), como plugin VST3 / ARA 2.<br>
+  A vocal pitch editor with VariAudio-style controls, shipped as a VST3 / ARA 2 plug-in.</p>
 </div>
 
-[日本語](#日本語) | [English](#english)
+## Origen, atribución y licencia
 
-## 由来・著作権・ライセンス / Origin, attribution and license
+TuneX es un **fork de PitchNet 0.7.2** (Session Loops), que a su vez deriva de
+**HachiTune** (KCKT0112 y colaboradores). La cadena real es:
 
-Kinu Tune は、Session Loops による [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 を Keinoaza が改変したものです(2026-10-19 から)。PitchNet は [HachiTune](https://github.com/KCKT0112/HachiTune) の派生物です。変更点は [MODIFICATIONS.md](MODIFICATIONS.md) にあります。
+1. **HachiTune** — proyecto original.
+2. **PitchNet 0.7.2** — Session Loops, commit `8787321`.
+3. **TuneX (fork de Keinoaza)** — 2026-10-19 a 2026-10-22, versiones 0.1.0–0.1.3.
+4. **TuneX (GerX)** — desde 2026-11-22: identidad propia, compilación y validación
+   en macOS por CI, empaquetado de modelos, migración de la carpeta de modelos y
+   cambios de editor y motor.
 
-Kinu Tune is a modified version of [PitchNet](https://github.com/SessionLoops/PitchNet) 0.7.2 by Session Loops, made by Keinoaza from 2026-10-19. PitchNet is itself a modified derivative of [HachiTune](https://github.com/KCKT0112/HachiTune) by the HachiTune contributors. Kinu Tune includes substantial code derived from PitchNet and HachiTune, along with the changes by Session Loops, other contributors and Keinoaza; this repository does not claim sole authorship of the derived work. The changes are listed in [MODIFICATIONS.md](MODIFICATIONS.md).
+- Copyright (C) 2026 **GerX** (cambios propios)
+- Copyright (C) 2026 **Keinoaza** (fork anterior)
+- Copyright (C) 2026 **Session Loops** y colaboradores (PitchNet)
+- Copyright de los colaboradores de **HachiTune** (HachiTune)
 
-- Copyright (C) 2026 Keinoaza (modifications)
-- Copyright (c) 2026 Session Loops and contributors (PitchNet)
-- Copyright the HachiTune contributors (HachiTune)
+TuneX es software libre bajo **GNU Affero General Public License v3** (ver
+[LICENSE](LICENSE)), **sin garantía de ningún tipo**. Al distribuir copias o
+versiones modificadas hay que conservar los avisos de copyright, licencia y
+atribución, y ofrecer el código fuente correspondiente, como exige la AGPLv3.
+La lista de cambios está en [MODIFICATIONS.md](MODIFICATIONS.md) y las licencias
+de componentes y modelos en [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
-Kinu Tune is free software, distributed under the [GNU Affero General Public License, version 3](LICENSE) (AGPLv3), WITHOUT ANY WARRANTY. When you convey copies or modified versions, keep all copyright, license and attribution notices and make the corresponding source available, as the AGPLv3 requires. Third-party components and model files keep their own licenses: see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+TuneX no está afiliado ni respaldado por Session Loops, los colaboradores de
+HachiTune, OpenVPI, Steinberg, Celemony ni Apple. Cubase y VariAudio son marcas
+de Steinberg Media Technologies GmbH. VST es una marca registrada de Steinberg.
+Melodyne y ARA son marcas de Celemony Software GmbH. Logic Pro y Audio Units son
+marcas de Apple Inc.
 
-Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
+## Qué hace
 
----
+Editor monofónico de afinación pensado para quien viene de VariAudio: los
+segmentos son rectángulos, la curva de tono se edita por nota y el objetivo
+principal es sacar armonías rápido duplicando una pista de voz.
 
-## 日本語
+- Segmentos con nombre de nota y controles al pasar el ratón: enderezar la curva,
+  corregir el tono, unir, inclinar, formantes y volumen.
+- Modos de imán de tono (absoluto / relativo / apagado) con modificadores durante
+  el arrastre y edición con flechas.
+- Inspector izquierdo: herramientas (corregir tono, aplanar curva, deriva de tono,
+  desplazar formantes, volumen), escala del editor y armonía.
+- Armonía a un clic: tercera, cuarta, quinta, sexta u octava, arriba o abajo; la
+  tercera mayor o menor la decide la escala elegida.
+- La curva original de una nota editada se queda visible en gris; doble clic
+  restablece esa nota.
 
-### 概要
+## Requisitos
 
-PitchNet(Melodyne に近い操作)を、Cubase の VariAudio に慣れた人が使いやすいように作り替えたピッチエディターです。いちばんの目的は、複製したボーカルトラックからハモリを手早く作ることです。
+- **macOS 13 o superior en Apple silicon (arm64).** La build publicada no corre en
+  Macs Intel.
+- **Windows 10/11 (x64).** La build de Windows se compila y se valida en CI; en un
+  DAW real de Windows la prueba todavía es manual.
+- Un host con **ARA 2** (Cubase y similares). Sin ARA funciona como inserto normal
+  en modo captura. La entrega de macOS incluye VST3 y Audio Unit (para Logic Pro y
+  otros hosts AU); Logic Pro no está probado.
 
-- セグメントは VariAudio と同じ四角で表示し、マウスを乗せると音名とスマートコントロール(カーブのストレート化、ピッチ補正、結合、傾き、フォルマント、音量)が出ます
-- ピッチスナップモード(絶対 / 相対 / オフ)、ドラッグ中の Shift / Cmd / Option による切り替え、矢印キー操作
-- 左のインスペクタ: Tools(スライダー: ピッチを補正、カーブを平坦化、ピッチドリフト、フォルマントをシフト、ボリューム)、エディタースケール、ハモリ
-- ハモリ: 3度・4度・5度・6度・オクターブの上下をワンクリックで。長3度か短3度かはスケールに合わせて自動で決まります
-- 編集前のピッチカーブを灰色で表示、ダブルクリックでセグメントを元に戻す
+## Instalación
 
-### 動作環境
+### Desde el instalador
 
-- macOS 13 以降、Apple シリコン(arm64)。配布している Mac 版は Intel Mac では動きません
-- Windows 10/11(x64)。Windows 版は GitHub Actions で自動ビルドし、Windows 上で DAW と同じ手順で読み込めることを検査しています。実際の DAW での操作はまだ確認していません
-- Cubase など ARA 2 に対応したホスト(ARA なしでも、通常のインサートとして録り込み方式で使えます)。Mac 版は VST3 と AU(Logic Pro など向け)の両方を同梱しています。Logic Pro では動作を確認していません
+**macOS** (`TuneX-<versión>-macOS-arm64.pkg`):
 
-### インストール(配布版)
+1. Abre el paquete descargado.
+2. Si macOS dice que no se puede abrir, ve a *Ajustes del Sistema > Privacidad y
+   seguridad* y pulsa «Abrir igualmente»; vuelve a abrirlo (la entrega no está
+   notarizada).
+3. «Continuar» e «Instalar». No hace falta contraseña de administrador. Si no
+   quieres el Audio Unit, quítalo en «Personalizar».
+4. Reinicia el DAW y vuelve a escanear plugins.
 
-[Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) のインストーラーを使うのが簡単です。
+Para desinstalar: borra `~/Library/Audio/Plug-Ins/VST3/TuneX.vst3`,
+`~/Library/Audio/Plug-Ins/Components/TuneX.component` y
+`~/Library/Application Support/GerX/TuneX` (modelos y textos de licencia).
 
-Mac 版(`Kinu-Tune-<版>-macOS-arm64.pkg`):
+**Windows** (`TuneX-<versión>-Windows-x64-Setup.exe`):
 
-1. ダウンロードした pkg を開きます
-2. 「開けません」と出た時は、「システム設定 > プライバシーとセキュリティ」の下に出る「このまま開く」を押して、もう一度開きます(Apple の公証を受けていないため)
-3. 「続ける」「インストール」と進めます。管理者のパスワードは要りません。AU 版が要らない場合は「カスタマイズ」で外せます
-4. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
+1. Si antes instalaste a mano desde un ZIP, borra primero
+   `%APPDATA%\GerX\TuneX` y `%APPDATA%\Keinoaza\TuneX`.
+2. Abre el instalador.
+3. Si Windows muestra «Windows protegió tu PC», pulsa «Más información» y luego
+   «Ejecutar de todas formas» (el instalador no está firmado).
+4. Sigue los pasos. También instala el Microsoft Visual C++ Redistributable que
+   necesita el motor de IA.
+5. Reinicia el DAW y vuelve a escanear plugins.
 
-消す時は、`~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`、`~/Library/Audio/Plug-Ins/Components/Kinu Tune.component`、`~/Library/Application Support/Keinoaza/Kinu Tune`(モデルとライセンス文書)を削除します。
+Para desinstalar: *Configuración > Aplicaciones > TuneX*.
 
-Windows 版(`Kinu-Tune-<版>-Windows-x64-Setup.exe`):
+### A mano desde el ZIP
 
-1. 前に zip から手で入れていた場合は、`%APPDATA%\Keinoaza\Kinu Tune` フォルダーを先に削除します(残っていると、プラグインはそちらのモデルを使い続けます)
-2. ダウンロードした exe を開きます
-3. 「Windows によって PC が保護されました」と出た時は、「詳細情報」を押してから「実行」を押します(署名していないため)
-4. 画面に従ってインストールします。AI の部品が使う Microsoft Visual C++ 再頒布可能パッケージも一緒に入ります
-5. DAW を起動し直し、プラグインを再スキャンします
+**macOS:**
 
-消す時は、Windows の「設定 > アプリ」から Kinu Tune をアンインストールします。
-
-#### zip から手で入れる場合
-
-Mac 版:
-
-1. [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) から `Kinu-Tune-<版>-macOS-arm64.zip` をダウンロードして展開します
-2. `Kinu Tune.vst3` を `~/Library/Audio/Plug-Ins/VST3/`(ユーザー > ライブラリ > Audio > Plug-Ins > VST3)に入れます。Logic Pro などで AU 版を使う場合は、`Kinu Tune.component` を `~/Library/Audio/Plug-Ins/Components/` に入れます
-3. AI のモデルを置くフォルダーを作ります。Finder のメニュー「移動 > フォルダへ移動…」に `~/Library/Application Support` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
-4. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` などになる配置)
-5. DAW を起動し直し、プラグインを再スキャンします(Cubase では、スタジオ > VST プラグインマネージャーに Keinoaza の「Kinu Tune」が出ます)
-6. 読み込めない時(「開発元を検証できません」と出る、一覧に出ない)は、「システム設定 > プライバシーとセキュリティ」の下に出る Kinu Tune の「このまま開く」を押してから、DAW をもう一度起動します
-7. それでも読み込めない時は、ターミナルで次を実行してから DAW を起動し直します。配布版は Apple の公証を受けていないため、この手順が必要になることがあります(AU 版を入れていない場合、Components の部分で「No such file」と出ますが問題ありません)
+1. Descomprime `TuneX-<versión>-macOS-arm64.zip`.
+2. Copia `TuneX.vst3` a `~/Library/Audio/Plug-Ins/VST3/`. Para el Audio Unit,
+   copia `TuneX.component` a `~/Library/Audio/Plug-Ins/Components/`.
+3. Crea la carpeta de modelos: en Finder, *Ir > Ir a la carpeta…*, escribe
+   `~/Library/Application Support`, crea dentro `GerX` y, dentro, `TuneX`.
+4. Mueve la carpeta `models` del ZIP a esa carpeta `TuneX`, de modo que exista
+   `~/Library/Application Support/GerX/TuneX/models/fcpe.onnx`.
+5. Reinicia el DAW y vuelve a escanear.
+6. Si sigue bloqueado, ejecuta esto en Terminal y reinicia el DAW (si no
+   instalaste el AU, el aviso de «No such file» en Components es inofensivo):
 
    ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/TuneX.vst3 ~/Library/Audio/Plug-Ins/Components/TuneX.component
    ```
 
-Windows 版(`Kinu-Tune-<版>-Windows-x64.zip`):
+**Windows:**
 
-1. `Kinu Tune.vst3` フォルダーを `C:\Program Files\Common Files\VST3\` に入れます
-2. AI のモデルを置くフォルダーを作ります。エクスプローラーのアドレス欄に `%APPDATA%` と入力して開き、その中に `Keinoaza` という名前のフォルダーを、さらにその中に `Kinu Tune` という名前のフォルダーを作ります
-3. zip の中の `models` フォルダーを、いま作った `Kinu Tune` フォルダーの中に入れます(`%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` などになる配置)
-4. DAW を起動し直してプラグインを再スキャンします
+1. Copia la carpeta `TuneX.vst3` a `C:\Program Files\Common Files\VST3\`.
+2. Crea la carpeta de modelos: escribe `%APPDATA%` en la barra de direcciones del
+   Explorador, crea dentro `GerX` y, dentro, `TuneX`.
+3. Mueve la carpeta `models` del ZIP a esa carpeta `TuneX`, de modo que exista
+   `%APPDATA%\GerX\TuneX\models\fcpe.onnx`.
+4. Reinicia el DAW y vuelve a escanear.
 
-挿すと落ちる、または解析が始まらない場合は、[Microsoft Visual C++ 再頒布可能パッケージ(x64、最新版)](https://aka.ms/vc14/vc_redist.x64.exe)をインストールしてから DAW を起動し直してください。AI の部品(ONNX Runtime)がこれを必要とします。足りない時は、プラグインが画面で知らせて解析を止めます。
+Si el plugin cae al insertarlo o no empieza a analizar, instala el
+[Microsoft Visual C++ Redistributable x64](https://aka.ms/vc14/vc_redist.x64.exe)
+y reinicia el DAW: lo necesita ONNX Runtime. Si falta, el plugin lo avisa y
+desactiva el análisis.
 
-### Cubase でハモリを作る
+> **Nota de migración.** Hasta 2026-11-22 la carpeta de modelos era
+> `…\Keinoaza\TuneX`. Las builds nuevas buscan primero en `…\GerX\TuneX` y, si ahí
+> no hay modelos, siguen leyendo la carpeta antigua. No hace falta mover nada para
+> que siga funcionando, pero lo recomendable es moverla a `GerX` y borrar la
+> antigua.
 
-1. ボーカルトラックを複製し、複製側のオーディオイベントを選びます
-2. オーディオ > エクステンション > Kinu Tune で解析します
-3. 左のエディタースケールで曲のキーを選びます
-4. その下のハモリ欄で「3度 上」などを押します(何も選んでいなければ全ノート、選んでいればそのノートだけが動きます)
+## Armonías en Cubase (flujo rápido)
 
-### ショートカット一覧
+1. Duplica la pista de voz y selecciona el evento de audio de la copia.
+2. *Audio > Extensiones > TuneX* para analizar.
+3. Elige la tonalidad de la canción en la escala del editor (izquierda).
+4. En la sección de armonía pulsa, por ejemplo, «3.ª arriba»: sin selección actúa
+   sobre todas las notas; con selección, solo sobre las seleccionadas.
 
-表記は Mac のキーです。Windows では Cmd を Ctrl、Option を Alt に読み替えてください。
+## Atajos
 
-キーボード
+Las teclas son las de Mac. En Windows, Cmd es Ctrl y Option es Alt.
 
-| キー | 動き |
+**Teclado**
+
+| Tecla | Acción |
 |---|---|
-| ↑ / ↓ | 選択中のセグメントの音程を動かす(吸着モードに従う。絶対=次の半音またはスケール音ちょうど、相対・オフ=半音) |
-| Shift + ↑ / ↓ | 1 セント単位で動かす(吸着を無視) |
-| ← / → | 前後のセグメントへ選択を移す |
-| 1 / 2 / 3 / 4 | ツール切替: 選択 / 分割 / ピッチ描き込み / タイミング |
-| Shift + F | 全体表示(横は時間軸全体、縦は歌っている音域) |
-| Cmd + Z | 元に戻す |
-| Shift + Cmd + Z、Cmd + Y | やり直し |
-| Cmd + A | すべて選択 |
-| Shift + Cmd + D | デルタピッチ(編集量)の表示切替 |
-| Shift + Cmd + B | ベースピッチの表示切替 |
-| Cmd + , | 設定画面 |
-| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | 開く / 保存 / 名前を付けて保存 / 音声を書き出す(単体アプリ向け) |
-| Space | 再生 / 一時停止(単体アプリだけ。プラグインではホストの Space がそのまま効く) |
-| Esc | 停止 |
-| Home / End | 先頭へ / 末尾へ |
-| Cmd + Q | 終了(単体アプリだけ) |
+| ↑ / ↓ | Mueve el tono de las notas seleccionadas (según el modo de imán) |
+| Shift + ↑ / ↓ | Mueve de cent en cent (ignora el imán) |
+| ← / → | Pasa la selección a la nota anterior / siguiente |
+| 1 / 2 / 3 / 4 | Herramienta: seleccionar / dividir / dibujar tono / tiempo |
+| Shift + F | Vista completa (todo el tiempo y todo el registro cantado) |
+| Cmd + Z | Deshacer |
+| Shift + Cmd + Z, Cmd + Y | Rehacer |
+| Cmd + A | Seleccionar todo |
+| Shift + Cmd + D | Mostrar u ocultar el tono delta (lo editado) |
+| Shift + Cmd + B | Mostrar u ocultar el tono base |
+| Cmd + , | Ajustes |
+| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | Abrir / guardar / guardar como / exportar audio (solo app) |
+| Space | Reproducir / pausar (solo app; en el plugin manda el host) |
+| Esc | Parar |
+| Home / End | Principio / final |
+| Cmd + Q | Salir (solo app) |
 
-マウス(選択ツール)
+**Ratón (herramienta de selección)**
 
-| 操作 | 動き |
+| Acción | Efecto |
 |---|---|
-| クリック | そのセグメントだけを選択 |
-| Shift + クリック | 選択に追加(一緒にドラッグできる) |
-| Cmd + クリック | 選択に追加 / 解除 |
-| Shift + ダブルクリック | 以降の同じ音程のセグメントをすべて選択 |
-| ダブルクリック(セグメント本体) | そのセグメントだけを解析時の状態に戻す(音程・カーブ・フォルマント・音量・タイミング)。元に戻す 1 回で取り消せる |
-| Option + クリック(セグメント上) | その位置で分割 |
-| セグメントを上下にドラッグ | 音程を動かす。ドラッグ中はそのセグメントを繰り返し試聴し、離すと止まる |
-| 空いている所をドラッグ / クリック | 画面を動かす / 選択を外す |
-| Shift + ドラッグ(空いている所から) | 範囲選択(波形の上から始めても範囲選択) |
-| マウスを乗せる | 音名と、十分にズームしていればスマートコントロール(ストレート化・ピッチ補正・結合・傾き・フォルマント・音量)を表示 |
+| Clic | Selecciona solo esa nota |
+| Shift + clic | Añade a la selección (se arrastran juntas) |
+| Cmd + clic | Añade o quita de la selección |
+| Shift + doble clic | Selecciona las siguientes notas con la misma altura |
+| Doble clic en la nota | Restablece esa nota a su estado de análisis (tono, curva, formantes, volumen, tiempo); un solo deshacer lo revierte |
+| Option + clic en la nota | Divide en ese punto |
+| Arrastrar la nota arriba/abajo | Mueve el tono; durante el arrastre se escucha en bucle y al soltar se detiene |
+| Clic o arrastre en vacío | Mueve la vista / deselecciona |
+| Shift + arrastre desde vacío | Selección por rectángulo (también sobre la onda) |
 
-ドラッグ中に吸着を切り替える修飾キー
+**Modificadores durante el arrastre**
 
-| 押しながらドラッグ | 吸着 |
+| Tecla mientras arrastras | Imán |
 |---|---|
-| Shift | オフ(自由に動く) |
-| Cmd | 絶対(半音・スケール音ぴったり) |
-| Option | 相対(元のずれを保って半音単位) |
+| Shift | Apagado (libre) |
+| Cmd | Absoluto (semitono o nota de la escala exactos) |
+| Option | Relativo (conserva la desviación original, en semitonos) |
 
-何も押さなければ、インスペクタの「ピッチスナップモード」に従います(既定は絶対)。
+Sin modificador manda el modo del inspector (por defecto, absoluto).
 
-ズームと画面移動
+**Zoom y desplazamiento**
 
-| 操作 | 動き |
+| Acción | Efecto |
 |---|---|
-| ホイール / Shift + ホイール | 縦スクロール / 横スクロール |
-| Cmd + ホイール | 横方向の拡大縮小(マウス位置を中心に) |
-| Shift + Cmd + ホイール、Option + ホイール | 縦方向の拡大縮小 |
-| Cmd + ドラッグ(空いている所) | 縦横の拡大縮小 |
-| Option + ドラッグ(空いている所) | 縦方向の拡大縮小 |
-| Option + ダブルクリック(空いている所) | 全体表示(Shift + F と同じ) |
+| Rueda / Shift + rueda | Desplazamiento vertical / horizontal |
+| Cmd + rueda | Zoom horizontal (centrado en el puntero) |
+| Shift + Cmd + rueda, Option + rueda | Zoom vertical |
+| Cmd + arrastre en vacío | Zoom horizontal y vertical |
+| Option + arrastre en vacío | Zoom vertical |
+| Option + doble clic en vacío | Vista completa (igual que Shift + F) |
 
-VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグでのズームと Option + クリックでの縮小(Option は縦の拡大縮小に割り当てました)。セグメントを削除するキーもありません。
+Lo que VariAudio tiene y TuneX no: zoom con Option + rectángulo y reducción con
+Option + clic (Option se asignó al zoom vertical) y una tecla para borrar notas.
 
-### AI モデルについて
+## Modelos de IA
 
-配布版には次のモデルファイルが入っています。モデルにはそれぞれのライセンスがあります(詳しくは [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt))。
-
-| モデル | 用途 | ライセンス |
+| Modelo | Uso | Licencia |
 |---|---|---|
-| FCPE | ピッチ検出(既定) | MIT |
-| GAME | ノート分割 | 学習済みモデルは CC BY-NC-SA 4.0(ソースは MIT) |
-| PC-NSF-HiFiGAN | 再合成(ボコーダー) | 学習済みモデルは CC BY-NC-SA 4.0([OpenVPI の通知](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
+| FCPE | Detección de tono (por defecto) | MIT |
+| GAME | Segmentación en notas | Pesos CC BY-NC-SA 4.0 (código MIT) |
+| PC-NSF-HiFiGAN | Resíntesis (vocoder) | Pesos CC BY-NC-SA 4.0 (ver `licenses/PC-NSF-HiFiGAN-NOTICE.txt`) |
 
-- GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。Kinu Tune の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
-- モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
-- RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/Kinu Tune/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\Kinu Tune\models`、zip から入れた場合 `%APPDATA%\Keinoaza\Kinu Tune\models`)
+- Los pesos de GAME y del vocoder son **CC BY-NC-SA 4.0** (no comercial, compartir
+  igual). TuneX se distribuye gratis; si vas a usarlo en un producto o servicio de
+  pago, usa los motores propios o cambia el vocoder por uno permisivo.
+- Los modelos van en la carpeta `models` del ZIP y en `Resources/models` del
+  repositorio. Los textos completos de cada licencia están en el ZIP, en
+  `licenses/` y en [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+- **RMVPE** (detector alternativo, opcional) no se distribuye porque su origen no
+  declara licencia. Si tienes derecho a obtenerlo, deja `rmvpe.onnx` en la carpeta
+  `models` y aparecerá en los ajustes.
 
-### 通信とテレメトリー
+## Privacidad
 
-- Kinu Tune 自体はインターネットに接続しません。PitchNet にあった起動時の更新確認は止めてあります
-- AI モデルを動かす部品 ONNX Runtime(Microsoft 製)の Windows 版は、そのままだと使用状況の記録(テレメトリー)を Windows の記録の仕組み(TraceLogging)に渡します。Kinu Tune は ONNX Runtime を準備するたびに、これを止めています
-- ただし、ONNX Runtime 側の作りのため、次の2つは残ります。1つ目は、最初の準備の途中で1回だけ書かれる起動の記録(ONNX Runtime の版番号など)で、止める処理より先に出ます。2つ目は、Windows のイベント記録の仕組みがあとから ONNX Runtime の記録を有効にし直した場合で、そのとき ONNX Runtime は記録を再開します(Kinu Tune が次に ONNX Runtime を準備する時に、また止めます)
-- ONNX Runtime の説明では、Windows が集めた記録は、利用者の同意に基づいて Microsoft に送られることがあるとされています。macOS 版の ONNX Runtime にはテレメトリーがありません
+- TuneX no se conecta a internet. La comprobación de actualizaciones de PitchNet
+  está desactivada.
+- ONNX Runtime (Microsoft) en Windows entrega telemetría a TraceLogging por
+  defecto; TuneX la desactiva en cada inicialización. Por cómo está hecho ONNX
+  Runtime quedan dos resquicios: un registro de arranque escrito antes de
+  desactivarla y la reactivación posterior por parte del sistema. La build de
+  macOS de ONNX Runtime no tiene telemetría.
 
-### 自分でビルドする
+## Compilar
 
-下の [Build](#build) を見てください。`fcpe.onnx`・`cent_table.bin`・`mel_filterbank.bin`・`pc_nsf_hifigan.onnx` はリポジトリの `Resources/models` に入っています。macOS 用の `pc_nsf_hifigan.mlmodelc` はリポジトリに無いので、配布版 zip の `models` フォルダーから `Resources/models` に置いてください。GAME のモデルは構成時に自動でダウンロードされます。
-
----
-
-## English
-
-### Overview
-
-Kinu Tune reworks PitchNet's Melodyne-style editor for Cubase VariAudio users. Its main goal is quick harmony creation on a duplicated vocal track.
-
-- VariAudio-style rectangular segments with pitch names and smart controls on hover (straighten curve, correct pitch, glue, tilt, formant, volume)
-- Pitch Snap Mode Absolute / Relative / Off, with Shift / Cmd / Option overrides while dragging, and arrow-key editing
-- Left inspector: Tools (Correct Pitch, Flatten Curve, Pitch Drift, Shift Formant, Volume), Editor Scale, Harmony
-- Harmony: one click shifts notes by a 3rd, 4th, 5th, 6th or an octave, up or down; major or minor thirds follow the scale
-- The original pitch curve of an edited segment stays visible in grey; double-click resets a segment
-
-### Requirements
-
-- macOS 13 or later on Apple silicon (arm64). The released macOS build does not run on Intel Macs.
-- Windows 10/11 (x64). The Windows build is made on GitHub Actions and checked there by creating it the way a host does; it has not been used in a real DAW on Windows yet.
-- An ARA 2 host such as Cubase. Without ARA, Kinu Tune works as a regular insert in capture mode. The macOS release contains both the VST3 and the Audio Unit (for Logic Pro and other AU hosts); it has not been tested in Logic Pro.
-
-### Installing a release
-
-The installers on [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) are the easy way.
-
-macOS (`Kinu-Tune-<version>-macOS-arm64.pkg`):
-
-1. Open the downloaded package.
-2. If macOS says it cannot be opened, click "Open Anyway" in System Settings > Privacy & Security and open it again (the release is not notarized).
-3. Click Continue and Install. No administrator password is needed. To leave out the Audio Unit, use Customize.
-4. Restart your DAW and rescan plugins.
-
-To remove it, delete `~/Library/Audio/Plug-Ins/VST3/Kinu Tune.vst3`, `~/Library/Audio/Plug-Ins/Components/Kinu Tune.component` and `~/Library/Application Support/Keinoaza/Kinu Tune` (the models and licence texts).
-
-Windows (`Kinu-Tune-<version>-Windows-x64-Setup.exe`):
-
-1. If you installed from the zip before, delete the `%APPDATA%\Keinoaza\Kinu Tune` folder first (while it is there, the plug-in keeps using the models in it).
-2. Open the downloaded installer.
-3. If Windows shows "Windows protected your PC", click "More info", then "Run anyway" (the installer is not signed).
-4. Follow the steps. It also installs the Microsoft Visual C++ Redistributable that the AI engine needs.
-5. Restart your DAW and rescan plugins.
-
-To remove it, uninstall Kinu Tune in Windows Settings > Apps.
-
-#### Installing from the zip by hand
-
-macOS:
-
-1. Download `Kinu-Tune-<version>-macOS-arm64.zip` from [Releases](https://github.com/keinoaza666-stack/kinu-tune/releases) and unzip it.
-2. Copy `Kinu Tune.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. For the Audio Unit (Logic Pro and other AU hosts), copy `Kinu Tune.component` to `~/Library/Audio/Plug-Ins/Components/`.
-3. Create a folder for the AI models: in Finder choose Go > Go to Folder…, enter `~/Library/Application Support`, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
-4. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `~/Library/Application Support/Keinoaza/Kinu Tune/models/fcpe.onnx` exists).
-5. Restart your DAW and rescan plugins.
-6. If the plug-in is blocked ("developer cannot be verified", or it does not appear), click "Open Anyway" for Kinu Tune in System Settings > Privacy & Security, then restart your DAW.
-7. If it is still blocked, run this in Terminal and restart your DAW. The release is not notarized, so this may be needed (if you did not install the Audio Unit, the "No such file" message for the Components path is harmless):
-
-   ```bash
-   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Kinu\ Tune.vst3 ~/Library/Audio/Plug-Ins/Components/Kinu\ Tune.component
-   ```
-
-Windows (`Kinu-Tune-<version>-Windows-x64.zip`):
-
-1. Copy the `Kinu Tune.vst3` folder to `C:\Program Files\Common Files\VST3\`.
-2. Create a folder for the AI models: in File Explorer type `%APPDATA%` in the address bar, create a folder named `Keinoaza` there, and a folder named `Kinu Tune` inside it.
-3. Move the `models` folder from the zip into that `Kinu Tune` folder (so that `%APPDATA%\Keinoaza\Kinu Tune\models\fcpe.onnx` exists).
-4. Restart your DAW and rescan plugins.
-
-If the plug-in crashes when inserted or never starts analysing, install the [latest Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vc14/vc_redist.x64.exe) and restart your DAW. ONNX Runtime (the AI engine) needs it; when it is missing, the plug-in says so and turns analysis off.
-
-### Shortcuts
-
-Keys are given for Mac. On Windows read Cmd as Ctrl and Option as Alt.
-
-Keyboard
-
-| Key | Action |
-|---|---|
-| Up / Down | Move the selected segments' pitch (follows the snap mode: Absolute = to the next semitone or scale note exactly, Relative and Off = one semitone) |
-| Shift + Up / Down | Move by one cent (ignores snapping) |
-| Left / Right | Select the previous / next segment |
-| 1 / 2 / 3 / 4 | Tool: Select / Split / Pitch drawing / Timing |
-| Shift + F | Zoom to fit (the whole time range, and the sung pitch range vertically) |
-| Cmd + Z | Undo |
-| Shift + Cmd + Z, Cmd + Y | Redo |
-| Cmd + A | Select all |
-| Shift + Cmd + D | Show / hide the delta pitch (amount of edit) |
-| Shift + Cmd + B | Show / hide the base pitch |
-| Cmd + , | Settings |
-| Cmd + O / Cmd + S / Shift + Cmd + S / Cmd + E | Open / Save / Save as / Export audio (standalone app) |
-| Space | Play / pause (standalone app only; as a plug-in the host's Space works as usual) |
-| Esc | Stop |
-| Home / End | Go to start / end |
-| Cmd + Q | Quit (standalone app only) |
-
-Mouse (Select tool)
-
-| Action | Result |
-|---|---|
-| Click | Select only that segment |
-| Shift + click | Add to the selection (drags together) |
-| Cmd + click | Add to / remove from the selection |
-| Shift + double-click | Select every following segment with the same pitch |
-| Double-click a segment | Reset only that segment to its analysed state (pitch, curve, formant, volume, timing); one Undo takes it back |
-| Option + click on a segment | Split it there |
-| Drag a segment up / down | Move its pitch; while dragging, the segment loops as a preview and stops when you release |
-| Drag / click on empty space | Pan the view / clear the selection |
-| Shift + drag from empty space | Rubber-band selection (starting on the waveform also selects) |
-| Hover | Shows the note name and, when zoomed in enough, the smart controls (straighten, pitch correction, glue, tilt, formant, volume) |
-
-Modifier keys while dragging a pitch
-
-| Hold while dragging | Snap |
-|---|---|
-| Shift | Off (free movement) |
-| Cmd | Absolute (exactly on semitones or scale notes) |
-| Option | Relative (keeps the original deviation, moves in semitones) |
-
-With no modifier the inspector's Pitch Snap Mode applies (Absolute by default).
-
-Zoom and navigation
-
-| Action | Result |
-|---|---|
-| Wheel / Shift + wheel | Scroll vertically / horizontally |
-| Cmd + wheel | Zoom horizontally around the pointer |
-| Shift + Cmd + wheel, Option + wheel | Zoom vertically |
-| Cmd + drag on empty space | Zoom both ways |
-| Option + drag on empty space | Zoom vertically |
-| Option + double-click on empty space | Zoom to fit (same as Shift + F) |
-
-Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Option + click to zoom out (Option is used for vertical zoom here). There is no key for deleting a segment.
-
-### Model files
-
-| Model | Purpose | License |
-|---|---|---|
-| FCPE | Pitch detection (default) | MIT |
-| GAME | Note segmentation | Model weights: CC BY-NC-SA 4.0 (source: MIT) |
-| PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
-
-The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
-
-### Network and telemetry
-
-- Kinu Tune itself does not connect to the internet. PitchNet's update check at launch is disabled.
-- ONNX Runtime (by Microsoft, runs the AI models) passes usage telemetry to Windows TraceLogging by default in its official Windows builds. Kinu Tune turns this off every time it sets up ONNX Runtime.
-- Two limits of the official ONNX Runtime binary remain. One start-up event that ONNX Runtime writes while it is first set up (the ONNX Runtime version and build type) comes before the call that turns telemetry off. And if a Windows event-tracing session later enables ONNX Runtime's events again, ONNX Runtime resumes them (Kinu Tune turns them off again the next time it sets up ONNX Runtime).
-- ONNX Runtime's privacy notice says that Windows may send the collected events to Microsoft based on user consent. ONNX Runtime has no telemetry on macOS.
-
-### Build
-
-Requirements: CMake 3.22+, a C++17 compiler, Git (for submodules). On macOS, Xcode or the Command Line Tools.
+Requisitos: CMake ≥ 3.22, un compilador C++17 y los submódulos del repositorio
+(`git submodule update --init --recursive`).
 
 ```bash
-git submodule update --init --recursive
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
+# macOS arm64
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DPITCHNET_ARA_DIAGNOSTICS=OFF
+cmake --build build --config Release --target PitchNetPlugin_VST3
 ```
 
-On macOS the default is a universal (arm64 + x86_64) build; the released binary is built with `-DCMAKE_OSX_ARCHITECTURES=arm64`.
-
-The build expects these files in `Resources/models`: `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin` and `pc_nsf_hifigan.onnx` are in this repository; `pc_nsf_hifigan.mlmodelc` (required on macOS) is not, so take it from the `models` folder of a release zip. The GAME models are downloaded into `Resources/models/GAME` during configure if missing. `rmvpe.onnx` is optional.
-
-Options added or used by Kinu Tune:
-
-- `-DPITCHNET_BUILD_TESTS=ON` builds the unit tests (`ctest --test-dir build`)
-- `-DPITCHNET_DEV_BUILD=ON` builds with a separate development plugin identity (`Kntd`)
-- `-DPITCHNET_ARA_DIAGNOSTICS=ON` writes ARA diagnostics to `~/Library/Logs/Kinu Tune/`
-
-Other options from PitchNet:
-
-- `-DUSE_CUDA=ON` / `-DUSE_DIRECTML=ON` (Windows, not both), `-DUSE_ASIO=ON` (Windows)
-- `-DUSE_BUNDLED_CUDA_RUNTIME=ON`, `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` (Windows)
-- ONNX Runtime 1.19.2 is downloaded during configure
-
-VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository and the GAME models that CMake downloads). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
-
-### Project structure
-
-```
-Source/
-  Audio/        Audio engine, pitch detection, synthesis, vocoder
-  Models/       Project, note and audio data models
-  UI/           Piano roll, inspector, harmony panel, toolbar
-  Utils/        Resampling, localization, harmony and scale utilities
-  Undo/         Undo/redo actions
-  Plugin/       VST3/AU/AAX/ARA plugin integration
-Resources/      Models (not in git), languages, fonts, images
-licenses/       Model notices and third-party license texts
-tests/          Unit tests
-third_party/    JUCE, ARA SDK, r8brain-free-src (submodules)
+```powershell
+# Windows x64 con DirectML (por defecto en Windows)
+cmake -S . -B build-dml -G "Visual Studio 18 2026" -A x64 `
+      -DCMAKE_BUILD_TYPE=Release -DUSE_DIRECTML=ON `
+      -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DUSE_ASIO=OFF
+cmake --build build-dml --config Release --target PitchNetPlugin_VST3
+ctest --test-dir build-dml -C Release --output-on-failure
 ```
 
-## Acknowledgements
+Detalles útiles:
 
-- [PitchNet](https://github.com/SessionLoops/PitchNet) by Session Loops and [HachiTune](https://github.com/KCKT0112/HachiTune) by the HachiTune contributors
-- [GAME](https://github.com/openvpi/GAME) and [PC-NSF-HiFiGAN](https://github.com/openvpi/vocoders) by [OpenVPI](https://github.com/openvpi)
-- [FCPE](https://github.com/CNChTu/FCPE) by CN_ChiTu, [RMVPE](https://github.com/yxlllc/RMVPE) by yxlllc
-- [r8brain-free-src](https://github.com/avaneev/r8brain-free-src) by Aleksey Vaneev, [JUCE](https://juce.com), [ARA SDK](https://github.com/Celemony/ARA_SDK), [ONNX Runtime](https://onnxruntime.ai)
+- `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin` y `pc_nsf_hifigan.onnx` van
+  en `Resources/models` y son obligatorios: el `configure` se detiene si faltan.
+  Los modelos de GAME se descargan solos en el `configure`.
+- ONNX Runtime se obtiene por `FetchContent` con SHA-256 fijado: paquete NuGet en
+  macOS arm64 y en Windows con DirectML, tarball oficial en el resto.
+- `-DPITCHNET_DEV_BUILD=ON` genera `TuneX Dev` con código de plugin `TunD` y bundle
+  `com.gerx.tunex.dev`, para convivir con la versión normal.
+- La build de macOS la hace GitHub Actions
+  (`.github/workflows/macos-plugin.yml`): descarga y verifica el vocoder, firma
+  ad-hoc, valida con pluginval *strictness 5* y publica el artefacto.
+- La entrega oficial de Windows exige `pluginval` y `ctest` en verde antes de
+  empaquetar.
 
-## License
+## Límites conocidos
 
-GNU Affero General Public License, version 3. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+- **Motor Pitchcore sin retimeo**: su núcleo ignora `sourceFrame`, así que con ese
+  motor una nota desplazada en el tiempo suena en su posición original.
+- **Vocoder sin cifra propia** de exactitud de tiempo (S1/S2); sí la tienen los
+  motores PSOLA y clásico.
+- **Funciones visibles y deshabilitadas**: eliminar nota, nivelar, gesto propio de
+  formantes/amplitud, guías MIDI consumidas por el motor, Bézier de frontera,
+  separación por espacio, stretch y tempo map por sección.
+- **Linux no soportado** por ahora.
+- La entrega no está firmada ni notarizada: en macOS hace falta «Abrir igualmente»
+  o `xattr`; en Windows, «Más información > Ejecutar de todas formas».
+
+## Créditos
+
+Gracias a Session Loops (PitchNet), a los colaboradores de HachiTune, a Keinoaza
+por el fork del que partimos, a OpenVPI por GAME y por PC-NSF-HiFiGAN, y al
+proyecto FCPE por el detector de tono. Los atajos y el flujo de trabajo siguen la
+estela de VariAudio, sin relación con Steinberg.
+
+---
+
+## English summary
+
+TuneX is an open-source (AGPLv3) monophonic vocal pitch editor with
+VariAudio-style controls, shipped as a VST3 / ARA 2 plug-in. It is a fork of
+PitchNet 0.7.2 by Session Loops, itself derived from HachiTune, previously forked
+by Keinoaza (TuneX 0.1.0–0.1.3) and now maintained under the **GerX** vendor
+identity. Existing sessions keep working: the plug-in codes are unchanged.
+
+Requirements: macOS 13+ on Apple silicon, or Windows 10/11 x64, and an ARA 2 host
+for the full editor. Models live in `…/GerX/TuneX/models` (the previous
+`…/Keinoaza/TuneX/models` folder is still read as a fallback). The release is
+unsigned: use "Open Anyway" on macOS or "More info > Run anyway" on Windows. The
+vocoder and GAME model weights are CC BY-NC-SA 4.0, so TuneX may be shared for
+free but not sold.

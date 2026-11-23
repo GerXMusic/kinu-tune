@@ -9,7 +9,7 @@
 
 /**
  * Simple file logger for debugging.
- * Logs to the Kinu Tune logs folder (see PlatformPaths::getLogsDirectory)
+ * Logs to the TuneX logs folder (see PlatformPaths::getLogsDirectory)
  */
 class AppLogger {
 public:

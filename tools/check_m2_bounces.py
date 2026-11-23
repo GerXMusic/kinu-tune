@@ -172,7 +172,7 @@ def verdict(ok):
 
 def last_synthesis(engine):
     """Ultima marca de tiempo con 'synthesizeRegion: engine=<engine>' en los logs."""
-    logs = glob.glob(os.path.join(os.environ.get("APPDATA", ""), "Kinu Tune",
+    logs = glob.glob(os.path.join(os.environ.get("APPDATA", ""), "TuneX",
                                   "Logs", "debug_*.log"))
     best = None
     for path in logs:

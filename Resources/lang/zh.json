@@ -7,8 +7,8 @@
   "canvas.timing": "时值",
   "category.edit_mode": "编辑模式",
   "category.transport": "走带控制",
-  "command.about": "关于 Kinu Tune",
-  "command.about.desp": "关于 Kinu Tune 及第三方声明",
+  "command.about": "关于 TuneX",
+  "command.about.desp": "关于 TuneX 及第三方声明",
   "command.pitch_drawing_tool": "音高绘制工具",
   "command.pitch_drawing_tool.desp": "启用音高绘制工具",
   "command.export_audio": "导出音频...",
@@ -274,7 +274,7 @@
   "tooltip.region_view_track": "轨道模式：显示轨道上的所有片段。点击以只显示所选片段的源音频。",
   "update.ask_later": "稍后再说",
   "update.download_now": "立即下载",
-  "update.message": "Kinu Tune 有新版本可用，是否下载？",
+  "update.message": "TuneX 有新版本可用，是否下载？",
   "update.skip_version": "跳过此版本",
   "update.title": "有可用更新"
 }

@@ -48,15 +48,15 @@ jobs:
       # it, including under an older Visual C++ runtime. See the script.
       - name: Check the VST3 like a host does
         shell: pwsh
-        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
+        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3"
 
       - name: Package
         shell: pwsh
         run: |
           $version = "$env:RELEASE_TAG".TrimStart('v')
-          $name = "Kinu-Tune-$version-Windows-x64"
+          $name = "TuneX-$version-Windows-x64"
           New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
-          Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3" "$name/"
+          Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3" "$name/"
           foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifigan.onnx") {
             Copy-Item "Resources/models/$f" "$name/models/"
           }

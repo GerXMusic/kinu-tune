@@ -29,7 +29,7 @@ constexpr int kRegionListRefreshHz = 8;
 juce::String araTrackKey(juce::ARARegionSequence*);
 
 // D-178: open editors in construction order. A new editor requests the close
-// of the previous host window so only one Kinu Tune window remains.
+// of the previous host window so only one TuneX window remains.
 std::vector<PitchNetAudioProcessorEditor *> openAraEditors;
 
 void requestClosePreviousEditorWindow(PitchNetAudioProcessorEditor *previous,

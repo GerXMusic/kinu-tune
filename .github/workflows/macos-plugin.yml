@@ -16,6 +16,12 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Fetch and verify the vocoder model
+        run: |
+          mkdir -p Resources/models
+          curl -sSfL -o Resources/models/pc_nsf_hifigan.onnx "https://github.com/GerXMusic/tunex/releases/download/models-vocoder-1/pc_nsf_hifigan.onnx"
+          echo "d1d0edcbd45a9fbbbb5387d8a2913f4d5a0fc21755692c5d511951fdb910c00b  Resources/models/pc_nsf_hifigan.onnx" | shasum -a 256 -c -
+
       - name: Configure (Release, arm64)
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -59,8 +65,49 @@ jobs:
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
           ditto -x -k "$RUNNER_TEMP/pluginval/pluginval.zip" "$RUNNER_TEMP/pluginval"
 
+      # Firma ad-hoc: sin certificado, solo para que el bundle cargue en el runner.
+      - name: Ad-hoc sign the bundle
+        run: codesign --force --deep --sign - "$VST3_PATH"
+
+      # Se ejecuta despues de firmar para que codesign --verify vea el bundle final.
+      - name: Diagnose the bundle
+        run: |
+          ls -R "$VST3_PATH/Contents" || true
+          codesign --verify --deep --strict --verbose=2 "$VST3_PATH" || true
+          BIN=$(ls "$VST3_PATH/Contents/MacOS" | head -1)
+          otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
+          otool -D "$VST3_PATH/Contents/Frameworks/libonnxruntime.dylib" || true
+          uname -m || true
+          PV=$(command -v pluginval || find "$RUNNER_TEMP" "$HOME" -name pluginval -type f 2>/dev/null | head -1); echo "pluginval en: $PV"; file "$PV" || true
+          file "$VST3_PATH/Contents/MacOS/$BIN" || true
+          otool -L "$VST3_PATH/Contents/Frameworks/libonnxruntime.dylib" || true
+          otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
+
       # Solo se pasan los flags que el binario declara en --help.
+      - name: Inspect exports and bundle metadata
+        run: |
+          BIN=$(ls "$VST3_PATH/Contents/MacOS" | head -1)
+          echo "== exports =="; nm -gU "$VST3_PATH/Contents/MacOS/$BIN" | grep -E "bundleEntry|bundleExit|GetPluginFactory" || echo "NO VST3 ENTRY SYMBOLS"
+          echo "== Info.plist =="; plutil -p "$VST3_PATH/Contents/Info.plist" || true
+          echo "== MacOS dir =="; ls -la "$VST3_PATH/Contents/MacOS" || true
+          cat "$VST3_PATH/Contents/Info.plist" || true
+
+      - name: Show inspection summary
+        run: |
+          echo "Pega este bloque:"
+          echo "----"
+          cat "$VST3_PATH/Contents/Info.plist" | grep -E "CFBundleExecutable|CFBundlePackageType|CFBundleIdentifier" || true
+          ls "$VST3_PATH/Contents/MacOS" || true
+          echo "----"
+
+      # pluginval escribe sus logs aqui; el directorio tiene que existir de antemano.
+      - name: Prepare pluginval log directory
+        run: mkdir -p "$RUNNER_TEMP/pluginval-logs"
+
       - name: Validate the VST3 with pluginval (strictness 5)
+        env:
+          DYLD_PRINT_LIBRARIES: 1
+          DYLD_PRINT_RPATHS: 1
         run: |
           set -o pipefail
           bin=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval -perm -u+x | head -n1)
@@ -76,7 +123,7 @@ jobs:
             exit 1
           fi
 
-          args=(--strictness-level 5)
+          args=(--strictness-level 5 --verbose --output-dir "$RUNNER_TEMP/pluginval-logs")
           if grep -q -- "--skip-gui-tests" help.txt; then
             args+=(--skip-gui-tests)
           fi
@@ -89,15 +136,23 @@ jobs:
           echo "pluginval ${args[*]}"
           "$bin" "${args[@]}"
 
+      - name: Upload pluginval logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pluginval-logs
+          path: ${{ runner.temp }}/pluginval-logs
+          if-no-files-found: warn
+
       - name: Package the VST3
         run: |
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "dist/KinuTune-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "dist/TuneX-macOS-arm64.zip"
           ls -l dist
 
       - name: Upload the artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: KinuTune-macOS-arm64
-          path: dist/KinuTune-macOS-arm64.zip
+          name: TuneX-macOS-arm64
+          path: dist/TuneX-macOS-arm64.zip
           if-no-files-found: error
