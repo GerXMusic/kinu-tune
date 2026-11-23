@@ -1,0 +1,94 @@
+name: Windows installer (exe)
+
+# Fabrica el instalador .exe (Inno Setup): plugin VST3, modelos, licencias y el
+# Visual C++ Redistributable. Se lanza a mano desde Actions.
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Fetch and verify the vocoder model
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path Resources/models -Force | Out-Null
+          curl.exe -sSfL -o Resources/models/pc_nsf_hifigan.onnx "https://github.com/GerXMusic/tunex/releases/download/models-vocoder-1/pc_nsf_hifigan.onnx"
+          $h = (Get-FileHash Resources/models/pc_nsf_hifigan.onnx -Algorithm SHA256).Hash
+          if ($h -ne 'D1D0EDCBD45A9FBBBB5387D8A2913F4D5A0FC21755692C5D511951FDB910C00B') {
+            throw "SHA-256 del vocoder no coincide: $h"
+          }
+          Write-Host "vocoder OK ($h)"
+
+      - name: Configure (Release, DirectML)
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_BUILD_TYPE=Release
+          -DUSE_DIRECTML=ON
+          -DUSE_BUNDLED_DIRECTML_RUNTIME=ON
+          -DUSE_ASIO=OFF
+          -DPITCHNET_ARA_DIAGNOSTICS=OFF
+          -DPITCHNET_BUILD_TESTS=OFF
+
+      - name: Build the VST3
+        run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel 3
+
+      - name: Assemble the release folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rel = 'dist/release'
+          New-Item -ItemType Directory -Path $rel -Force | Out-Null
+          $vst3 = Get-ChildItem 'build' -Recurse -Directory -Filter 'TuneX.vst3' | Select-Object -First 1
+          if (-not $vst3) { throw 'no encontre TuneX.vst3' }
+          Copy-Item $vst3.FullName $rel -Recurse -Force
+          Copy-Item 'Resources/models' (Join-Path $rel 'models') -Recurse -Force
+          Copy-Item 'LICENSE','THIRD_PARTY_NOTICES.txt','MODIFICATIONS.md' $rel -Force
+          Copy-Item 'licenses' (Join-Path $rel 'licenses') -Recurse -Force
+          # guarda D-240: exactamente un .vst3 dentro del bundle y sin backups
+          $dllDir = Join-Path $rel 'TuneX.vst3/Contents/x86_64-win'
+          $files = @(Get-ChildItem $dllDir -Filter *.vst3 -File)
+          if ($files.Count -ne 1) { throw "el bundle tiene $($files.Count) .vst3 en x86_64-win" }
+          if ($files[0].Name -ne 'TuneX.vst3') { throw "el .vst3 se llama $($files[0].Name)" }
+          $version = (Select-String -Path CMakeLists.txt -Pattern '^project\(PitchNet VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
+          if (-not $version) { throw 'no pude leer la version' }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "version=$version"
+          Get-ChildItem $rel | Select-Object Name
+          "release: {0:N1} MB" -f ((Get-ChildItem $rel -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: Download the Visual C++ Redistributable
+        shell: pwsh
+        run: |
+          curl.exe -sSfL -o vc_redist.x64.exe https://aka.ms/vc14/vc_redist.x64.exe
+          "redist: {0:N1} MB" -f ((Get-Item vc_redist.x64.exe).Length / 1MB)
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build the .exe
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "no encuentro ISCC en $iscc" }
+          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$PWD\dist\release" "/DRedist=$PWD\vc_redist.x64.exe" "/O$PWD\Output" "packaging\windows\TuneX.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC fallo con $LASTEXITCODE" }
+          $setup = Get-ChildItem 'Output' -Filter *.exe | Select-Object -First 1
+          if (-not $setup) { throw 'no se genero ningun .exe' }
+          "SETUP=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "setup: {0:N1} MB" -f ($setup.Length / 1MB)
+          "SHA256 $((Get-FileHash $setup.FullName -Algorithm SHA256).Hash)"
+
+      - name: Upload the .exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-Windows-x64-Setup
+          path: Output/TuneX-*-Windows-x64-Setup.exe
+          if-no-files-found: error
