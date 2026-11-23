@@ -705,6 +705,44 @@ int main()
         CHECK(requests == 2);
     }
 
+    // --- Doble clic en el cuerpo afina; en la franja superior corta (D-281) ----
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f -
+                   static_cast<float>(f.roll.getScrollY());
+        };
+        const auto left = juce::ModifierKeys::leftButtonModifier;
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
+
+        // Cuerpo: afina al 100 % hacia el semitono mas cercano, y es undoable.
+        f.roll.mouseDoubleClick(event(f.roll, {xAt(50), yAt(60.3f)}, left, 2));
+        CHECK(near(f.note(0).getMidiNote(), 60.0f));
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
+
+        // Franja superior: corta en el puntero, no afina.
+        const size_t before = f.project.getNotes().size();
+        const float yTop = yAt(60.3f) - f.roll.getPixelsPerSemitone() * 0.35f;
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 1));
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 2));
+        CHECK(f.project.getNotes().size() == before + 1);
+        CHECK(near(f.note(0).getMidiNote(), 60.3f)); // el corte no afina
+    }
+
     std::cout << "VariAudio inspector tests passed\n";
     return 0;
 }
