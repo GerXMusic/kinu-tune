@@ -4,6 +4,7 @@
 #include "RoundedCard.h"
 #include "PanelContainer.h"
 #include "DraggablePanel.h"
+#include "../SideRail.h"
 
 /**
  * Main workspace component that manages the layout of:
@@ -22,7 +23,17 @@ public:
     void resized() override;
 
     void setMainContent(juce::Component* content);
+    // Melodyne/SynthV rail: plugins and drawers on the far left.
+    void addRailPanel(const juce::String& id, const juce::String& title,
+                      GuiIcon icon, juce::Component* content,
+                      int width = SideRail::defaultDrawerWidth);
+    void showRailPanel(const juce::String& id, bool show);
+    bool isRailPanelVisible(const juce::String& id) const;
+    void setRailPanelAvailable(const juce::String& id, bool available);
+    void setEditorMode(EditorUiMode mode);
+    SideRail& getSideRail() { return sideRail; }
     // Always-visible column on the far left (the VariAudio-style inspector).
+    // Retained for compatibility; the new editor places it in the rail.
     void setInspectorContent(juce::Component* content, int width);
     void addPanel(const juce::String& id, const juce::String& title,
                   juce::Component* content,
@@ -49,6 +60,7 @@ public:
 
     std::function<void(const juce::String&, bool)> onPanelVisibilityChanged;
     std::function<void(bool)> onLeftPanelVisibilityChanged;
+    std::function<void(const juce::String&, bool)> onRailPanelVisibilityChanged;
     std::function<void()> onLayoutAnimationUpdated;
 
 private:
@@ -74,6 +86,7 @@ private:
     RoundedCard mainCard;
     PanelContainer panelContainer;
     PanelContainer leftPanelContainer;
+    SideRail sideRail;
     juce::String leftPanelId;
 
     juce::Component* mainContent = nullptr;

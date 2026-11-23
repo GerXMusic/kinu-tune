@@ -174,6 +174,11 @@ public:
     float getVolumeDb() const { return volumeDb; }
     void setVolumeDb(float db) { volumeDb = db; }
 
+    // M5 v1 / D-245: silenciar la nota sin tocar su ganancia guardada. El
+    // render la trata como ganancia 0 (fade suave del mismo NoteGainCurve).
+    bool isMuted() const { return muted; }
+    void setMuted(bool m) { muted = m; }
+
     // RMS of pristine source audio; gain edits are applied separately.
     float getSourceAmplitude() const { return sourceAmplitude; }
     void setSourceAmplitude(float rms) { sourceAmplitude = rms; }
@@ -281,8 +286,15 @@ public:
     // Dirty flag (for incremental synthesis)
     bool isDirty() const { return dirty; }
     void setDirty(bool d) { dirty = d; }
-    void markDirty() { dirty = true; }
+    // D-253: cada marca sube la revisión. El cierre de un render limpia una
+    // nota solo si su revisión es la del snapshot: una segunda edición sobre la
+    // misma nota mientras el render está en vuelo no se pierde.
+    void markDirty() {
+        dirty = true;
+        ++dirtyRevision;
+    }
     void clearDirty() { dirty = false; }
+    std::uint64_t getDirtyRevision() const { return dirtyRevision; }
 
     // Rest note (no pitch, just a placeholder for silence)
     bool isRest() const { return rest; }
@@ -291,6 +303,14 @@ public:
     // Per-note engine (M2 fase 1, D-125). Inherit keeps the global engine.
     NoteEngine getEngine() const { return engine; }
     void setEngine(NoteEngine value) { engine = value; }
+
+    // D-258: motor que tenia la nota antes de aplicar un motor a todo su bloque
+    // (solo se guarda al elegir Vocoder). Permite volver al reparto anterior sin
+    // depender del undo. Inherit = "no hay override guardado".
+    NoteEngine getBlockEngineOverride() const { return blockEngineOverride; }
+    void setBlockEngineOverride(NoteEngine value) {
+        blockEngineOverride = value;
+    }
 
     // Lyric (character/syllable for this note)
     juce::String getLyric() const { return lyric; }
@@ -326,6 +346,7 @@ private:
     float formantShift = 0.0f; // Semitones, independent of F0
     float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
+    bool muted = false;    // M5 v1: nota silenciada (no toca volumeDb)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
     std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)
@@ -352,10 +373,14 @@ private:
     int renderedEndFrame = 0;
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)
+    // D-253: revisión monotónica de la marca sucia (identidad por edición).
+    std::uint64_t dirtyRevision = 0;
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
     bool rest = false;        // Rest note (silence placeholder)
     // Per-note engine; Inherit means "use the global engine" (D-125).
     NoteEngine engine = NoteEngine::Inherit;
+    // D-258: motor previo guardado al aplicar un motor a todo el bloque.
+    NoteEngine blockEngineOverride = NoteEngine::Inherit;
 
     juce::String lyric;   // Lyric text (e.g., "a", "SP" for silence)
     juce::String phoneme; // Phoneme (e.g., "a", "sp", for pronunciation)

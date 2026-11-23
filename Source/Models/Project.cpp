@@ -155,7 +155,17 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     constexpr float kGlobalEditEpsilon = 1.0e-6f;
     if (note.isRest() || !note.isDirty())
         return false;
-    if (note.getEngine() != NoteEngine::Inherit)
+    // A muted note is an edit with an audible effect; the render must keep the
+    // mute until the reset itself clears it (T6/D-258).
+    if (note.isMuted())
+        return false;
+    // D-256: una nota neutral que revierte una edicion ya renderizada vuelve a
+    // la fuente aunque tenga motor explicito (el caso real de la macro Correct
+    // Pitch al 0 %: la nota se afino con un motor de bloque y al volver al 0 %
+    // quedaba re-sintetizada con ese motor). Un motor explicito en una nota que
+    // nunca se ha renderizado conserva su timbre: el primer render de un bloque
+    // con motor elegido no se sustituye por la fuente (S2).
+    if (note.getEngine() != NoteEngine::Inherit && !note.hasRenderedEdit())
         return false;
     if (std::abs(globalPitchOffset) > kGlobalEditEpsilon ||
         std::abs(formantShift) > kGlobalEditEpsilon)
@@ -163,22 +173,68 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
     return note.isNeutralForOriginalWaveform();
 }
 
+bool Project::noteHasAudioRelevantEdit(const Note &note)
+{
+    if (note.isRest())
+        return false;
+    if (note.isMuted())
+        return true;
+    if (note.getEngine() != NoteEngine::Inherit)
+        return true;
+    return !note.isNeutralForOriginalWaveform();
+}
+
 bool Project::hasRegionEdits() const
 {
+    // D-260: con el bypass activo hay que publicar igualmente: el publish es
+    // el que sustituye el procesado por el original.
+    if (bypassProcessing)
+        return true;
     if (globalPitchOffset != 0.0f || formantShift != 0.0f)
         return true;
 
     for (const auto &note : notes)
     {
-        if (note.isRest())
-            continue;
-        if (note.getEngine() != NoteEngine::Inherit)
-            return true;
-        if (!note.isNeutralForOriginalWaveform())
+        if (noteHasAudioRelevantEdit(note))
             return true;
     }
 
     return false;
+}
+
+juce::AudioBuffer<float> Project::buildPublishAudio() const
+{
+    const auto &processed = audioData.waveform;
+    if (!bypassProcessing)
+        return processed;
+
+    const auto &original = audioData.originalWaveform;
+    if (original.getNumSamples() <= 0)
+        return processed;
+    if (original.getNumChannels() < processed.getNumChannels())
+        return processed;
+
+    // D-260: the bypass publishes the pristine source, with a 5 ms linear
+    // crossfade at both region edges so the handover to whatever plays outside
+    // the region is continuous (the edge sample equals the processed one).
+    constexpr int kByPassFadeSamples = 240;
+    juce::AudioBuffer<float> out;
+    out.makeCopyOf(original);
+    const int samples = std::min(out.getNumSamples(), processed.getNumSamples());
+    const int fade = std::min(kByPassFadeSamples, samples);
+    for (int channel = 0; channel < out.getNumChannels(); ++channel)
+    {
+        auto *data = out.getWritePointer(channel);
+        const auto *source = processed.getReadPointer(channel);
+        for (int i = 0; i < fade; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(fade);
+            data[i] = source[i] + t * (data[i] - source[i]);
+            const int index = samples - 1 - i;
+            data[index] = source[index] + t * (data[index] - source[index]);
+        }
+    }
+    return out;
 }
 
 void Project::clearAllDirty()
@@ -188,28 +244,29 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
-    // D-230: the transition commit hint belongs to the same render.
-    transitionCommitRanges.clear();
-    // D-231: same lifetime as the commit hints.
-    pass1JoinWindows.clear();
 }
 
-// D-231: keep one entry per join window (rebuilds repeat the same window).
-void Project::addPass1JoinWindow(int startFrame, int endFrame)
+void Project::clearDirtyForPass(
+    const std::vector<std::pair<int, std::uint64_t>> &dirtyNotes, int f0Start,
+    int f0End, std::uint64_t f0Revision)
 {
-    if (startFrame < 0 || endFrame < startFrame)
-        return;
-    for (const auto &existing : pass1JoinWindows)
-        if (existing.first == startFrame && existing.second == endFrame)
-            return;
-    pass1JoinWindows.emplace_back(startFrame, endFrame);
-}
-
-void Project::addTransitionCommitRange(int startFrame, int endFrame)
-{
-    if (startFrame < 0 || endFrame <= startFrame)
-        return;
-    transitionCommitRanges.emplace_back(startFrame, endFrame);
+    for (const auto &[index, revision] : dirtyNotes)
+    {
+        if (index < 0 || index >= static_cast<int>(notes.size()))
+            continue;
+        auto &note = notes[static_cast<size_t>(index)];
+        // D-253: solo se limpia la nota si su revisión es la que se renderizó.
+        // Una segunda edición sobre la misma nota sube la revisión y conserva
+        // el dirty para el pase siguiente.
+        if (note.getDirtyRevision() == revision)
+            note.clearDirty();
+    }
+    // D-253: el rango F0 se limpia solo si nadie marcó después del snapshot.
+    if (f0Start >= 0 && f0End >= 0 && f0DirtyRevision == f0Revision)
+    {
+        f0DirtyStart = -1;
+        f0DirtyEnd = -1;
+    }
 }
 
 int Project::markEditedNotesDirty()
@@ -231,7 +288,7 @@ int Project::markEditedNotesDirty()
         auto &note = notes[static_cast<size_t>(i)];
         if (note.isRest())
             continue;
-        if (!wholeProjectEdited && note.isNeutralForOriginalWaveform())
+        if (!wholeProjectEdited && !noteHasAudioRelevantEdit(note))
             continue;
         note.markDirty();
         ++marked;
@@ -262,15 +319,19 @@ int Project::markEditedNotesDirty()
     int blockStart = -1;
     int blockEnd = -1;
     int previousEnd = -1;
+    int previousSourceEnd = -1;
+
+    struct BlockSpan
+    {
+        int first;
+        int last;
+    };
+    std::vector<BlockSpan> blocks;
 
     auto flushBlock = [&]() {
         if (blockNotes.empty())
             return;
-        const int rangedStart = std::max(0, blockStart - 60);
-        const int rangedEnd = frameCount > 0 ? std::min(frameCount, blockEnd + 60)
-                                             : blockEnd + 60;
-        if (rangedEnd > rangedStart)
-            editedBlockRanges.emplace_back(rangedStart, rangedEnd);
+        blocks.push_back({blockStart, blockEnd});
         blockNotes.clear();
     };
 
@@ -278,11 +339,14 @@ int Project::markEditedNotesDirty()
     {
         const auto &note = notes[static_cast<size_t>(index)];
         bool sameBlock = blockNotes.empty();
-        if (!sameBlock && !wholeProjectEdited && previousEnd >= 0)
+        if (!sameBlock && !wholeProjectEdited && previousSourceEnd >= 0)
         {
+            // D-262 (T8): the silence that separates blocks is measured on the
+            // source span; moving a note in the timeline does not invent or
+            // remove silence in the audio.
             const bool silence = engineBlocks::findSilenceRun(
-                source, audioData.sampleRate, previousEnd * kHop,
-                note.getStartFrame() * kHop).has_value();
+                source, audioData.sampleRate, previousSourceEnd * kHop,
+                note.getSrcStartFrame() * kHop).has_value();
             sameBlock = !silence;
         }
         if (!sameBlock)
@@ -299,8 +363,31 @@ int Project::markEditedNotesDirty()
         }
         blockNotes.push_back(index);
         previousEnd = note.getEndFrame();
+        previousSourceEnd = note.getSrcEndFrame();
     }
     flushBlock();
+
+    // D-248: el padding de 60 frames da contexto dentro del bloque, pero no
+    // puede cruzar el silencio hacia el bloque vecino. Antes, un bloque cuyo
+    // borde quedaba a menos de 60 frames del siguiente (silencio minimo de
+    // D-129 = 20 ms) extendia su rango de commit DENTRO del bloque vecino y
+    // reescribia su ataque con otra fase de grano (medido: S6, 0,607 de
+    // diferencia en el bloque que no se edito). Se recorta en el punto medio
+    // entre bloques, que por construccion cae en silencio.
+    for (size_t i = 0; i < blocks.size(); ++i)
+    {
+        int rangedStart = std::max(0, blocks[i].first - 60);
+        int rangedEnd = frameCount > 0 ? std::min(frameCount, blocks[i].last + 60)
+                                       : blocks[i].last + 60;
+        if (i > 0)
+            rangedStart = std::max(
+                rangedStart, (blocks[i - 1].last + blocks[i].first) / 2);
+        if (i + 1 < blocks.size())
+            rangedEnd = std::min(
+                rangedEnd, (blocks[i].last + blocks[i + 1].first) / 2);
+        if (rangedEnd > rangedStart)
+            editedBlockRanges.emplace_back(rangedStart, rangedEnd);
+    }
 
     return marked;
 }
@@ -339,6 +426,7 @@ void Project::setF0DirtyRange(int startFrame, int endFrame)
         f0DirtyStart = startFrame;
     if (f0DirtyEnd < 0 || endFrame > f0DirtyEnd)
         f0DirtyEnd = endFrame;
+    ++f0DirtyRevision;
 }
 
 void Project::markNoteEditDirtyRange(int startFrame, int endFrame)

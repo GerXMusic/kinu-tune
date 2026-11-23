@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 #include "../Source/UI/PianoRollComponent.h"
@@ -96,7 +96,6 @@ int main(int argc, char* argv[])
         return std::pair<int, bool>{static_cast<int>(targets.size()),
                                     !targets.empty() && targets.front()->isSelected()};
     };
-    inspector.getHarmonyPanel().refreshProject();
     inspector.refresh();
     inspector.setSize(VariAudioInspector::preferredWidth, 760);
 

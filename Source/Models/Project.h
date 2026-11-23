@@ -199,6 +199,11 @@ public:
     // choice changes what should be rendered. Otherwise the neutral reset
     // would overwrite the very synthesis the edit asked for.
     bool shouldResetNeutralNoteToOriginal(const Note &note) const;
+    // D-248: predicado unico de "esta nota tiene una edicion audible". Lo usan
+    // hasRegionEdits, markEditedNotesDirty y el reset. El motor explicito y el
+    // mute cuentan: antes solo se miraba isNeutralForOriginalWaveform() (que no
+    // conoce el motor) y un cambio solo de motor no marcaba nada.
+    static bool noteHasAudioRelevantEdit(const Note &note);
     // True when the project's audio differs from the raw ARA source and must
     // therefore be published with the region. It is the inverse of "every
     // note is neutral", extended with the edits that live outside a note's
@@ -209,10 +214,34 @@ public:
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
     void clearAllDirty();
+    // D-251 (S4): limpia solo lo que este pase renderizó. Una edición que
+    // llega mientras el render está en vuelo no estaba en @p dirtyNotes y
+    // conserva su dirty; el rango F0 solo se limpia si nadie lo extendió
+    // (setF0DirtyRange solo crece), así que una edición nueva lo deja puesto
+    // para el pase siguiente.
+    void clearDirtyForPass(const std::vector<std::pair<int, std::uint64_t>>
+                               &dirtyNotes,
+                           int f0Start, int f0End,
+                           std::uint64_t f0Revision);
 
     // Global settings
     float getGlobalPitchOffset() const { return globalPitchOffset; }
     void setGlobalPitchOffset(float offset) { globalPitchOffset = offset; }
+
+    // D-260 (S5): bypass del editor. Es estado del documento, no un flag
+    // estatico: al activarlo se publica el original con un crossfade corto en
+    // los bordes de la region, y al apagarlo vuelve el procesado.
+    bool isBypassProcessing() const { return bypassProcessing; }
+    void setBypassProcessing(bool value)
+    {
+        if (bypassProcessing != value)
+        {
+            bypassProcessing = value;
+            modified = true;
+        }
+    }
+    // Buffer autoritativo para el publish (procesado u original con crossfade).
+    juce::AudioBuffer<float> buildPublishAudio() const;
 
     float getFormantShift() const { return formantShift; }
     void setFormantShift(float shift) { formantShift = shift; }
@@ -295,35 +324,7 @@ public:
     void clearF0DirtyRange();
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
-
-    // D-230: frame ranges that must be committed whole because a transition
-    // value changed, computed from the union of the old and new values. This
-    // is transient render state, like the dirty flags: it is set by the
-    // gesture (and its undo action) and consumed by the next render. It exists
-    // because removing a transition (value 0) leaves no transition window for
-    // the synthesizer to detect, yet the audio of the neighbouring note still
-    // carries the old ramp and must be replaced.
-    void addTransitionCommitRange(int startFrame, int endFrame);
-    const std::vector<std::pair<int, int>> &getTransitionCommitRanges() const
-    {
-        return transitionCommitRanges;
-    }
-    bool hasTransitionCommitRanges() const
-    {
-        return !transitionCommitRanges.empty();
-    }
-    void clearTransitionCommitRanges() { transitionCommitRanges.clear(); }
-
-    // D-231: joins whose D-205 pass 1 was audible, recorded before the delta
-    // is smoothed (afterwards the step that triggered it is gone). Render
-    // state only: cleared on clearAllDirty and never serialized.
-    void clearPass1JoinWindows() { pass1JoinWindows.clear(); }
-    void addPass1JoinWindow(int startFrame, int endFrame);
-    const std::vector<std::pair<int, int>> &getPass1JoinWindows() const
-    {
-        return pass1JoinWindows;
-    }
-    bool hasPass1JoinWindows() const { return !pass1JoinWindows.empty(); }
+    std::uint64_t getF0DirtyRevision() const { return f0DirtyRevision; }
 
     // Modified state
     bool isModified() const { return modified; }
@@ -397,6 +398,8 @@ private:
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
+    // D-260: bypass del editor (estado del documento).
+    bool bypassProcessing = false;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
 
@@ -406,15 +409,12 @@ private:
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
+    // D-253: revisión del rango F0 para el cierre por pase.
+    std::uint64_t f0DirtyRevision = 0;
 
     // D-197 edited-note block walk (padded frame spans, not note flags).
     std::vector<std::pair<int, int>> editedBlockRanges;
     int editedBlockCursor = -1;
-
-    // D-230: whole-note spans a transition change must rewrite. Transient.
-    std::vector<std::pair<int, int>> transitionCommitRanges;
-    // D-231: [first, last] of every audible pass-1 join.
-    std::vector<std::pair<int, int>> pass1JoinWindows;
 
     bool modified = false;
 

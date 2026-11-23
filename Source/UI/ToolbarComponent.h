@@ -6,7 +6,10 @@
 #include "../Utils/UI/Theme.h"
 #include "Buttons.h"
 #include "../Models/Project.h"
+#include "GuiTypes.h"
+#include "MelodyneIcons.h"
 #include <optional>
+#include <array>
 
 // Forward declaration - EditMode is defined in PianoRollComponent.h
 enum class EditMode;
@@ -62,6 +65,22 @@ public:
     ToolbarComponent();
     ~ToolbarComponent() override;
 
+    // Melodyne-style tool button: vector icon, label on hover, active pill.
+    class ToolIconButton final : public juce::Button
+    {
+    public:
+        ToolIconButton(EditorTool tool, GuiIcon icon);
+        void paintButton(juce::Graphics& g, bool over, bool down) override;
+        void setActiveState(bool shouldBeActive) { active = shouldBeActive; repaint(); }
+        EditorTool getTool() const { return tool; }
+        void refreshTooltip();
+
+    private:
+        EditorTool tool;
+        GuiIcon icon;
+        bool active = false;
+    };
+
     void paint(juce::Graphics &g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent &e) override;
@@ -95,11 +114,38 @@ public:
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
+    // ── Melodyne/SynthV editor chrome ──────────────────────────────
+    void setUiMode(EditorUiMode mode);
+    EditorUiMode getUiMode() const { return uiMode; }
+    void setScaleSummary(const juce::String& root, const juce::String& mode);
+    void setTempoSummary(const juce::String& text);
+    void setGridSummary(const juce::String& text);
+    void setEngineSummary(const juce::String& text);
+    void setActiveTool(EditorTool tool);
+    EditorTool getActiveTool() const { return activeTool; }
+
     // Plugin mode
     void setPluginMode(bool isPlugin);
     void setRecordControlVisible(bool visible);
     void setRecordArmed(bool armed);
+    // Tarea 2 (2026-11-22): bypass del documento (D-260) en la barra superior,
+    // a la derecha del grupo de escala/tiempo/rejilla. Icono tipo Melodyne.
+    void setBypassState(bool active);
+    bool isBypassActive() const { return bypassActive; }
+    bool isBypassButtonVisible() const { return bypassButton.isVisible(); }
+    // Camino sincrono del onClick (tests y canal de control).
+    void clickBypassNow() { if (bypassButton.onClick) bypassButton.onClick(); }
+    juce::Rectangle<int> getBypassButtonBounds() const { return bypassButton.getBounds(); }
+    juce::Rectangle<int> getGridButtonBounds() const { return gridButton.getBounds(); }
+    std::function<void()> onBypassClicked;
 
+    // Icono del bypass (estilo Melodyne): caja con la flecha que la atraviesa.
+    class BypassIconButton final : public juce::Button
+    {
+    public:
+        BypassIconButton() : juce::Button("Bypass") {}
+        void paintButton(juce::Graphics& g, bool over, bool down) override;
+    };
     // Progress bar control
     void showProgress(const juce::String &message);
     void hideProgress();
@@ -120,6 +166,17 @@ public:
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     std::function<void(bool)> onToggleLeftPanel;  // Called with new left-panel visibility
+    std::function<void(EditorUiMode)> onUiModeChanged;
+    std::function<void(EditorTool)> onToolSelected;
+    std::function<void(int)> onScaleRootSelected;
+    std::function<void(int)> onScaleModeSelected;
+    // Editor scale switches, now part of the top scale dropdown.
+    std::function<bool()> isProjectKeyUsed;
+    std::function<void(bool)> onProjectKeyUsedChanged;
+    std::function<bool()> isSnapToScale;
+    std::function<void(bool)> onSnapToScaleChanged;
+    std::function<void(int)> onGridDivisionSelected;
+    std::function<void()> onEngineClicked;
     // Clip / Track view toggle (ARA only). Hidden until made available.
     void setTrackViewAvailable(bool available);
     void setTrackViewMode(bool track);
@@ -156,6 +213,31 @@ private:
     ToggleButton trackViewButton;
     bool trackViewAvailable = false;
     void refreshTrackViewTooltip();
+
+    // Melodyne/SynthV chrome.
+    std::array<std::unique_ptr<ToolIconButton>, 6> toolButtons;
+    juce::TextButton basicModeButton { "Basic" };
+    juce::TextButton advancedModeButton { "Advanced" };
+    juce::TextButton scaleButton;
+    juce::TextButton tempoButton;
+    juce::TextButton gridButton;
+    BypassIconButton bypassButton;
+    bool bypassActive = false;
+    juce::TextButton engineButton;
+    EditorUiMode uiMode = EditorUiMode::Basic;
+    EditorTool activeTool = EditorTool::Main;
+    juce::String scaleRootLabel { "C" };
+    juce::String scaleModeLabel { "Major" };
+    juce::String tempoLabelText { "120.00" };
+    juce::String gridLabelText { "1/4" };
+    juce::String engineLabelText { "Classic" };
+    juce::Rectangle<int> basicModeBounds;
+    juce::Rectangle<int> advancedModeBounds;
+    juce::Rectangle<int> rightGroupBounds;
+    void showScaleMenu();
+    void showGridMenu();
+    void updateModeButtonStates();
+    void updateToolButtonStates();
     juce::Rectangle<int> toolContainerBounds;    // For drawing container background
     juce::Rectangle<int> transportCapsuleBounds; // For drawing transport capsule background
     juce::Rectangle<int> leftPanelCapsuleBounds; // For drawing the left-panel group background

@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 #pragma once
@@ -24,13 +24,11 @@ public:
                         std::vector<TransformParams> oldParams,
                         std::vector<TransformParams> newParams,
                         std::vector<float> oldSourceMidi,
-                        std::vector<float> newSourceMidi, juce::String name,
-                        bool touchesTransition = false)
+                        std::vector<float> newSourceMidi, juce::String name)
         : project(project), notes(std::move(notes)),
           oldParams(std::move(oldParams)), newParams(std::move(newParams)),
           oldSourceMidi(std::move(oldSourceMidi)),
-          newSourceMidi(std::move(newSourceMidi)), name(std::move(name)),
-          touchesTransition(touchesTransition)
+          newSourceMidi(std::move(newSourceMidi)), name(std::move(name))
     {
     }
 
@@ -56,24 +54,6 @@ private:
             note->markSynthDirty();
             minFrame = std::min(minFrame, note->getStartFrame());
             maxFrame = std::max(maxFrame, note->getEndFrame());
-
-            // D-230: undo/redo must rewrite the same union the gesture did.
-            // Undoing a transition back to 0 leaves no active window, so the
-            // right note's old ramp would survive the commit and click.
-            if (touchesTransition && project != nullptr &&
-                i < oldParams.size() && i < newParams.size())
-            {
-                int spanStart = 0;
-                int spanEnd = 0;
-                if (PitchCurveProcessor::transitionChangeCommitRange(
-                        *project, *note, oldParams[i].transitionOutMs,
-                        newParams[i].transitionOutMs, spanStart, spanEnd))
-                {
-                    project->addTransitionCommitRange(spanStart, spanEnd);
-                    minFrame = std::min(minFrame, spanStart);
-                    maxFrame = std::max(maxFrame, spanEnd);
-                }
-            }
         }
         if (project && maxFrame >= minFrame)
         {
@@ -89,5 +69,4 @@ private:
     std::vector<float> oldSourceMidi;
     std::vector<float> newSourceMidi;
     juce::String name;
-    bool touchesTransition = false;
 };

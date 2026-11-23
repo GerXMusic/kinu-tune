@@ -469,10 +469,136 @@ void testRefusalNamesTheNoteTheRequestAndTheCause() {
     CHECK(accepted.refusals.empty());
 }
 
+void testBlocksToCommitSelectsWholeBlocks() {
+    // D-239: the commit unit is the engine block. A dirty note inside one
+    // block selects that whole block; a range that crosses a boundary selects
+    // both; a point selects its own block; an empty plan selects nothing.
+    using engineBlocks::Block;
+    using engineBlocks::blocksToCommit;
+    std::vector<Block> plan = {
+        {0, 100, SynthesisEngineType::Psola},
+        {100, 200, SynthesisEngineType::Pitchcore},
+        {200, 300, SynthesisEngineType::Psola},
+    };
+
+    auto inside = blocksToCommit(plan, 120, 150);
+    CHECK(inside.size() == 1);
+    if (!inside.empty()) {
+        CHECK(inside.front().startFrame == 100);
+        CHECK(inside.front().endFrame == 200);
+        CHECK(inside.front().engine == SynthesisEngineType::Pitchcore);
+    }
+
+    auto crossing = blocksToCommit(plan, 90, 110);
+    CHECK(crossing.size() == 2);
+    if (crossing.size() == 2) {
+        CHECK(crossing[0].startFrame == 0);
+        CHECK(crossing[1].startFrame == 100);
+    }
+
+    auto point = blocksToCommit(plan, 250, 250);
+    CHECK(point.size() == 1);
+    if (!point.empty())
+        CHECK(point.front().startFrame == 200);
+
+    auto outside = blocksToCommit(plan, 400, 450);
+    CHECK(outside.size() == 1);
+    if (!outside.empty())
+        CHECK(outside.front().startFrame == 0);
+
+    CHECK(blocksToCommit({}, 0, 10).empty());
+}
+
+void testCommitRangesUseTheWholeBlockForEveryEngine() {
+    // D-239: PSOLA, Pitchcore and the vocoder all commit the whole engine
+    // block. The block is the render unit; no engine gets a note-sized splice.
+    using engineBlocks::CommitRange;
+    using engineBlocks::commitRangesForNotes;
+    std::vector<engineBlocks::Block> plan = {
+        {0, 100, SynthesisEngineType::Psola},
+        {100, 200, SynthesisEngineType::Vocoder},
+        {200, 300, SynthesisEngineType::Psola},
+    };
+
+    std::vector<Note> notes;
+    Note psolaNote(20, 40, 60.0f);
+    psolaNote.markDirty();
+    Note vocoderNote(120, 150, 62.0f);
+    vocoderNote.markDirty();
+    notes.push_back(psolaNote);
+    notes.push_back(vocoderNote);
+
+    const auto ranges =
+        commitRangesForNotes(notes, plan, true, -1, -1, 0, 300);
+    CHECK(ranges.size() == 2);
+    if (ranges.size() == 2) {
+        CHECK(ranges[0].startFrame == 0);
+        CHECK(ranges[0].endFrame == 100);
+        CHECK(ranges[1].startFrame == 100);
+        CHECK(ranges[1].endFrame == 200); // the vocoder block, not the note
+    }
+
+    // Adjacent edited notes in the same block merge into one span, so the
+    // commit mask does not fade at the shared note boundary.
+    std::vector<Note> adjacent;
+    Note vocoderA(120, 150, 62.0f);
+    vocoderA.markDirty();
+    Note vocoderB(150, 180, 64.0f);
+    vocoderB.markDirty();
+    adjacent.push_back(vocoderA);
+    adjacent.push_back(vocoderB);
+    const auto merged =
+        commitRangesForNotes(adjacent, plan, true, -1, -1, 0, 300);
+    CHECK(merged.size() == 1);
+    if (!merged.empty()) {
+        CHECK(merged.front().startFrame == 100);
+        CHECK(merged.front().endFrame == 200);
+    }
+
+    // A dirty note outside this pass selects nothing; the F0 fallback is not
+    // used while there is a dirty anchor.
+    Note outside(400, 420, 60.0f);
+    outside.markDirty();
+    const auto none =
+        commitRangesForNotes({outside}, plan, true, 0, 300, 0, 300);
+    CHECK(none.empty());
+
+    // No dirty anchor: the F0 range selects whole blocks for every engine.
+    const auto f0 =
+        commitRangesForNotes({}, plan, false, 120, 150, 0, 300);
+    CHECK(f0.size() == 1);
+    if (!f0.empty()) {
+        CHECK(f0.front().startFrame == 100);
+        CHECK(f0.front().endFrame == 200);
+    }
+}
+
+// D-267 (T5): el conteo que publica el canal es el mismo predicado del aviso.
+void testCountOutOfBenefitRange() {
+    std::vector<Note> notes;
+    notes.push_back(makeNote(0, 10, NoteEngine::Inherit, 60.0f));  // 0 st
+    notes.push_back(makeNote(10, 20, NoteEngine::Inherit, 60.0f));  // +2 st
+    notes.push_back(makeNote(20, 30, NoteEngine::Inherit, 60.0f));  // +2,5 st
+    notes.push_back(makeNote(30, 40, NoteEngine::Inherit, 60.0f));  // -1,5 st
+    notes.push_back(makeNote(40, 50, NoteEngine::Inherit, 60.0f));  // +2,6 st
+    notes[1].setMidiNote(62.0f);
+    notes[2].setMidiNote(62.5f);
+    notes[3].setMidiNote(58.5f);
+    notes[4].setMidiNote(62.6f);
+    Note rest(50, 60, 60.0f);
+    rest.setRest(true);
+    rest.setMidiNote(70.0f);
+    notes.push_back(rest);
+
+    // El limite es abierto: -1,5 y +2,5 estan dentro; +2,6 fuera.
+    const int count = engineBlocks::countOutOfBenefitRange(notes);
+    std::cout << "countOutOfBenefitRange = " << count << " (esperado 1)\n";
+    CHECK(count == 1);
+}
+
 }  // namespace
 
-int main() {
-    testFindSilenceRunNeedsTwentyMilliseconds();
+int main() {    testFindSilenceRunNeedsTwentyMilliseconds();
     testSilenceRunRejectsTone();
     testSingleEngineIsOneBlock();
     testDifferentEngineWithoutSilenceInherits();
@@ -493,6 +619,9 @@ int main() {
     testTwoTouchingNotesWithDifferentEnginesKeepOneEngine();
     testPitchcoreRequestSurvivesALargeShift();
     testRefusalNamesTheNoteTheRequestAndTheCause();
+    testBlocksToCommitSelectsWholeBlocks();
+    testCommitRangesUseTheWholeBlockForEveryEngine();
+    testCountOutOfBenefitRange();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;

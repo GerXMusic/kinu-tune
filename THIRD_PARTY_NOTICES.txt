@@ -1,9 +1,10 @@
-Kinu Tune 0.1.0
+TuneX 0.1.0
 Copyright (C) 2026 Keinoaza
+Copyright (C) 2026 GerX (modifications since 2026-11-22)
 
-Kinu Tune is a modified version of PitchNet 0.7.2 (Copyright (c) 2026 Session
+TuneX is a modified version of PitchNet 0.7.2 (Copyright (c) 2026 Session
 Loops and contributors), which is itself a modified derivative of HachiTune by
-the HachiTune contributors. Modified by Keinoaza from 2026-10-19: Cubase
+the HachiTune contributors. Modified by Keinoaza from 2026-10-19 and by GerX from 2026-11-22: Cubase
 VariAudio-style editing and inspector, one-click scale-degree harmony, and the
 related changes listed in MODIFICATIONS.md in the source repository.
 
@@ -16,24 +17,24 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 The complete license text is in the LICENSE file.
 
-Corresponding source for Kinu Tune is available at:
-https://github.com/keinoaza666-stack/kinu-tune
+Corresponding source for TuneX is available at:
+https://github.com/GerXMusic/tunex
 Each binary release names the git tag it was built from, and its release page
 also carries a source archive that includes the git submodules (JUCE, ARA SDK,
 r8brain-free-src).
 
-Kinu Tune is not affiliated with or endorsed by Session Loops, the HachiTune
+TuneX is not affiliated with or endorsed by Session Loops, the HachiTune
 contributors, OpenVPI, Steinberg, Celemony or Apple. Cubase and VariAudio are
 trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark
 of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of
 Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
 
-Kinu Tune binary releases include the FCPE, GAME and PC-NSF-HiFiGAN model
+TuneX binary releases include the FCPE, GAME and PC-NSF-HiFiGAN model
 files described below. They do NOT include rmvpe.onnx (see "RMVPE model
 assets"). The GAME and PC-NSF-HiFiGAN model files are licensed under CC
 BY-NC-SA 4.0, whose NonCommercial term reads: "NonCommercial means not
 primarily intended for or directed towards commercial advantage or monetary
-compensation." Kinu Tune binary releases are distributed free of charge. Read
+compensation." TuneX binary releases are distributed free of charge. Read
 the license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en)
 for what it allows.
 
@@ -59,7 +60,7 @@ Third-party components
 
 JUCE Framework
 Copyright (c) Raw Material Software Limited.
-PitchNet and Kinu Tune use JUCE under the GNU Affero General Public License,
+PitchNet and TuneX use JUCE under the GNU Affero General Public License,
 version 3. The applicable AGPLv3 text is provided in the LICENSE file.
 
 r8brain-free-src
@@ -123,7 +124,7 @@ Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 license (https://creativecommons.org/licenses/by-nc-sa/4.0/), as stated in
 the GAME v1.0.0 release notes:
 https://github.com/openvpi/GAME/releases/tag/v1.0.0
-Kinu Tune redistributes, unchanged, the "small" ONNX models attached to
+TuneX redistributes, unchanged, the "small" ONNX models attached to
 https://github.com/openvpi/GAME/releases/tag/v1.0.3 (GAME-1.0.3-small-onnx.zip).
 The GAME README also asks that nobody use it to generate someone's singing or
 speech without that person's consent.
@@ -299,7 +300,7 @@ Source: https://github.com/yxlllc/RMVPE
 The RMVPE repository did not provide a LICENSE file when these notices were
 prepared. No redistribution license is asserted here. Confirm an explicit
 license or permission before distributing rmvpe.onnx.
-Kinu Tune binary releases do not include rmvpe.onnx (checked 2026-10-19: the
+TuneX binary releases do not include rmvpe.onnx (checked 2026-10-19: the
 repository still declares no license).
 
 VST 3 SDK (bundled with JUCE)
@@ -341,13 +342,13 @@ HarfBuzz, SheenBidi (Apache License 2.0) and LV2. This software is based in
 part on the work of the Independent JPEG Group. Copyright notices and license
 texts: licenses/JUCE-dependencies.txt
 
-AAX SDK (not built into or shipped with Kinu Tune releases)
+AAX SDK (not built into or shipped with TuneX releases)
 Copyright (c) 2024 Avid Technology Inc.
 The AAX SDK is subject to the Avid AAX SDK License Agreement or, where
 applicable, GPLv3. See https://developer.avid.com/aax for its terms.
 
 Fonts in the source tree (Resources/fonts; not embedded in the plugin binary
-and not included in the Kinu Tune release zips): Montserrat, Noto Sans CJK JP
+and not included in the TuneX release zips): Montserrat, Noto Sans CJK JP
 and Sarasa Gothic, each under the SIL Open Font License 1.1. License texts:
 Resources/fonts/Montserrat-OFL.txt, Resources/fonts/NotoSansCJK-OFL.txt,
 Resources/fonts/Sarasa-OFL.txt

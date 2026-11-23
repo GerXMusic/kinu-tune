@@ -1,4 +1,4 @@
-Third-party components compiled into Kinu Tune through the JUCE framework.
+Third-party components compiled into TuneX through the JUCE framework.
 Source: third_party/JUCE (see third_party/JUCE/LICENSE.md for the full list).
 
 ========================================================================

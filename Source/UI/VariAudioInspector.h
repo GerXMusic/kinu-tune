@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 #pragma once
@@ -8,7 +8,7 @@
 #include "../Models/Project.h"
 #include "../Utils/Localization.h"
 #include "Components/StyledWidgets.h"
-#include "HarmonyPanel.h"
+#include "GuiTypes.h"
 #include <array>
 #include <functional>
 #include <optional>
@@ -25,7 +25,7 @@ public:
     static constexpr int preferredWidth = 240;
 
     // Slider order matches PianoRollComponent::InspectorParam.
-    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
+    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };
 
@@ -38,8 +38,10 @@ public:
     void refreshLocalisedText();
     /** Re-reads snap state and slider values now (they are also polled). */
     void refresh() { refreshFromProject(); }
-
-    HarmonyPanel& getHarmonyPanel() { return harmonyPanel; }
+    void setEditorMode(EditorUiMode mode);
+    // Used by the top-bar global scale control; same path as the menus.
+    void selectScaleRoot(int root) { applyScaleRoot(root); }
+    void selectScaleMode(ScaleMode mode) { applyScaleMode(mode); }
 
     // Asked on every refresh; never cached (see HarmonyPanel).
     std::function<Project*()> getCurrentProject;
@@ -70,6 +72,16 @@ public:
     // actually is.
     std::function<std::optional<NoteEngine>()> getNoteEngine;
     std::function<void(NoteEngine)> onNoteEngineChanged;
+    // Macros (Melodyne's Correct Pitch / Quantize Time / Leveling row).
+    std::function<void()> onCorrectPitchMacro;
+    // M4 v1 (D-242): cuantizacion de tiempo con la fuerza elegida (0..100).
+    std::function<void(int)> onQuantizeTimeMacro;
+    std::function<void()> onPitchCenterMacro;
+    // M5 v1 (D-245): silenciar o reactivar las notas seleccionadas.
+    std::function<void()> onMuteNotesMacro;
+    // Smart-control glue, moved from the note overlay to the inspector.
+    std::function<bool(bool)> canGlueTarget;
+    std::function<void(bool)> onGlueNoteMacro;
 
     // D-185: what the note renders with, and — when the last request was
     // refused by D-129 — what was asked. Transparency only; the rule does not
@@ -106,6 +118,16 @@ private:
         const double defaultValue;
     };
 
+    // A Melodyne control that exists in the layout but has no engine behind
+    // it yet. It is visibly disabled instead of pretending to work.
+    class DisabledRow : public juce::Component
+    {
+    public:
+        void paint(juce::Graphics& g) override;
+        juce::String caption;
+        juce::String value { "-" };
+    };
+
     void timerCallback() override;
     void refreshFromProject();
     void refreshEditorScale(Project* project);
@@ -133,11 +155,24 @@ private:
     juce::ComboBox engineBox;
     juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
-    std::array<std::unique_ptr<ValueRow>, 6> rows;
+    std::array<std::unique_ptr<ValueRow>, 8> rows;
+    std::array<std::unique_ptr<DisabledRow>, 2> placeholderRows;
+    juce::TextButton muteButton;
+    juce::TextButton deleteButton;
+    juce::TextButton glueLeftButton;
+    juce::TextButton glueRightButton;
+    juce::TextButton correctPitchButton;
+    juce::TextButton quantizeButton;
+    juce::TextButton levelingButton;
+    juce::Rectangle<int> macrosCardBounds;
     bool editingRow = false;
+    // D-242: last strength picked in the Quantize Time menu (100 % default).
+    int quantizeStrengthPercent = 100;
+    EditorUiMode editorMode = EditorUiMode::Basic;
     bool absoluteSelected = true; // Absolute unless the user picks Relative
     juce::Rectangle<int> variAudioCardBounds;
     juce::Rectangle<int> rowsBoxBounds;
+    juce::Rectangle<int> placeholdersBox;
 
     juce::Label editorScaleHeader;
     StyledToggleButton useProjectKeyToggle;
@@ -152,8 +187,6 @@ private:
     int shownEngineId = 0;
     int shownRootId = 0;
     int shownModeId = 0;
-
-    HarmonyPanel harmonyPanel; // draws its own card and title
 
     LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 

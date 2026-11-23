@@ -3,7 +3,6 @@
 #include "../Utils/AudioResampler.h"
 #include "../Audio/EditorController.h"
 #include "../Undo/PitchUndoManager.h"
-#include "../Models/ProjectModificationRanges.h"
 #include "../Models/ProjectSerializer.h"
 #include "../UI/IMainView.h"
 #include "../UI/Main/SettingsManager.h"
@@ -1514,17 +1513,6 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       ? projectToRender.getAudioData().waveform.getNumSamples() /
           double(std::max(1, projectToRender.getAudioData().sampleRate))
       : activeRegionEndSeconds;
-  std::vector<juce::Range<int>> renderChangedSampleRanges;
-#if JucePlugin_Enable_ARA
-  if (renderActiveAraRegion) {
-    const auto &audioData = projectToRender.getAudioData();
-    const double renderRate =
-        audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
-                                 : hostSampleRate;
-    renderChangedSampleRanges =
-        collectDirtyModificationSampleRanges(projectToRender, renderRate);
-  }
-#endif
   auto &pendingRerun =
       target != nullptr ? modificationRenders[targetKey].pending
       : renderActiveAraRegion ? regionCanvasRenderPendingRerun : araRenderPendingRerun;
@@ -1544,7 +1532,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       [this, controller, renderActiveAraRegion, renderRegionKey, renderRegionRevision,
        renderModification, renderStartSampleInModification,
        renderRegionStartSeconds, renderRegionEndSeconds,
-       renderChangedSampleRanges, target](bool success) {
+       target](bool success) {
         if (renderActiveAraRegion) {
           const auto current = araRegions.find(renderRegionKey);
           if (current == araRegions.end() ||
@@ -1602,28 +1590,21 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               // The project is stored in modification time and spans the
               // whole modification, so publish it whole. Each region maps its
               // own span out of it via getStartInAudioModificationSamples().
+              //
+              // D-239: publish exactly the buffer the renderer wrote. The old
+              // path recomputed "changed" ranges from the pre-render dirty
+              // flags and copied the previous publication over everything
+              // outside them, sample by sample and without a crossfade. The
+              // synthesizer commits whole engine blocks now, so that copy both
+              // discarded the block's outer audio and created a hard splice
+              // inside a sounding note. The whole buffer is authoritative.
               juce::AudioBuffer<float> processedSlice;
-              processedSlice.makeCopyOf(audioData.waveform);
-              if (!renderChangedSampleRanges.empty()) {
-                juce::AudioBuffer<float> previousProcessed;
-                double previousRate = 0.0;
-                juce::int64 previousStart = 0;
-                const bool hasPrevious =
-                    renderModification->copyProcessedAudio(
-                        previousProcessed, previousRate, previousStart);
-                if (hasPrevious)
-                  preserveProcessedAudioOutsideRanges(
-                      processedSlice, processedRate,
-                      /*startSampleInModification*/ 0, previousProcessed,
-                      previousRate, previousStart, renderChangedSampleRanges);
-              }
+              processedSlice = renderedProject->buildPublishAudio();
               ARA_DIAG("publish[render] mod=" + ARA_DIAG_PTR(renderModification) +
                        " key=" + renderRegionKey + " samples=" +
                        juce::String(processedSlice.getNumSamples()) +
                        " rate=" + juce::String(processedRate, 1) + " offset=0" +
-                       " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
-                       " changedRanges=" +
-                       juce::String(static_cast<int>(renderChangedSampleRanges.size())));
+                       " fp=" + juce::String(araDiagFingerprint(processedSlice), 6));
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
               araNotePublish(diagInstanceId);
 #endif
@@ -1792,7 +1773,8 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
     // analysis-time audio. Only for regions that were actually CHANGED —
     // an unedited region stores nothing and keeps playing its original source.
     if (activeModification != nullptr && projectHasRegionEdits(stateProject)) {
-      const auto &processed = stateProject.getAudioData().waveform;
+      const auto published = stateProject.buildPublishAudio();
+      const auto &processed = published;
       const double processedRate =
           stateProject.getAudioData().sampleRate > 0
               ? static_cast<double>(stateProject.getAudioData().sampleRate)

@@ -46,6 +46,12 @@ public:
   // Inactive regions in Track mode: note bodies use a grey ramp (light along
   // the centre line, dark at the edges) instead of the pitch-accuracy colours.
   void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
+  // Tarea 3 (2026-11-22): vista de bypass. La nota se dibuja en su posicion y
+  // altura de FUENTE (las ediciones no se ven), como Melodyne con el bypass.
+  void setOriginalPitchView(bool shouldUseOriginal)
+  {
+    originalPitchView = shouldUseOriginal;
+  }
   // Pinned tracks: stroke each note body in this colour. Combine with
   // setFillBodies(false) to draw the outline on its own.
   void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
@@ -89,6 +95,7 @@ private:
   Note *hoveredNote = nullptr;
   bool showNoteFramesDebug = false;
   bool greyscale = false;
+  bool originalPitchView = false;
   std::optional<juce::Colour> outlineColour;
   bool fillBodies = true;
   bool segmentStyle = true;

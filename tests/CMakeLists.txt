@@ -1,4 +1,4 @@
-﻿# Unit tests.
+# Unit tests.
 #
 # Each test is a standalone executable with its own main(), matching the style
 # the files were already written in. They link pitchnet_core, which exposes the
@@ -24,6 +24,7 @@ set(PITCHNET_TEST_SOURCES
     SingleWindowPolicyTests.cpp
     DocumentEngineTests.cpp
     EngineBlocksTests.cpp
+    CommitSeamTests.cpp
     D197BlockDirtyTests.cpp
     FormantRetirementTests.cpp
     FormantShiftTests.cpp
@@ -38,13 +39,23 @@ set(PITCHNET_TEST_SOURCES
     PitchCurveTransitionTests.cpp
     D205StraightenContinuityTests.cpp
     TransitionJoinTests.cpp
+    TimingQuantizeTests.cpp
+    TimingAudioTests.cpp
+    NoteMuteTests.cpp
+    NoteResetTests.cpp
+    # D-258: motor por bloque; D-260: bypass con el original; T7: predicado.
+    BlockEngineTests.cpp
+    BypassOriginalTests.cpp
+    NoteEditPredicateTests.cpp
+    # Fase 1 de la edicion: S1/S2/S3/S6 en audio contra el render completo.
+    EditSymptomAudioTests.cpp    # R4 (2026-11-21): union de notas con consonante no vocalizada.
+    NoteBoundaryHoleTests.cpp
     # D-215: D212BoundaryTransitionTests deshabilitado. Depende de
     # BasePitchCurve::limitBoundarySlope, revertido en c0957836 por el
     # aplanado audible en D-214; el criterio de 1 c/ms queda descartado.
     PitchDrawingTests.cpp
     PitchDriftTests.cpp
     PluginStateArchiveTests.cpp
-    ProjectModificationRangeTests.cpp
     SynthesisEngineShareTests.cpp
     TimelineCoordinateTests.cpp
     VisualWaveformEnvelopeTests.cpp)
@@ -71,6 +82,17 @@ endforeach()
 # The capture state machine belongs to the plug-in rather than pitchnet_core.
 target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
+
+# TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
+target_compile_definitions(TimingAudioTests PRIVATE
+    TIMING_TEST_MODELS_DIR="${CMAKE_SOURCE_DIR}/Resources/models")
+if(WIN32 AND ONNXRUNTIME_DLLS)
+    foreach(DLL ${ONNXRUNTIME_DLLS})
+        add_custom_command(TARGET TimingAudioTests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DLL}" "$<TARGET_FILE_DIR:TimingAudioTests>")
+    endforeach()
+endif()
 
 # P1b (render al Play): deferred dirty blocks and the mark-only triggers.
 # P1b fase 3: el borde de Play del host.
@@ -164,6 +186,42 @@ add_executable(AuditionHandoffTests AuditionHandoffTests.cpp)
 target_link_libraries(AuditionHandoffTests PRIVATE pitchnet_ui)
 target_compile_features(AuditionHandoffTests PRIVATE cxx_std_17)
 add_test(NAME AuditionHandoffTests COMMAND AuditionHandoffTests)
+
+# S4d (D-254): el cierre del render del plugin limpia por revision, no todo.
+add_executable(EditRenderCloseTests EditRenderCloseTests.cpp)
+target_link_libraries(EditRenderCloseTests PRIVATE pitchnet_ui)
+target_compile_features(EditRenderCloseTests PRIVATE cxx_std_17)
+add_test(NAME EditRenderCloseTests COMMAND EditRenderCloseTests)
+
+# D-265 (T1): el criterio de envolvente en la frontera, con su segundo gesto
+# (nota del borde de la frase) como entrada propia de ctest.
+add_test(NAME EditSymptom_sbedge COMMAND EditSymptomAudioTests sb-edge)
+
+# D-266 (T6): estado unico derivado del render (tabla de transiciones).
+add_executable(RenderStateTests RenderStateTests.cpp)
+target_link_libraries(RenderStateTests PRIVATE pitchnet_core)
+target_compile_features(RenderStateTests PRIVATE cxx_std_17)
+add_test(NAME RenderStateTests COMMAND RenderStateTests)
+
+# D-267 (T3/T4): boton de bypass y aviso de motor no modal en el rail.
+add_executable(EnginePanelTests EnginePanelTests.cpp)
+target_link_libraries(EnginePanelTests PRIVATE pitchnet_ui)
+target_compile_features(EnginePanelTests PRIVATE cxx_std_17)
+add_test(NAME EnginePanelTests COMMAND EnginePanelTests)
+
+# Tarea A/B (2026-11-22): el reset borra la transicion (D-225) y la cola de la
+# ultima nota vuelve a la fuente. Usa el camino de produccion del reset.
+add_executable(NoteTransitionResetTests NoteTransitionResetTests.cpp)
+target_link_libraries(NoteTransitionResetTests PRIVATE pitchnet_ui)
+target_compile_features(NoteTransitionResetTests PRIVATE cxx_std_17)
+add_test(NAME NoteTransitionResetTests COMMAND NoteTransitionResetTests)
+
+# Tareas 1-3 (2026-11-22): cajon alineado, bypass en la barra superior y curva
+# de fuente en la vista de bypass.
+add_executable(BypassUiTests BypassUiTests.cpp)
+target_link_libraries(BypassUiTests PRIVATE pitchnet_ui)
+target_compile_features(BypassUiTests PRIVATE cxx_std_17)
+add_test(NAME BypassUiTests COMMAND BypassUiTests)
 
 add_executable(OnnxRuntimeAvailabilityTests OnnxRuntimeAvailabilityTests.cpp)
 target_link_libraries(OnnxRuntimeAvailabilityTests PRIVATE pitchnet_ui)

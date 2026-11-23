@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 // The scale name tables are taken from PitchNet's ScaleSelectionControl.cpp,
 // Copyright (c) 2026 Session Loops and contributors.
@@ -16,18 +16,25 @@ constexpr int kPadY = 6;
 constexpr int kInnerPadX = 10;
 constexpr int kInnerPadY = 8;
 constexpr int kRowGap = 5;
-constexpr int kHeaderHeight = 20;
-constexpr int kMenuRowHeight = 26;
+constexpr int kHeaderHeight = 24;
+constexpr int kMenuRowHeight = 28;
 constexpr int kToggleHeight = 24;
-constexpr int kTargetLabelHeight = 18;
-constexpr int kEngineStatusHeight = 32;
-constexpr int kValueRowHeight = 34;
-constexpr int kNumRows = 6;
+constexpr int kTargetLabelHeight = 20;
+constexpr int kEngineStatusHeight = 34;
+constexpr int kValueRowHeight = 38;
+constexpr int kNumRows = 8;
+constexpr int kPlaceholderRowHeight = 34;
+constexpr int kPlaceholderBoxHeight = 2 * kPlaceholderRowHeight + 4;
+constexpr int kActionRowHeight = 26;
+constexpr int kMacroRowHeight = 26;
+constexpr int kMacrosCardHeight = 3 * kMacroRowHeight + 2 * 4;
 
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 3 + kRowGap +
-    kEngineStatusHeight + kRowGap + kTargetLabelHeight + kRowsBoxHeight;
+    kEngineStatusHeight + kRowGap + kTargetLabelHeight + kActionRowHeight +
+    kRowGap + kActionRowHeight + kRowGap + kRowsBoxHeight + kRowGap +
+    kPlaceholderBoxHeight + kRowGap + kMacrosCardHeight;
 constexpr int kRootMenuWidth = 50;
 constexpr int kMenuGap = 4;
 constexpr int kScrollBarThickness = 8;
@@ -114,7 +121,7 @@ void styleCombo(juce::ComboBox& box)
 class VariAudioInspector::ComboLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return AppFont::getFont(14.0f); }
+    juce::Font getComboBoxFont(juce::ComboBox&) override { return AppFont::getFont(15.0f); }
 
     void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override
     {
@@ -168,7 +175,7 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
     const float alpha = isEnabled() ? 1.0f : 0.4f;
 
     auto top = bounds.removeFromTop(bounds.getHeight() - 8.0f);
-    g.setFont(AppFont::getFont(13.0f));
+    g.setFont(AppFont::getFont(14.5f));
     g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
     g.drawText(caption, top, juce::Justification::centredLeft, true);
     g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(alpha));
@@ -191,6 +198,20 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
                            2.0f);
 }
 
+void VariAudioInspector::DisabledRow::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(6.0f, 3.0f);
+    const float alpha = 0.42f;
+    auto top = bounds.removeFromTop(bounds.getHeight() - 7.0f);
+    g.setFont(AppFont::getFont(14.5f));
+    g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
+    g.drawText(caption, top, juce::Justification::centredLeft, true);
+    g.drawText(value, top, juce::Justification::centredRight, false);
+    auto bar = bounds.withSizeKeepingCentre(bounds.getWidth(), 3.0f);
+    g.setColour(kBarTrack.withMultipliedAlpha(alpha));
+    g.fillRoundedRectangle(bar, 1.5f);
+}
+
 juce::String VariAudioInspector::formatValue(Param param, double value)
 {
     switch (param)
@@ -200,6 +221,8 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::PitchDrift:
             return juce::String(juce::roundToInt(value)) + " %";
         case Param::Formant:
+        case Param::TiltLeft:
+        case Param::TiltRight:
             return (value > 0.0 ? "+" : "") + juce::String(value, 1) + " st";
         case Param::Volume:
             return value <= -59.9 ? juce::String::fromUTF8("-\xe2\x88\x9e dB")
@@ -219,16 +242,13 @@ VariAudioInspector::VariAudioInspector()
     viewport.setScrollBarThickness(kScrollBarThickness);
     addAndMakeVisible(viewport);
 
-    for (auto* header : {&variAudioHeader, &editorScaleHeader})
-    {
-        header->setFont(AppFont::getBoldFont(16.0f));
-        header->setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
-        content.addAndMakeVisible(*header);
-    }
+    variAudioHeader.setFont(AppFont::getBoldFont(18.0f));
+    variAudioHeader.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    content.addAndMakeVisible(variAudioHeader);
 
     for (auto* label : {&smartControlsLabel, &snapModeLabel, &engineLabel})
     {
-        label->setFont(AppFont::getFont(13.0f));
+        label->setFont(AppFont::getFont(15.0f));
         label->setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
         content.addAndMakeVisible(*label);
     }
@@ -275,13 +295,13 @@ VariAudioInspector::VariAudioInspector()
 
     // D-185: never leave a refused pick unexplained. Shows the block's actual
     // engine and, only when there was a refusal, the requested one and why.
-    engineStatusLabel.setFont(AppFont::getFont(11.0f));
+    engineStatusLabel.setFont(AppFont::getFont(12.5f));
     engineStatusLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     engineStatusLabel.setJustificationType(juce::Justification::topLeft);
     engineStatusLabel.setMinimumHorizontalScale(0.85f);
     content.addAndMakeVisible(engineStatusLabel);
 
-    targetLabel.setFont(AppFont::getFont(12.0f));
+    targetLabel.setFont(AppFont::getFont(13.5f));
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     content.addAndMakeVisible(targetLabel);
 
@@ -291,6 +311,9 @@ VariAudioInspector::VariAudioInspector()
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
     rows[4] = std::make_unique<ValueRow>(Param::Volume, -60.0, 12.0, 0.0, 0.1);
     rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
+    // Tilt moved here from the retired per-note smart-control cluster.
+    rows[6] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
+    rows[7] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
     for (auto& row : rows)
     {
         auto* r = row.get();
@@ -326,6 +349,86 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(*r);
     }
 
+    for (auto& row : placeholderRows)
+    {
+        row = std::make_unique<DisabledRow>();
+        content.addAndMakeVisible(*row);
+    }
+
+    for (auto* b : {&muteButton, &deleteButton})
+    {
+        b->setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
+        b->setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_MUTED);
+        b->setEnabled(false);
+        content.addAndMakeVisible(*b);
+    }
+
+    // M5 v1 (D-245): silenciar/reactivar ya funciona; eliminar nota no.
+    muteButton.setEnabled(true);
+    muteButton.setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+    muteButton.onClick = [this]
+    {
+        if (onMuteNotesMacro)
+            onMuteNotesMacro();
+    };
+
+    // Smart-control glue, now an inspector action instead of a square on the
+    // hovered note.
+    for (auto *button : {&glueLeftButton, &glueRightButton})
+    {
+        button->setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
+        button->setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+        button->setEnabled(false);
+        content.addAndMakeVisible(*button);
+    }
+    glueLeftButton.onClick = [this]
+    {
+        if (onGlueNoteMacro)
+            onGlueNoteMacro(false);
+    };
+    glueRightButton.onClick = [this]
+    {
+        if (onGlueNoteMacro)
+            onGlueNoteMacro(true);
+    };
+
+    auto setupMacro = [this](juce::TextButton& button, bool enabled)
+    {
+        button.setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
+        button.setColour(juce::TextButton::textColourOffId,
+                         enabled ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_TEXT_MUTED);
+        button.setEnabled(enabled);
+        content.addAndMakeVisible(button);
+    };
+    setupMacro(correctPitchButton, true);
+    setupMacro(quantizeButton, true);
+    setupMacro(levelingButton, false);
+    correctPitchButton.onClick = [this]
+    {
+        if (onCorrectPitchMacro)
+            onCorrectPitchMacro();
+    };
+    // D-242: la fuerza es parte del criterio, asi que el clic abre la eleccion
+    // en vez de aplicar 100 % a ciegas. 100 % va primero.
+    quantizeButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        for (const int percent : {100, 75, 50, 25})
+            menu.addItem(percent, juce::String(percent) + " %", true,
+                         percent == quantizeStrengthPercent);
+        juce::Component::SafePointer<VariAudioInspector> safe(this);
+        menu.showMenuAsync(
+            juce::PopupMenu::Options().withTargetComponent(&quantizeButton),
+            [safe](int result)
+            {
+                if (safe == nullptr || result <= 0)
+                    return;
+                safe->quantizeStrengthPercent = result;
+                if (safe->onQuantizeTimeMacro)
+                    safe->onQuantizeTimeMacro(result);
+            });
+    };
+
     useProjectKeyToggle.onClick = [this]
     {
         auto* project = getCurrentProject ? getCurrentProject() : nullptr;
@@ -336,7 +439,6 @@ VariAudioInspector::VariAudioInspector()
             onEditorScaleChanged();
         refreshFromProject();
     };
-    content.addAndMakeVisible(useProjectKeyToggle);
 
     styleCombo(scaleRootBox);
     for (size_t i = 0; i < kRootLabels.size(); ++i)
@@ -349,7 +451,6 @@ VariAudioInspector::VariAudioInspector()
         if (id >= 1 && id <= static_cast<int>(kRootLabels.size()))
             applyScaleRoot(id - 1);
     };
-    content.addAndMakeVisible(scaleRootBox);
 
     styleCombo(scaleModeBox);
     scaleModeBox.setTextWhenNothingSelected("-");
@@ -360,7 +461,6 @@ VariAudioInspector::VariAudioInspector()
         if (id >= 1 && id <= static_cast<int>(kModeOptions.size()))
             applyScaleMode(kModeOptions[static_cast<size_t>(id - 1)].mode);
     };
-    content.addAndMakeVisible(scaleModeBox);
 
     snapScaleToggle.onClick = [this]
     {
@@ -369,10 +469,6 @@ VariAudioInspector::VariAudioInspector()
                                       ? DragSnapMode::Scale
                                       : DragSnapMode::Chromatic);
     };
-    content.addAndMakeVisible(snapScaleToggle);
-
-    harmonyPanel.getCurrentProject = [this] { return getCurrentProject ? getCurrentProject() : nullptr; };
-    content.addAndMakeVisible(harmonyPanel);
 
     refreshLocalisedText();
     // Selection, snap state and values change from many places (canvas,
@@ -390,8 +486,7 @@ VariAudioInspector::~VariAudioInspector()
 
 void VariAudioInspector::refreshLocalisedText()
 {
-    variAudioHeader.setText(TR("inspector.variaudio"), juce::dontSendNotification);
-    smartControlsLabel.setText(TR("inspector.smart_controls"), juce::dontSendNotification);
+    variAudioHeader.setText(TR("inspector.variaudio"), juce::dontSendNotification);    smartControlsLabel.setText(TR("inspector.smart_controls"), juce::dontSendNotification);
     snapModeLabel.setText(TR("inspector.snap_mode"), juce::dontSendNotification);
     engineLabel.setText(TR("inspector.engine"), juce::dontSendNotification);
     {
@@ -430,17 +525,45 @@ void VariAudioInspector::refreshLocalisedText()
     shownModeId = scaleModeBox.getSelectedId();
 
     snapScaleToggle.setButtonText(TR("inspector.snap_scale"));
-    rows[0]->caption = TR("inspector.correct_pitch");
-    rows[1]->caption = TR("inspector.flatten_curve");
+    rows[0]->caption = TR("inspector.pitch");
+    rows[1]->caption = TR("inspector.pitch_modulation");
     rows[2]->caption = TR("inspector.pitch_drift");
-    rows[3]->caption = TR("inspector.shift_formant");
-    rows[4]->caption = TR("inspector.volume");
+    rows[3]->caption = TR("inspector.formant");
+    rows[4]->caption = TR("inspector.amplitude");
     rows[5]->caption = TR("inspector.transition");
+    rows[6]->caption = TR("inspector.tilt_left");
+    rows[7]->caption = TR("inspector.tilt_right");
     // D-225: the control belongs to the union with the next note.
     rows[5]->setTooltip(TR("inspector.transition_hint"));
+    rows[6]->setTooltip(TR("inspector.tilt_left_hint"));
+    rows[7]->setTooltip(TR("inspector.tilt_right_hint"));
+    placeholderRows[0]->caption = TR("inspector.sibilant");
+    placeholderRows[1]->caption = TR("inspector.attack_speed");
+    muteButton.setButtonText(TR("inspector.mute_note"));
+    muteButton.setTooltip(TR("menu.mute_note") + " / " + TR("menu.unmute_note"));
+    deleteButton.setButtonText(TR("inspector.delete_note"));
+    glueLeftButton.setButtonText(TR("inspector.glue_left"));
+    glueLeftButton.setTooltip(TR("inspector.glue_left_hint"));
+    glueRightButton.setButtonText(TR("inspector.glue_right"));
+    glueRightButton.setTooltip(TR("inspector.glue_right_hint"));
+    correctPitchButton.setButtonText(TR("macro.correct_pitch"));
+    quantizeButton.setButtonText(TR("macro.quantize_time"));
+    levelingButton.setButtonText(TR("macro.leveling"));
+    correctPitchButton.setTooltip(TR("macro.correct_pitch_hint"));
+    quantizeButton.setTooltip(TR("macro.quantize_time_hint"));
+    levelingButton.setTooltip(TR("macro.not_implemented"));
     for (auto& row : rows)
         row->repaint();
+    for (auto& row : placeholderRows)
+        row->repaint();
     refreshFromProject();
+}
+
+void VariAudioInspector::setEditorMode(EditorUiMode mode)
+{
+    editorMode = mode;
+    refreshFromProject();
+    repaint();
 }
 
 void VariAudioInspector::timerCallback()
@@ -518,16 +641,24 @@ void VariAudioInspector::refreshFromProject()
 
     if (editingRow)
         return; // never fight the user's drag
-    for (auto& row : rows)
+    for (size_t i = 0; i < rows.size(); ++i)
     {
-        const auto value = getParamValue ? getParamValue(row->param) : std::nullopt;
-        row->setEnabled(value.has_value());
-        if (value && std::abs(row->getValue() - *value) > 1.0e-4)
+        const auto value = getParamValue ? getParamValue(rows[i]->param) : std::nullopt;
+        const bool advancedOnly = rows[i]->param == Param::Formant ||
+                                  rows[i]->param == Param::Volume ||
+                                  rows[i]->param == Param::TiltLeft ||
+                                  rows[i]->param == Param::TiltRight;
+        const bool enabled = value.has_value() &&
+                             (!advancedOnly || editorMode == EditorUiMode::Advanced);
+        rows[i]->setEnabled(enabled);
+        if (value && std::abs(rows[i]->getValue() - *value) > 1.0e-4)
         {
-            row->setValue(*value, juce::dontSendNotification);
-            row->repaint();
+            rows[i]->setValue(*value, juce::dontSendNotification);
+            rows[i]->repaint();
         }
     }
+    glueLeftButton.setEnabled(canGlueTarget && canGlueTarget(false));
+    glueRightButton.setEnabled(canGlueTarget && canGlueTarget(true));
 }
 
 void VariAudioInspector::setSnapModeInternal(SnapMode mode, bool notify)
@@ -608,14 +739,14 @@ void VariAudioInspector::paint(juce::Graphics& g)
 void VariAudioInspector::paintContent(juce::Graphics& g)
 {
     constexpr float radius = 8.0f;
-    for (const auto& cardBounds : {variAudioCardBounds, editorScaleCardBounds})
-    {
-        auto rect = cardBounds.toFloat();
-        g.setColour(juce::Colour(0xFF171717u));
-        g.fillRoundedRectangle(rect, radius);
-        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
-        g.drawRoundedRectangle(rect.reduced(0.5f), radius, 0.75f);
-    }
+    // Card backgrounds: the note inspector is the only card left; the editor
+    // scale moved to the top scale dropdown and harmony has its own rail
+    // drawer, so neither is repeated here.
+    auto rect = variAudioCardBounds.toFloat();
+    g.setColour(juce::Colour(0xFF171717u));
+    g.fillRoundedRectangle(rect, radius);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+    g.drawRoundedRectangle(rect.reduced(0.5f), radius, 0.75f);
 
     // Rows sit in one framed box, separated by hairlines, as in Cubase.
     auto box = rowsBoxBounds.toFloat();
@@ -628,12 +759,26 @@ void VariAudioInspector::paintContent(juce::Graphics& g)
         const float y = static_cast<float>(rows[i]->getY());
         g.drawHorizontalLine(static_cast<int>(y), box.getX() + 1.0f, box.getRight() - 1.0f);
     }
+
+    auto placeholders = placeholdersBox.toFloat();
+    g.setColour(kRowsBoxColour.withAlpha(0.55f));
+    g.fillRoundedRectangle(placeholders, 4.0f);
+    g.setColour(kRowsBoxBorder.withAlpha(0.65f));
+    g.drawRoundedRectangle(placeholders.reduced(0.5f), 4.0f, 1.0f);
+    for (size_t i = 1; i < placeholderRows.size(); ++i)
+        g.drawHorizontalLine(placeholderRows[i]->getY(), placeholders.getX() + 1.0f,
+                             placeholders.getRight() - 1.0f);
+
+    auto macros = macrosCardBounds.toFloat();
+    g.setColour(kRowsBoxColour.withAlpha(0.55f));
+    g.fillRoundedRectangle(macros, 4.0f);
+    g.setColour(kRowsBoxBorder.withAlpha(0.65f));
+    g.drawRoundedRectangle(macros.reduced(0.5f), 4.0f, 1.0f);
 }
 
 int VariAudioInspector::getContentHeight() const
 {
-    return kPadY + kVariAudioCardHeight + kPadY + kEditorScaleCardHeight +
-           harmonyPanel.getPreferredHeight() + kPadY;
+    return kPadY + kVariAudioCardHeight + kPadY;
 }
 
 void VariAudioInspector::resized()
@@ -670,29 +815,37 @@ void VariAudioInspector::layoutContent(int width)
     card.removeFromTop(kRowGap);
     targetLabel.setBounds(card.removeFromTop(kTargetLabelHeight));
 
+    auto actionRow = card.removeFromTop(kActionRowHeight);
+    muteButton.setBounds(actionRow.removeFromLeft(actionRow.getWidth() / 2 - 3));
+    actionRow.removeFromLeft(6);
+    deleteButton.setBounds(actionRow);
+    card.removeFromTop(kRowGap);
+
+    auto glueRow = card.removeFromTop(kActionRowHeight);
+    glueLeftButton.setBounds(glueRow.removeFromLeft(glueRow.getWidth() / 2 - 3));
+    glueRow.removeFromLeft(6);
+    glueRightButton.setBounds(glueRow);
+    card.removeFromTop(kRowGap);
+
     rowsBoxBounds = card.removeFromTop(kRowsBoxHeight);
     auto rowArea = rowsBoxBounds.reduced(0, 2);
     for (auto& row : rows)
         row->setBounds(rowArea.removeFromTop(kValueRowHeight));
 
-    // Editor scale, as in Cubase: the scale the harmony buttons follow.
-    area.removeFromTop(kPadY);
-    editorScaleCardBounds = area.removeFromTop(kEditorScaleCardHeight);
-    auto scaleCard = editorScaleCardBounds.reduced(kInnerPadX, kInnerPadY);
-    editorScaleHeader.setBounds(scaleCard.removeFromTop(kHeaderHeight));
-    scaleCard.removeFromTop(kRowGap);
-    useProjectKeyToggle.setBounds(scaleCard.removeFromTop(kToggleHeight));
-    scaleCard.removeFromTop(kRowGap);
-    auto scaleRow = scaleCard.removeFromTop(kMenuRowHeight);
-    scaleRootBox.setBounds(scaleRow.removeFromLeft(kRootMenuWidth).reduced(0, 1));
-    scaleRow.removeFromLeft(kMenuGap);
-    scaleModeBox.setBounds(scaleRow.reduced(0, 1));
-    scaleCard.removeFromTop(kRowGap);
-    snapScaleToggle.setBounds(scaleCard.removeFromTop(kToggleHeight));
+    card.removeFromTop(kRowGap);
+    placeholdersBox = card.removeFromTop(kPlaceholderBoxHeight);
+    auto placeholderArea = placeholdersBox.reduced(0, 2);
+    for (auto& row : placeholderRows)
+        row->setBounds(placeholderArea.removeFromTop(kPlaceholderRowHeight));
 
-    // HarmonyPanel pads itself like the side-panel cards; give it the column.
-    area.setX(area.getX() - kPadX);
-    area.setWidth(width);
-    harmonyPanel.setBounds(area.removeFromTop(harmonyPanel.getPreferredHeight()));
+    card.removeFromTop(kRowGap);
+    macrosCardBounds = card.removeFromTop(kMacrosCardHeight);
+    auto macroArea = macrosCardBounds.reduced(0, 2);
+    correctPitchButton.setBounds(macroArea.removeFromTop(kMacroRowHeight));
+    macroArea.removeFromTop(4);
+    quantizeButton.setBounds(macroArea.removeFromTop(kMacroRowHeight));
+    macroArea.removeFromTop(4);
+    levelingButton.setBounds(macroArea.removeFromTop(kMacroRowHeight));
+
     content.repaint();
 }

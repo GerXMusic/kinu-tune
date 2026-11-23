@@ -1,5 +1,5 @@
-// Kinu Tune - Copyright (C) 2026 Keinoaza
-// Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 #include "../Source/Audio/ResampledLoopAudition.h"
@@ -13,8 +13,9 @@
 #include <cmath>
 #include <iostream>
 
-// Inspector sliders, double-click reset, Option zoom, drag-audition buffer,
-// selection-aware pitch macro and the editor scale menus (docs/design.md 5.6).
+// Inspector sliders, double-click reset, Option zoom, drag-audition buffer
+// and the selection-aware pitch macro (docs/design.md 5.6). The editor scale
+// menus were removed from the inspector by D-234; their block went with them.
 namespace
 {
 using Param = PianoRollComponent::InspectorParam;
@@ -162,6 +163,48 @@ int main()
         CHECK(near(f.note(0).getVolumeDb(), 0.0f));
         f.history.undo();
         CHECK(near(f.note(2).getVolumeDb(), 0.0f));
+    }
+
+    // --- Tilt moved from the note overlay to the inspector ----------------
+    {
+        Fixture f;
+        f.note(0).setSelected(true);
+        const float beforeMidi = f.note(0).getMidiNote();
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltLeft), 0.0f));
+        f.roll.beginInspectorEdit(Param::TiltLeft);
+        f.roll.setInspectorEditValue(1.0f);
+        f.roll.endInspectorEdit();
+        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltLeft), 1.0f));
+        CHECK(f.history.getUndoName() == "Tilt Left");
+        f.history.undo();
+        CHECK(near(f.note(0).getTiltLeft(), 0.0f));
+        CHECK(near(f.note(0).getMidiNote(), beforeMidi));
+
+        f.roll.beginInspectorEdit(Param::TiltRight);
+        f.roll.setInspectorEditValue(-1.5f);
+        f.roll.endInspectorEdit();
+        CHECK(near(f.note(0).getTiltRight(), -1.5f));
+        CHECK(near(*f.roll.getInspectorValue(Param::TiltRight), -1.5f));
+        CHECK(f.history.getUndoName() == "Tilt Right");
+        f.history.undo();
+        CHECK(near(f.note(0).getTiltRight(), 0.0f));
+        CHECK(near(f.note(0).getMidiNote(), beforeMidi));
+    }
+
+    // --- Glue moved from the note overlay to the inspector ----------------
+    {
+        Fixture f;
+        CHECK(!f.roll.canGlueTarget(true)); // no selection: never "all notes"
+        f.note(0).setSelected(true);
+        CHECK(!f.roll.canGlueTarget(false)); // no previous note
+        CHECK(f.roll.canGlueTarget(true));   // note 0 touches note 1
+        const size_t before = f.project.getNotes().size();
+        CHECK(f.roll.glueTargetNote(true));
+        CHECK(f.project.getNotes().size() == before - 1);
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(f.project.getNotes().size() == before);
     }
 
     // --- Transition: one undo step, valid action name ----------------------
@@ -321,112 +364,6 @@ int main()
         const auto bTargets = collectPitchMacroTargetNotes(b, true, window, onlySelected);
         CHECK(bTargets.size() == 1 && bTargets.front() == &b.getNotes()[1]);
         CHECK(collectPitchMacroTargetNotes(b, true, window, false).size() == 2);
-    }
-
-    // --- Editor scale menus: region key, project key, track view ----------
-    {
-        Project project;
-        prepareAudio(project);
-        project.setProjectKey(0, ScaleMode::Major); // C major
-        CHECK(project.getUseProjectKey());
-        bool trackView = false;
-        int changes = 0;
-        VariAudioInspector inspector;
-        inspector.getCurrentProject = [&project] { return &project; };
-        inspector.isProjectKeyScope = [&trackView] { return trackView; };
-        inspector.onEditorScaleChanged = [&changes] { ++changes; };
-        inspector.setSize(VariAudioInspector::preferredWidth, 560);
-        inspector.refresh();
-
-        juce::ComboBox* rootBox = nullptr;
-        juce::ComboBox* modeBox = nullptr;
-        for (auto* box : findChildren<juce::ComboBox>(inspector))
-        {
-            if (box->getNumItems() == 12 && box->getItemText(0) == "C")
-                rootBox = box;
-            else if (box->getNumItems() == 14)
-                modeBox = box;
-        }
-        juce::ToggleButton* useProjectKey = nullptr;
-        for (auto* toggle : findChildren<juce::ToggleButton>(inspector))
-            if (toggle->getButtonText() == TR("scale.use_project_key"))
-                useProjectKey = toggle;
-        CHECK(rootBox != nullptr && modeBox != nullptr && useProjectKey != nullptr);
-        CHECK(rootBox->getSelectedId() == 1 && modeBox->getSelectedId() == 1);
-        CHECK(useProjectKey->isVisible() && useProjectKey->getToggleState());
-
-        // Region view: picking E gives this region its own key (E major) and
-        // leaves the project key alone.
-        rootBox->setSelectedId(5, juce::sendNotificationSync);
-        CHECK(changes == 1);
-        CHECK(!project.getUseProjectKey());
-        CHECK(project.getScaleRootNote() == 4);
-        CHECK(project.getPreferredScaleMode() == ScaleMode::Major);
-        CHECK(project.getProjectKeyRoot() == 0);
-        CHECK(!useProjectKey->getToggleState());
-
-        modeBox->setSelectedId(2, juce::sendNotificationSync); // minor
-        CHECK(changes == 2);
-        CHECK(project.getPreferredScaleMode() == ScaleMode::Minor);
-        CHECK(project.getProjectKeyMode() == ScaleMode::Major);
-
-        // Following the project key again shows C major.
-        useProjectKey->setToggleState(true, juce::sendNotificationSync);
-        CHECK(changes == 3);
-        CHECK(project.getUseProjectKey());
-        CHECK(project.getScaleRootNote() == 0);
-        CHECK(rootBox->getSelectedId() == 1 && modeBox->getSelectedId() == 1);
-
-        // Track view, region following the project key: the menus change
-        // the project key itself.
-        trackView = true;
-        inspector.refresh();
-        CHECK(useProjectKey->isVisible());
-        rootBox->setSelectedId(8, juce::sendNotificationSync); // G
-        modeBox->setSelectedId(5, juce::sendNotificationSync); // harmonic minor
-        CHECK(project.getProjectKeyRoot() == 7);
-        CHECK(project.getProjectKeyMode() == ScaleMode::HarmonicMinor);
-        CHECK(project.getUseProjectKey()); // the region still follows it
-        CHECK(project.getScaleRootNote() == 7);
-        CHECK(changes == 5);
-
-        // Track view, region with its own key: the menus show and change the
-        // key harmony uses (the region's), not the project key.
-        project.setScaleRootNote(2);                     // D, own key
-        project.setPreferredScaleMode(ScaleMode::Dorian);
-        inspector.refresh();
-        CHECK(!useProjectKey->getToggleState());
-        CHECK(rootBox->getSelectedId() == 3 && modeBox->getSelectedId() == 4);
-        rootBox->setSelectedId(10, juce::sendNotificationSync); // A
-        CHECK(project.getScaleRootNote() == 9);
-        CHECK(project.getProjectKeyRoot() == 7); // project key untouched
-        trackView = false;
-
-        // A pick made through the popup arrives asynchronously; a refresh
-        // in between (the 8 Hz timer) must not undo it.
-        project.setUseProjectKey(true);
-        inspector.refresh();
-        rootBox->setSelectedId(5, juce::sendNotificationAsync); // E, pending
-        inspector.refresh();
-        CHECK(rootBox->getSelectedId() == 5);
-        for (int i = 0; i < 20 && project.getUseProjectKey(); ++i)
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
-        CHECK(project.getScaleRootNote() == 4);
-        CHECK(!project.getUseProjectKey());
-        inspector.refresh();
-        CHECK(rootBox->getSelectedId() == 5);
-
-        // An unset root shows "-" instead of a guessed key.
-        project.setScaleRootNote(-1);
-        inspector.refresh();
-        CHECK(rootBox->getSelectedId() == 0);
-        CHECK(rootBox->getText().isEmpty());
-
-        // Taller than the default editor: the column scrolls instead of
-        // cutting the harmony buttons off.
-        const auto viewports = findChildren<juce::Viewport>(inspector);
-        CHECK(viewports.size() == 1);
-        CHECK(viewports.front()->getViewedComponent()->getHeight() > inspector.getHeight());
     }
 
     // --- Correct Pitch survives harmony, arrow keys and snapped drags ----

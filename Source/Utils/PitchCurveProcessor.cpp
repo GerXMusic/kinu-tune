@@ -226,44 +226,6 @@ namespace
         return ordered;
     }
 
-    // D-229: the note whose span contains `frame` ([start, end)).
-    const Note* noteContaining(const std::vector<const Note*>& ordered,
-                               int frame)
-    {
-        for (const auto* note : ordered)
-            if (note != nullptr && note->getStartFrame() <= frame &&
-                frame < note->getEndFrame())
-                return note;
-        return nullptr;
-    }
-
-    // D-230: the same predicate as Note::isNeutralForOriginalWaveform() but
-    // ignoring transitionOutMs. True when the note's own pitch/gain/timing
-    // contour is untouched by this gesture and only the transition toward the
-    // next note may have changed. Such a note cannot alter the *incoming*
-    // join (owned by the previous note), so re-rendering the previous note
-    // would rewrite audio nobody edited.
-    bool hasEditBesidesOutgoingTransition(const Note& note)
-    {
-        constexpr float kEps = 0.001f;
-        return !(note.getStartFrame() == note.getSrcStartFrame() &&
-                 note.getEndFrame() == note.getSrcEndFrame() &&
-                 std::abs(note.getMidiNote() - note.getOriginalMidiNote()) <=
-                     kEps &&
-                 !note.hasBakedDeltaPitch() &&
-                 std::abs(note.getPitchOffset()) <= kEps &&
-                 std::abs(note.getFormantShift()) <= kEps &&
-                 std::abs(note.getVolumeDb()) <= kEps &&
-                 std::abs(note.getTiltLeft()) <= kEps &&
-                 std::abs(note.getTiltRight()) <= kEps &&
-                 std::abs(note.getVibrato() - 1.0f) <= kEps &&
-                 std::abs(note.getPitchDrift() - 1.0f) <= kEps &&
-                 note.getSmoothLeftFrames() == 0 &&
-                 note.getSmoothRightFrames() == 0 &&
-                 std::abs(note.getDeltaScale() - 1.0f) <= kEps &&
-                 std::abs(note.getDeltaOffset()) <= kEps);
-    }
-
     int deltaJoinBaseHalf(double hopSec)
     {
         return std::max(
@@ -384,11 +346,6 @@ namespace
         if (rangeStart < 0)
             rangeStart = 0;
 
-        // D-231: a full rebuild recomputes the layout; drop the previous
-        // pass-1 windows so a curve that no longer steps cannot keep expanding.
-        if (rangeStart <= 0 && rangeEnd >= totalFrames)
-            project.clearPass1JoinWindows();
-
         const double hopSec =
             static_cast<double>(HOP_SIZE) /
             static_cast<double>(std::max(1, audioData.sampleRate));
@@ -397,13 +354,6 @@ namespace
             buildDeltaJoins(ordered, audioData.deltaPitch, totalFrames, hopSec);
         if (joins.empty())
             return;
-
-        // D-231: record which joins pass 1 is about to smooth. At commit time
-        // the step that triggered it is gone, so this is the only place where
-        // it can be observed.
-        for (const auto &join : joins)
-            if (join.oldAudible)
-                project.addPass1JoinWindow(join.pass1First, join.pass1Last);
 
         // D-222 pass 1: the current join smoothing (80 ms cosine, only for
         // audible delta steps). This is exactly what the product did before
@@ -1005,179 +955,6 @@ namespace PitchCurveProcessor
             const float delta = audioData.deltaPitch[static_cast<size_t>(i)];
             audioData.f0[static_cast<size_t>(i)] = midiToFreq(base + delta);
         }
-    }
-
-    bool expandRangeForJoinSmoothing(const Project& project, int& startFrame,
-                                     int& endFrame)
-    {
-        const auto& audioData = project.getAudioData();
-        const int totalFrames = audioData.getNumFrames();
-        if (totalFrames <= 0 || startFrame >= endFrame ||
-            // buildDeltaJoins reads deltaPitch around every contiguous
-            // boundary; a partially built curve must never be indexed.
-            static_cast<int>(audioData.deltaPitch.size()) < totalFrames)
-            return false;
-
-        const double hopSec =
-            static_cast<double>(HOP_SIZE) /
-            static_cast<double>(std::max(1, audioData.sampleRate));
-        const auto ordered = collectOrderedNotes(project);
-        const auto joins =
-            buildDeltaJoins(ordered, audioData.deltaPitch, totalFrames, hopSec);
-        if (joins.empty())
-            return false;
-
-        int first = std::max(0, startFrame);
-        int last = std::min(totalFrames, endFrame);
-        if (first >= last)
-            return false;
-
-        // Windows are non-overlapping by construction (each side stops at half
-        // the shorter note), but expanding one range can make it cross the next
-        // join, so iterate until stable.
-        bool changed = false;
-        bool again = true;
-        while (again)
-        {
-            again = false;
-            for (const auto& join : joins)
-            {
-                // D-226: only user transitions. The D-205 baseline is not
-                // identifiable here: at commit time deltaPitch is already
-                // smoothed, so `oldAudible` no longer sees the step that made
-                // pass 1 run. Expanding every contiguous join instead would
-                // commit neighbouring notes nobody edited, so pass 1 keeps its
-                // half-window limitation (declared in DECISIONES D-226).
-                if (join.transitionMs <= 0)
-                    continue;
-                const int windowFirst = join.windowFirst();
-                const int windowLast = join.windowLast();
-                if (windowLast < first || windowFirst >= last)
-                    continue;
-
-                // D-229: commit the WHOLE notes the window touches, not just
-                // the window. A pitch-curve change inside a note moves the
-                // whole grain lattice of that note (PSOLA), so splicing the
-                // new prefix into audio rendered with the old lattice clicks
-                // and masks the ramp. Re-rendering the full notes is what the
-                // user's manual "render the notes again" did.
-                const Note* leftNote = noteContaining(ordered, windowFirst);
-                const Note* rightNote = noteContaining(ordered, windowLast);
-
-                // D-230: the dirty note on the right owns no part of the
-                // incoming join's shape when only its outgoing transition may
-                // have changed. Expanding here used to re-render three notes
-                // (previous, edited, next) for a transition-only edit and
-                // rewrote the previous note's audio. The outgoing join (where
-                // the value actually lives) still expands below.
-                if (rightNote != nullptr && leftNote != nullptr &&
-                    rightNote != leftNote && rightNote->isDirty() &&
-                    !leftNote->isDirty() &&
-                    !hasEditBesidesOutgoingTransition(*rightNote))
-                    continue;
-
-                const int spanFirst =
-                    leftNote != nullptr ? leftNote->getStartFrame() : windowFirst;
-                const int spanLast = rightNote != nullptr
-                                         ? rightNote->getEndFrame()
-                                         : windowLast + 1;
-                if (spanFirst < first)
-                {
-                    first = std::max(0, spanFirst);
-                    changed = true;
-                    again = true;
-                }
-                if (spanLast > last)
-                {
-                    last = std::min(totalFrames, spanLast);
-                    changed = true;
-                    again = true;
-                }
-            }
-
-            // D-231: the D-205 pass-1 window is symmetric around the boundary,
-            // so its right half lives in the neighbour. It cannot be seen from
-            // deltaPitch at commit time (already smoothed), hence the windows
-            // recorded at rebuild time. Same whole-note rule as D-229.
-            for (const auto &window : project.getPass1JoinWindows())
-            {
-                const int windowFirst = window.first;
-                const int windowLast = window.second;
-                if (windowLast < first || windowFirst >= last)
-                    continue;
-                const Note *leftNote = noteContaining(ordered, windowFirst);
-                const Note *rightNote = noteContaining(ordered, windowLast);
-                if (rightNote != nullptr && leftNote != nullptr &&
-                    rightNote != leftNote && rightNote->isDirty() &&
-                    !leftNote->isDirty() &&
-                    !hasEditBesidesOutgoingTransition(*rightNote))
-                    continue;
-                const int spanFirst =
-                    leftNote != nullptr ? leftNote->getStartFrame() : windowFirst;
-                const int spanLast = rightNote != nullptr
-                                         ? rightNote->getEndFrame()
-                                         : windowLast + 1;
-                if (spanFirst < first)
-                {
-                    first = std::max(0, spanFirst);
-                    changed = true;
-                    again = true;
-                }
-                if (spanLast > last)
-                {
-                    last = std::min(totalFrames, spanLast);
-                    changed = true;
-                    again = true;
-                }
-            }
-        }
-        if (!changed)
-            return false;
-        LOG("D-226: commit range [" + juce::String(startFrame) + "," +
-            juce::String(endFrame) + ") -> [" + juce::String(first) + "," +
-            juce::String(last) + ")");
-        startFrame = first;
-        endFrame = last;
-        return true;
-    }
-
-    bool transitionChangeCommitRange(const Project& project,
-                                     const Note& leftNote,
-                                     int oldTransitionMs,
-                                     int newTransitionMs,
-                                     int& startFrame, int& endFrame)
-    {
-        const int milliseconds = std::max(oldTransitionMs, newTransitionMs);
-        if (milliseconds <= 0)
-            return false;
-
-        const auto& audioData = project.getAudioData();
-        const int totalFrames = audioData.getNumFrames();
-        if (totalFrames <= 0)
-            return false;
-
-        // The union is defined by the current layout, exactly as
-        // buildDeltaJoins does: the note to the right must start where this
-        // one ends (a gap is an onset, D-053).
-        const auto ordered = collectOrderedNotes(project);
-        const Note* rightNote = nullptr;
-        for (size_t i = 1; i < ordered.size(); ++i)
-            if (ordered[i - 1] == &leftNote &&
-                ordered[i]->getStartFrame() == leftNote.getEndFrame())
-            {
-                rightNote = ordered[i];
-                break;
-            }
-        if (rightNote == nullptr)
-            return false;
-
-        // D-229: the whole notes the window touches are the unit that must be
-        // rewritten; the ramp moves each note's grain lattice. The window
-        // width does not matter here: any window (old or new) has both notes
-        // as its endpoints.
-        startFrame = std::max(0, leftNote.getStartFrame());
-        endFrame = std::min(totalFrames, rightNote->getEndFrame());
-        return endFrame > startFrame;
     }
 
     void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes)

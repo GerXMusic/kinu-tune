@@ -56,7 +56,7 @@ DarkLookAndFeel::DarkLookAndFeel()
     setColour(juce::TooltipWindow::textColourId, juce::Colour(0xFF9B9B9Bu));
 
     // Keep JUCE's standard tooltip renderer, but give its default text layout
-    // the same Montserrat face used by the rest of the application.
+    // the same platform UI face used by the rest of the application.
     setDefaultSansSerifTypeface(
         juce::Typeface::createSystemTypefaceFor(AppFont::getFont(14.0f)));
 }

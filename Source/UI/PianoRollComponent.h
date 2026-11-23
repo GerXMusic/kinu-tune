@@ -9,6 +9,7 @@
 #include "../Utils/BasePitchPreview.h"
 #include "../Undo/UndoActions.h"
 #include "Commands.h"
+#include "GuiTypes.h"
 #include "PianoRoll/BoxSelector.h"
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/GridRenderer.h"
@@ -85,7 +86,7 @@ public:
   // Inspector sliders (VariAudio section). They act on the selected
   // segments, or on every segment when nothing is selected; one slider
   // gesture is one undo step.
-  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition };
+  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
   std::vector<Note *> getInspectorTargets() const;
   // Value shown for the first target, or nullopt when there are no targets.
   std::optional<float> getInspectorValue(InspectorParam param) const;
@@ -98,10 +99,49 @@ public:
   void setShowAllSmartControls(bool showAll);
   bool getShowAllSmartControls() const { return showAllSmartControls; }
 
+  // The Basic/Advanced choice also decides whether the Formant and Amplitude
+  // tools appear in the unified context menu.
+  void setEditorUiMode(EditorUiMode mode) { editorUiMode = mode; }
+  void setCurrentEditorTool(EditorTool tool) { currentEditorTool = tool; }
+
+  // Glue a selected note with its contiguous neighbour (VariAudio
+  // smart-control glue, moved from the note overlay to the inspector). It
+  // requires a selection and the merge is undoable through NoteSplitter.
+  bool canGlueTarget(bool next) const;
+  bool glueTargetNote(bool next);
+
   // Moves the selected notes (or every note when nothing is selected) by a
   // scale-degree interval in the project key, as one undoable step.
   HarmonyUtils::Result applyHarmonyInterval(HarmonyUtils::Interval interval,
                                             bool up);
+
+  // M4 v1 (D-242): cuantiza las fronteras de las notas seleccionadas (o de
+  // todas) a la rejilla visible del host, con fuerza 0..100, como un paso
+  // undoable. Fuerza 0 no toca nada. Devuelve false si no hay proyecto, no hay
+  // rejilla o el resultado colapsaria una nota o crearia un solape nuevo.
+  bool quantizeTimeSelection(int strengthPercent);
+
+  // M5 v1 (D-245): silencia o reactiva las notas seleccionadas. Si todas ya
+  // estaban silenciadas, las reactiva. Es undoable y vuelve a renderizar por
+  // bloque. Devuelve false si no hay proyecto o no hay seleccion.
+  bool muteSelection();
+  // M5 v1 (D-245): fija el estado de silencio de una lista explicita de notas
+  // (menu de nota, seleccion). Undoable y con re-render por bloque.
+  bool setMutedForNotes(const std::vector<Note *> &notes, bool muted);
+
+  // D-267 (T7): reset de una nota por indice, por el mismo camino que el boton
+  // y el menu (ResetNoteEditsAction: pitch, formante, amplitud, tiempo, motor y
+  // mute, con undo y re-render). Devuelve false si el indice no es valido, la
+  // nota es una pausa o no hay proyecto.
+  bool resetNoteToOriginal(int index);
+
+  // Tarea 3 (2026-11-22): vista de bypass estilo Melodyne. Con el bypass
+  // activo se dibuja solo la curva F0 de la FUENTE en gris, sin bloques de nota
+  // ni la curva editada. getBypassCurveCents() devuelve exactamente la curva
+  // que se dibuja, para poder medirla.
+  void setBypassView(bool active);
+  bool isBypassView() const { return bypassView; }
+  std::vector<float> getBypassCurveCents(int firstFrame, int lastFrame) const;
 
   void paint(juce::Graphics &g) override;
   void resized() override;
@@ -128,6 +168,12 @@ public:
                   juce::Component *originatingComponent) override;
 
   void requestCanvasKeyboardFocus();
+
+  /** Melodyne canvas menu: one popup with the note actions (when `note` is
+      given), undo/redo, select all and the tool strip. */
+  void showCanvasMenuAt(juce::Point<int> screenPoint, Note* note = nullptr);
+  /** Kept for callers that already have a note; same unified popup. */
+  void showNoteMenuAt(Note& note, juce::Point<int> screenPoint);
 
   // ScrollBar::Listener
   void scrollBarMoved(juce::ScrollBar *scrollBar,
@@ -292,6 +338,17 @@ public:
 
   // Callbacks
   std::function<void(EditMode)> onEditModeRequested;
+  // A tool chosen in the unified context menu; the workspace updates the top
+  // bar through the same path as the floating pill.
+  std::function<void(EditorTool)> onEditorToolRequested;
+  // Melodyne: a right click on the canvas asks the workspace for the tool pill
+  // instead of opening the menu directly. The pill's "more" slot calls back
+  // to show the same canvas menu.
+  std::function<void(juce::Point<int>)> onShowToolPill;
+  std::function<void(juce::Point<int>)> onShowCanvasMenu;
+  std::function<void(juce::Point<int>)> onToolPillDrag;
+  std::function<void(juce::Point<int>)> onToolPillRelease;
+  std::function<void()> onHideToolPill;
   // Option/Alt-double-click on empty space (VariAudio: zoom to show all).
   std::function<void()> onZoomFullRequested;
   std::function<void()> onUndoRequested;
@@ -352,6 +409,8 @@ private:
   void drawLoopTimeline(juce::Graphics &g);
   void drawNotes(juce::Graphics &g, NoteRenderPass pass);
   void drawPitchCurves(juce::Graphics &g);
+  void drawBypassSourceCurve(juce::Graphics &g);
+  bool bypassView = false;
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawAudioSourceRegionOverlay(juce::Graphics &g);
@@ -412,7 +471,7 @@ private:
   // Runs a Restore action, records it, and reports it via
   // onHistoryActionApplied so it is processed like undo/redo.
   void applyRestoreAction(std::unique_ptr<UndoableAction> action);
-  void showResetMenu(Note &note);
+  void showResetMenu(Note &note, juce::Point<int> screenPoint = {});
   void setHoveredNote(Note *note);
   void updateScrollBars();
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
@@ -441,6 +500,8 @@ private:
   // VariAudio look and smart controls (see NoteRenderer::setSegmentStyle).
   bool segmentStyle = true;
   bool showAllSmartControls = true; // VariAudio "Show All", the default here
+  EditorUiMode editorUiMode = EditorUiMode::Basic;
+  EditorTool currentEditorTool = EditorTool::Main;
   // Inspector slider gesture in progress.
   bool inspectorEditActive = false;
   InspectorParam inspectorEditParam = InspectorParam::CorrectPitch;
@@ -630,10 +691,15 @@ private:
   // Set when a click only activated another region (its project was not
   // ready yet), so the rest of that gesture must not edit anything.
   bool swallowGestureUntilMouseUp = false;
+  bool toolPillGesture = false;
 
   // Re-applies the hover-button tooltips after a language change; the menus
   // and handle labels are built on demand, so they need nothing here.
   void refreshLocalisedText();
+
+  // Shared bottom block of the canvas/note menu: undo, redo, select all and
+  // the tool strip. `choice` is the 1-based id set by the content.
+  void applyCanvasMenuChoice(int choice);
 
   LocalisationWatcher languageWatcher{[this] { refreshLocalisedText(); }};
 

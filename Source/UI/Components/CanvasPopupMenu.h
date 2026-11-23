@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PitchPopupMenu.h"
+#include "../GuiTypes.h"
+#include "../MelodyneIcons.h"
 #include "../../Utils/Localization.h"
 #include "BinaryData.h"
 #include <array>
@@ -19,7 +21,7 @@ public:
     void drawResizableFrame(juce::Graphics&, int, int,
                             const juce::BorderSize<int>&) override {}
     int getPopupMenuBorderSize() override { return 0; }
-    // The upper action paints its own outline; keep the tool strip unframed.
+    // The custom item paints both cards; the menu window itself stays unframed.
     int getMenuWindowFlags() override { return 0; }
 };
 
@@ -33,103 +35,228 @@ class ActionButton final : public juce::Button
 {
 public:
     explicit ActionButton(const juce::String& label) : juce::Button(label) {}
-    juce::Image sprite;
 
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
-        if (sprite.isValid())
-        {
-            const int frameHeight = sprite.getHeight() / 3;
-            g.drawImage(sprite, 0, 0, getWidth(), getHeight(), 0,
-                        (down ? 2 : over ? 1 : 0) * frameHeight,
-                        sprite.getWidth(), frameHeight);
-            return;
-        }
         if (isEnabled() && (over || down || hasKeyboardFocus(false)))
         {
             g.setColour(juce::Colour(0xFF171717u));
             g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(2, 1), 5);
         }
-        g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(isEnabled() ? 1.0f : 0.4f));
+        g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(isEnabled() ? 1.0f : 0.35f));
         g.setFont(AppFont::getFont(14));
         g.drawText(getButtonText(), getLocalBounds().withTrimmedLeft(12),
-                   juce::Justification::centredLeft);
+                   juce::Justification::centredLeft, true);
     }
+};
+
+class ToolButton final : public juce::Button
+{
+public:
+    explicit ToolButton(GuiIcon iconToUse) : juce::Button({}), icon(iconToUse) {}
+
+    void setActive(bool shouldBeActive)
+    {
+        if (active == shouldBeActive)
+            return;
+        active = shouldBeActive;
+        repaint();
+    }
+
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        const auto slot = getLocalBounds().toFloat().reduced(2.0f);
+        if (active)
+        {
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.20f));
+            g.fillEllipse(slot);
+            g.setColour(APP_COLOR_PRIMARY);
+            g.drawEllipse(slot, 1.2f);
+        }
+        else if (over || down)
+        {
+            g.setColour(APP_COLOR_RAIL_ACTIVE);
+            g.fillEllipse(slot);
+        }
+
+        drawGuiIcon(g, icon, getLocalBounds().toFloat().reduced(9.0f),
+                    active ? APP_COLOR_PRIMARY_GLOW
+                           : (over || down ? APP_COLOR_TEXT_PRIMARY
+                                           : APP_COLOR_RAIL_ICON),
+                    1.7f);
+    }
+
+private:
+    GuiIcon icon;
+    bool active = false;
 };
 
 class Content final : public juce::PopupMenu::CustomComponent
 {
 public:
-    static juce::Rectangle<int> getTargetArea(juce::Point<int> mousePosition)
+    struct State
     {
-        const juce::Point<int> selectCentre(buttonWidth / 2,
-                                           topHeight + 1 + buttonHeight / 2);
-        // JUCE places the menu below the target rectangle's bottom edge.
-        return { mousePosition.x - selectCentre.x,
-                 mousePosition.y - selectCentre.y - 1, 1, 1 };
-    }
+        bool hasNote = false;
+        bool noteMuted = false;
+        bool canRestore = false;
+        bool canUndo = false;
+        bool canRedo = false;
+        bool showAdvancedTools = true;
+        int activeToolIndex = -1; // EditorTool index, -1 = no tool highlighted
+    };
 
-    Content(std::shared_ptr<int> result, bool canUndo, bool canRedo)
-        : juce::PopupMenu::CustomComponent(false), choice(std::move(result))
+    Content(std::shared_ptr<int> result, State newState)
+        : juce::PopupMenu::CustomComponent(false), choice(std::move(result)),
+          state(newState)
     {
-        const juce::String names[] = {
-            TR("canvas.select_all"), TR("canvas.select"), TR("canvas.split"),
-            TR("canvas.pitch_drawing"),    TR("canvas.timing"), TR("command.undo"),
-            TR("command.redo")
-        };
-        const void* data[] = { BinaryData::selectmenu_png, BinaryData::splitmenu_png,
-                               BinaryData::drawingmenu_png, BinaryData::timingmenu_png };
-        const int sizes[] = { BinaryData::selectmenu_pngSize, BinaryData::splitmenu_pngSize,
-                              BinaryData::drawingmenu_pngSize, BinaryData::timingmenu_pngSize };
+        const GuiIcon icons[] = {GuiIcon::MainTool, GuiIcon::PitchTool,
+                                 GuiIcon::FormantTool, GuiIcon::AmplitudeTool,
+                                 GuiIcon::SeparationTool, GuiIcon::TimingTool};
+        for (int i = 0; i < 6; ++i)
+        {
+            toolButtons[static_cast<size_t>(i)] =
+                std::make_unique<ToolButton>(icons[i]);
+            toolButtons[static_cast<size_t>(i)]->onClick = [this, i]
+            {
+                *choice = 20 + i;
+                triggerMenuItem();
+            };
+            toolButtons[static_cast<size_t>(i)]->setActive(i == state.activeToolIndex);
+            toolButtons[static_cast<size_t>(i)]->setVisible(
+                i < 2 || i > 3 || state.showAdvancedTools);
+            addAndMakeVisible(*toolButtons[static_cast<size_t>(i)]);
+        }
+
+        // Top card, in the order requested: mute, unmute, delete, select all,
+        // undo, redo, restore.
+        static const char* keys[] = {
+            "menu.mute_note", "menu.unmute_note", "menu.delete_note",
+            "canvas.select_all", "command.undo", "command.redo", "menu.restore"};
         for (int i = 0; i < 7; ++i)
         {
-            buttons[i] = std::make_unique<ActionButton>(names[i]);
-            if (i > 0 && i < 5)
-                buttons[i]->sprite = juce::ImageCache::getFromMemory(data[i - 1], sizes[i - 1]);
-            buttons[i]->onClick = [this, i]
+            juce::String label = TR(keys[i]);
+            if (i == 6)
+                label += "   >";
+            menuButtons[static_cast<size_t>(i)] =
+                std::make_unique<ActionButton>(label);
+            menuButtons[static_cast<size_t>(i)]->onClick = [this, i]
             {
                 *choice = i + 1;
                 triggerMenuItem();
             };
-            addAndMakeVisible(*buttons[i]);
+            menuButtons[static_cast<size_t>(i)]->setVisible(
+                (i <= 2 || i == 6) ? state.hasNote : true);
+            addAndMakeVisible(*menuButtons[static_cast<size_t>(i)]);
         }
-        buttons[5]->setEnabled(canUndo);
-        buttons[6]->setEnabled(canRedo);
-        topWidth = juce::GlyphArrangement::getStringWidthInt(
-                      AppFont::getFont(14), names[0]) + 24;
+
+        menuButtons[0]->setEnabled(state.hasNote && !state.noteMuted);
+        menuButtons[1]->setEnabled(state.hasNote && state.noteMuted);
+        menuButtons[2]->setEnabled(false);
+        menuButtons[3]->setEnabled(true);
+        menuButtons[4]->setEnabled(state.canUndo);
+        menuButtons[5]->setEnabled(state.canRedo);
+        menuButtons[6]->setEnabled(state.hasNote && state.canRestore);
+
+        int widest = 0;
+        for (int i = 0; i < 7; ++i)
+        {
+            if (!menuButtons[static_cast<size_t>(i)]->isVisible())
+                continue;
+            widest = juce::jmax(
+                widest,
+                juce::GlyphArrangement::getStringWidthInt(
+                    AppFont::getFont(14), menuButtons[static_cast<size_t>(i)]->getButtonText()) +
+                    2 * menuPadX);
+        }
+        menuWidth = juce::jmax(toolRowWidth() + 2 * toolPadX, widest);
     }
 
     void getIdealSize(int& width, int& height) override
     {
-        width = juce::jmax(topWidth, 4 * buttonWidth + 3);
-        height = topHeight + 1 + buttonHeight;
+        width = menuWidth;
+        height = menuPanelHeight() + panelGap + toolPanelHeight;
     }
 
     void paint(juce::Graphics& g) override
     {
-        pitchPopupMenu::getLookAndFeel().drawPopupMenuBackground(g, topWidth, topHeight);
-        g.setColour(juce::Colour(0xFF3E3E3Eu));
-        g.fillRect(8, padding + 2 * rowHeight + separatorHeight / 2,
-                   topWidth - 16, 1);
+        // Top: options card.
+        pitchPopupMenu::getLookAndFeel().drawPopupMenuBackground(
+            g, getWidth(), menuPanelHeight());
+
+        // Bottom: tool card, same width.
+        const auto toolPanel = juce::Rectangle<float>(
+            0.0f, static_cast<float>(menuPanelHeight() + panelGap),
+            static_cast<float>(getWidth()), static_cast<float>(toolPanelHeight));
+        g.setColour(juce::Colours::black.withAlpha(0.38f));
+        g.fillRoundedRectangle(toolPanel.translated(0.0f, 3.0f).reduced(1.0f), 16.0f);
+        g.setColour(APP_COLOR_TOOL_PILL);
+        g.fillRoundedRectangle(toolPanel.reduced(1.0f), 15.0f);
+        g.setColour(APP_COLOR_BORDER_HIGHLIGHT.withAlpha(0.9f));
+        g.drawRoundedRectangle(toolPanel.reduced(1.0f), 15.0f, 1.0f);
     }
 
     void resized() override
     {
-        buttons[5]->setBounds(0, padding, topWidth, rowHeight);
-        buttons[6]->setBounds(0, padding + rowHeight, topWidth, rowHeight);
-        buttons[0]->setBounds(0, padding + 2 * rowHeight + separatorHeight,
-                              topWidth, rowHeight);
-        for (int i = 1; i < 5; ++i)
-            buttons[i]->setBounds((i - 1) * (buttonWidth + 1), topHeight + 1,
-                                  buttonWidth, buttonHeight);
+        const int width = getWidth();
+        int y = menuPadY;
+        const auto place = [this, width, &y](int index)
+        {
+            menuButtons[static_cast<size_t>(index)]->setBounds(
+                menuPadX, y, width - 2 * menuPadX, rowHeight);
+            y += rowHeight;
+        };
+        if (state.hasNote)
+        {
+            place(0);
+            place(1);
+            place(2);
+            place(3);
+            place(4);
+            place(5);
+            place(6);
+        }
+        else
+        {
+            place(3);
+            place(4);
+            place(5);
+        }
+
+        const int toolX = juce::jmax(0, (width - toolRowWidth()) / 2);
+        const int toolY = menuPanelHeight() + panelGap +
+                          (toolPanelHeight - toolButtonSize) / 2;
+        int visible = 0;
+        for (int i = 0; i < 6; ++i)
+        {
+            if (!toolButtons[static_cast<size_t>(i)]->isVisible())
+                continue;
+            toolButtons[static_cast<size_t>(i)]->setBounds(
+                toolX + visible * (toolButtonSize + toolGap),
+                toolY, toolButtonSize, toolButtonSize);
+            ++visible;
+        }
     }
 
 private:
-    static constexpr int padding = 4, rowHeight = 26, separatorHeight = 8;
-    static constexpr int topHeight = 2 * padding + 3 * rowHeight + separatorHeight;
-    static constexpr int buttonWidth = 22, buttonHeight = 21;
-    int topWidth = 0;
+    static constexpr int toolButtonSize = 36, toolGap = 2, toolPadX = 8;
+    static constexpr int toolPanelHeight = 46, panelGap = 4;
+    static constexpr int rowHeight = 26, menuPadX = 6, menuPadY = 4;
+
+    int toolRowWidth() const
+    {
+        const int count = state.showAdvancedTools ? 6 : 4;
+        return count * toolButtonSize + (count - 1) * toolGap;
+    }
+    int menuRowCount() const { return state.hasNote ? 7 : 3; }
+    int menuPanelHeight() const
+    {
+        return menuPadY * 2 + menuRowCount() * rowHeight;
+    }
+
+    State state;
+    int menuWidth = 0;
     std::shared_ptr<int> choice;
-    std::array<std::unique_ptr<ActionButton>, 7> buttons;
+    std::array<std::unique_ptr<ToolButton>, 6> toolButtons;
+    std::array<std::unique_ptr<ActionButton>, 7> menuButtons;
 };
 }

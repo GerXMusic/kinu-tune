@@ -91,11 +91,13 @@ struct State {
   int remaining = 0;
 };
 
-// Sin bloques pendientes no hay barrido: el indicador no se dibuja.
-inline State fromQueue(const DeferredRenderQueue &queue) {
+// Sin bloques pendientes no hay barrido: el indicador no se dibuja. Tampoco
+// con la cola llena pero sin render en curso: un bloque sucio espera a Play y
+// no es actividad, asi que el barrido no debe quedarse sobre las notas.
+inline State fromQueue(const DeferredRenderQueue &queue, bool rendering) {
   State state;
   state.remaining = queue.dirtyBlockCount();
-  if (state.remaining == 0)
+  if (state.remaining == 0 || !rendering)
     return state;
 
   const auto &blocks = queue.pendingBlocks();

@@ -32,41 +32,6 @@ namespace PitchCurveProcessor
     std::vector<float> getDriftPreviewResponse(const Project& project, const Note& note);
 
     /**
-     * D-226/D-229: grow [startFrame, endFrame) (exclusive) with every
-     * transition window that crosses it, and with the WHOLE notes that window
-     * touches. The ramp is symmetric around the boundary, so half of it lives
-     * in the neighbouring note; and a curve change inside a note moves that
-     * note's whole PSOLA grain lattice, so committing only the window splices
-     * new audio against old-lattice audio. Re-rendering the full notes is what
-     * the user's manual "render the notes again" did.
-     *
-     * A window is the one the engine already uses (buildDeltaJoins) for a
-     * user transition (transitionMs > 0), including the D-205 baseline it
-     * mixes with. Frames outside the notes touched are not changed. Returns
-     * true when the range changed.
-     */
-    bool expandRangeForJoinSmoothing(const Project& project,
-                                     int& startFrame, int& endFrame);
-
-    /**
-     * D-230: the whole-note span a transition change of `leftNote` can touch,
-     * computed from the union of the old and new values. When a transition is
-     * removed (new value 0), the current curve no longer contains its window,
-     * so expandRangeForJoinSmoothing cannot see it; the old ramp still lives
-     * in the right note's audio and must be rewritten. Returns false when the
-     * note has no contiguous right neighbour or both values are 0.
-     *
-     * This does not modify the project; the caller records the span with
-     * Project::addTransitionCommitRange() and widens its dirty range, so the
-     * next render both renders and commits it.
-     */
-    bool transitionChangeCommitRange(const Project& project,
-                                     const Note& leftNote,
-                                     int oldTransitionMs,
-                                     int newTransitionMs,
-                                     int& startFrame, int& endFrame);
-
-    /**
      * Rebuild delta pitch and f0 only for specific notes (partial rebuild).
      * Skips basePitch regeneration (assumes positions unchanged).
      * Much faster than rebuildBaseFromNotes() when only transformation
