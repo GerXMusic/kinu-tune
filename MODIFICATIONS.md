@@ -6,8 +6,10 @@ TuneX is a modified version of [PitchNet](https://github.com/SessionLoops/PitchN
 modification required by section 5(a) of the GNU Affero General Public License,
 version 3.
 
-- Modified by: Keinoaza
-- Date of modification: 2026-10-19 (first release, TuneX 0.1.0); continued through 2026-10-22 (TuneX 0.1.3)
+- Modified by: Keinoaza (2026-10-19 to 2026-10-22, TuneX 0.1.0 - 0.1.3) and
+  GerX (from 2026-11-22: own vendor identity, macOS CI build and validation,
+  model packaging, model-folder migration, editor and engine changes)
+- Date of modification: 2026-10-19 (first release, TuneX 0.1.0); continued through 2026-10-22 (TuneX 0.1.3) and from 2026-11-22 onwards
 - Based on: SessionLoops/PitchNet commit `8787321` ("Disable file logging in release builds")
 - License of the modified work: GNU Affero General Public License, version 3 (see [LICENSE](LICENSE))
 
@@ -16,10 +18,15 @@ The full history of the changes is in the git log of this repository.
 ## Summary of changes
 
 ### Identity
-- Product name TuneX, vendor Keinoaza, plugin codes `Kein` / `TunX`
-  (`TunD` for development builds), bundle id `com.keinoaza.tunex`.
+- Product name TuneX; vendor identity **GerX** since 2026-11-22 (earlier
+  builds used the vendor of the Keinoaza fork). Plugin codes `Kein` / `TunX`
+  (`TunD` for development builds) are unchanged, so existing sessions keep
+  finding the plug-in. Bundle id `com.gerx.tunex` (`com.gerx.tunex.dev` for
+  development builds).
 - Settings folder `~/Library/TuneX/` (macOS), logs `~/Library/Logs/TuneX/`, models
-  `~/Library/Application Support/Keinoaza/TuneX/models/`.
+  `~/Library/Application Support/GerX/TuneX/models/`. Builds before the rename
+  read `~/Library/Application Support/Keinoaza/TuneX/models/` as a read-only
+  fallback, so an existing install keeps finding its models.
 - New icon and logo images.
 - Version number set to 0.1.0, then 0.1.1, 0.1.2 and 0.1.3.
 

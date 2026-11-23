@@ -1,9 +1,10 @@
 TuneX 0.1.0
 Copyright (C) 2026 Keinoaza
+Copyright (C) 2026 GerX (modifications since 2026-11-22)
 
 TuneX is a modified version of PitchNet 0.7.2 (Copyright (c) 2026 Session
 Loops and contributors), which is itself a modified derivative of HachiTune by
-the HachiTune contributors. Modified by Keinoaza from 2026-10-19: Cubase
+the HachiTune contributors. Modified by Keinoaza from 2026-10-19 and by GerX from 2026-11-22: Cubase
 VariAudio-style editing and inspector, one-click scale-degree harmony, and the
 related changes listed in MODIFICATIONS.md in the source repository.
 
@@ -17,7 +18,7 @@ PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 The complete license text is in the LICENSE file.
 
 Corresponding source for TuneX is available at:
-https://github.com/keinoaza666-stack/tunex
+https://github.com/GerXMusic/tunex
 Each binary release names the git tag it was built from, and its release page
 also carries a source archive that includes the git submodules (JUCE, ARA SDK,
 r8brain-free-src).

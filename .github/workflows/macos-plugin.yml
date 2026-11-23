@@ -19,7 +19,7 @@ jobs:
       - name: Fetch and verify the vocoder model
         run: |
           mkdir -p Resources/models
-          curl -sSfL -o Resources/models/pc_nsf_hifigan.onnx "https://github.com/GerXMusic/kinu-tune/releases/download/models-vocoder-1/pc_nsf_hifigan.onnx"
+          curl -sSfL -o Resources/models/pc_nsf_hifigan.onnx "https://github.com/GerXMusic/tunex/releases/download/models-vocoder-1/pc_nsf_hifigan.onnx"
           echo "d1d0edcbd45a9fbbbb5387d8a2913f4d5a0fc21755692c5d511951fdb910c00b  Resources/models/pc_nsf_hifigan.onnx" | shasum -a 256 -c -
 
       - name: Configure (Release, arm64)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# TuneX - Copyright (C) 2026 Keinoaza
+# TuneX - Copyright (C) 2026 GerX
 # Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
@@ -15,7 +15,7 @@
 # password:
 #   ~/Library/Audio/Plug-Ins/VST3/TuneX.vst3
 #   ~/Library/Audio/Plug-Ins/Components/TuneX.component (can be left out)
-#   ~/Library/Application Support/Keinoaza/TuneX/models, with the licence
+#   ~/Library/Application Support/GerX/TuneX/models, with the licence
 #   texts of the zip next to it (LICENSE, THIRD_PARTY_NOTICES.txt,
 #   MODIFICATIONS.md, licenses/)
 # Files installed by Installer are not quarantined, so the plug-ins need no
@@ -62,7 +62,7 @@ component() {
     done
     pkgbuild --root "$work/root-$name" \
         --component-plist "$work/$name.plist" \
-        --identifier "com.keinoaza.tunex.$name" \
+        --identifier "com.gerx.tunex.$name" \
         --version "$version" \
         --install-location "$location" \
         "$work/built-$name.pkg" >/dev/null
@@ -97,7 +97,7 @@ strip_xattrs() {
 mkdir -p "$work/pkgs"
 component vst3 "/Library/Audio/Plug-Ins/VST3" "TuneX.vst3"
 component au "/Library/Audio/Plug-Ins/Components" "TuneX.component"
-component models "/Library/Application Support/Keinoaza/TuneX" models "${docs[@]}"
+component models "/Library/Application Support/GerX/TuneX" models "${docs[@]}"
 
 mkdir -p "$work/resources"
 for lang in en ja; do
