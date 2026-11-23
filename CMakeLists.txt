@@ -252,6 +252,19 @@ else()
         unset(ONNXRUNTIME_LIBRARY CACHE)
         set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/runtimes/osx-arm64/native/libonnxruntime.dylib)
         set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/runtimes/osx-arm64/native)
+        # El dylib declara LC_ID_DYLIB @rpath/libonnxruntime.<version>.dylib y todo lo
+        # que enlaza contra el (plugin y ejecutables de test) pide ese nombre exacto.
+        # Se deja una copia con el nombre versionado junto al original para que dyld
+        # lo encuentre tanto en el arbol de compilacion como en los bundles.
+        if(EXISTS "${ONNXRUNTIME_LIBRARY}")
+            set(ONNXRUNTIME_VERSIONED_LIBRARY
+                "${ONNXRUNTIME_DLL_DIR}/libonnxruntime.${ONNXRUNTIME_VERSION}.dylib")
+            if(NOT EXISTS "${ONNXRUNTIME_VERSIONED_LIBRARY}")
+                execute_process(
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_LIBRARY}" "${ONNXRUNTIME_VERSIONED_LIBRARY}")
+            endif()
+        endif()
     elseif(WIN32)
         set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include)
         set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
