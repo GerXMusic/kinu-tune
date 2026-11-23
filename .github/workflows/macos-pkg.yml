@@ -1,0 +1,88 @@
+name: macOS installer (pkg)
+
+# Fabrica el instalador .pkg que deja todo en su sitio: plugin VST3, Audio Unit,
+# modelos y textos de licencia. Se lanza a mano desde Actions.
+on:
+  workflow_dispatch:
+
+jobs:
+  macos-pkg:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the source with submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Fetch and verify the vocoder model
+        run: |
+          mkdir -p Resources/models
+          curl -sSfL -o Resources/models/pc_nsf_hifigan.onnx "https://github.com/GerXMusic/tunex/releases/download/models-vocoder-1/pc_nsf_hifigan.onnx"
+          echo "d1d0edcbd45a9fbbbb5387d8a2913f4d5a0fc21755692c5d511951fdb910c00b  Resources/models/pc_nsf_hifigan.onnx" | shasum -a 256 -c -
+
+      - name: Configure (Release, arm64)
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DUSE_DIRECTML=OFF
+          -DPITCHNET_ARA_DIAGNOSTICS=OFF
+          -DPITCHNET_BUILD_TESTS=OFF
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build the VST3 and the Audio Unit
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel 3
+          cmake --build build --config Release --target PitchNetPlugin_AU --parallel 3
+
+      - name: Locate the bundles and sign them ad hoc
+        run: |
+          vst3=$(find build -name "TuneX.vst3" -maxdepth 6 -type d | head -n1)
+          au=$(find build -name "TuneX.component" -maxdepth 6 -type d | head -n1)
+          if [ -z "$vst3" ] || [ -z "$au" ]; then
+            echo "No se encontraron los bundles (VST3='$vst3', AU='$au')" >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$vst3"
+          codesign --force --deep --sign - "$au"
+          codesign --verify --deep --strict --verbose=2 "$vst3" || true
+          codesign --verify --deep --strict --verbose=2 "$au" || true
+          echo "VST3_PATH=$vst3" >> "$GITHUB_ENV"
+          echo "AU_PATH=$au" >> "$GITHUB_ENV"
+
+      - name: Assemble the release folder
+        run: |
+          set -euo pipefail
+          rel=dist/release
+          mkdir -p "$rel"
+          ditto "$VST3_PATH" "$rel/TuneX.vst3"
+          ditto "$AU_PATH" "$rel/TuneX.component"
+          ditto Resources/models "$rel/models"
+          cp LICENSE THIRD_PARTY_NOTICES.txt MODIFICATIONS.md "$rel/"
+          cp -R licenses "$rel/licenses"
+          version=$(sed -n 's/^project(PitchNet VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then echo "no pude leer la version" >&2; exit 1; fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_DIR=$rel" >> "$GITHUB_ENV"
+          ls -la "$rel"
+          du -sh "$rel"
+
+      - name: Build the .pkg
+        run: |
+          set -euo pipefail
+          bash packaging/macos/build-pkg.sh "$RELEASE_DIR" "$VERSION" "dist/TuneX-$VERSION-macOS-arm64.pkg"
+          ls -l dist
+          echo "PKG=dist/TuneX-$VERSION-macOS-arm64.pkg" >> "$GITHUB_ENV"
+
+      - name: Inspect the .pkg
+        run: |
+          pkgutil --payload-files "$PKG" | head -40 || true
+          du -h "$PKG"
+
+      - name: Upload the .pkg
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-macOS-arm64-pkg
+          path: dist/TuneX-*-macOS-arm64.pkg
+          if-no-files-found: error
