@@ -55,11 +55,15 @@ jobs:
           SHARDS: 3
         run: |
           $ErrorActionPreference = 'Stop'
-          # Los targets SON los .cpp de tests/ (tests/CMakeLists.txt usa NAME_WE), asi
-          # que el reparto se hace con el arbol de fuentes: estable y sin depender de
-          # que ctest nos de un JSON util (en el runner no lo dio: 2026-11-23).
+          # Los targets SON los .cpp de tests/ (tests/CMakeLists.txt usa NAME_WE), pero
+          # no todos los .cpp son ejecutable: se confirma contra el proyecto generado
+          # (build/tests/<nombre>.vcxproj). Asi no se pide construir un target que no
+          # existe (MSB1009, 2026-11-23) y un test nuevo entra solo.
           $targets = Get-ChildItem tests -Filter *.cpp |
-            ForEach-Object { $_.BaseName } | Sort-Object
+            ForEach-Object { $_.BaseName } |
+            Where-Object { Test-Path (Join-Path 'build/tests' "$_.vcxproj") } |
+            Sort-Object
+          Write-Host "targets reales: $($targets.Count)"
           $n = [int]$env:SHARDS; $mine = @()
           for ($i = 0; $i -lt $targets.Count; $i++) {
             if ($i % $n -eq [int]$env:SHARD) { $mine += $targets[$i] }
