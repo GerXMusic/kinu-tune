@@ -1058,12 +1058,8 @@ set(REQUIRED_MODELS
     fcpe.onnx
     cent_table.bin
     mel_filterbank.bin
+    pc_nsf_hifigan.onnx
 )
-if(APPLE)
-    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.mlmodelc)
-else()
-    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.onnx)
-endif()
 
 # Check required GAME models
 set(GAME_DIR "${MODELS_DIR}/GAME")
