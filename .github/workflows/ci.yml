@@ -19,7 +19,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Solo un PR cancela el run anterior. En main no: un push nuevo cancelaba el run
+  # anterior mientras el job de macOS seguia EN COLA (0 pasos, cancelado a los
+  # 15 min), aunque los shards de Windows ya estuvieran corriendo y acabaran bien
+  # (D-284, 2026-11-23).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ---------------------------------------------------------------- Windows ---
