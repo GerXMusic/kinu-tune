@@ -949,6 +949,26 @@ if(ONNXRUNTIME_FOUND)
                         "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/")
                 endif()
             endforeach()
+            if(ONNXRUNTIME_MACOS_NUGET)
+                # El dylib del paquete NuGet declara LC_ID_DYLIB
+                # @rpath/libonnxruntime.<version>.dylib y el binario enlaza contra ese
+                # nombre exacto, no contra "libonnxruntime.dylib". Sin este duplicado
+                # dyld no lo encuentra y el plugin no carga ("Unable to load VST-3
+                # plug-in file" en pluginval).
+                set(ONNXRUNTIME_EMBED_DYLIB_NAME "libonnxruntime.${ONNXRUNTIME_VERSION}.dylib")
+                foreach(BUNDLE_TARGET PitchNet PitchNetPlugin_VST3 PitchNetPlugin_AU)
+                    add_custom_command(TARGET ${BUNDLE_TARGET} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${ONNXRUNTIME_LIBRARY}"
+                        "$<TARGET_BUNDLE_DIR:${BUNDLE_TARGET}>/Contents/Frameworks/${ONNXRUNTIME_EMBED_DYLIB_NAME}")
+                endforeach()
+                if(TARGET PitchNetPlugin_AAX)
+                    add_custom_command(TARGET PitchNetPlugin_AAX POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${ONNXRUNTIME_LIBRARY}"
+                        "$<TARGET_BUNDLE_DIR:PitchNetPlugin_AAX>/Contents/Frameworks/${ONNXRUNTIME_EMBED_DYLIB_NAME}")
+                endif()
+            endif()
             if(NOT ONNXRUNTIME_MACOS_NUGET)
                 add_custom_command(TARGET PitchNet POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E create_symlink
