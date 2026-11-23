@@ -84,6 +84,13 @@ jobs:
           otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
 
       # Solo se pasan los flags que el binario declara en --help.
+      - name: Inspect exports and bundle metadata
+        run: |
+          BIN=$(ls "$VST3_PATH/Contents/MacOS" | head -1)
+          echo "== exports =="; nm -gU "$VST3_PATH/Contents/MacOS/$BIN" | grep -E "bundleEntry|bundleExit|GetPluginFactory" || echo "NO VST3 ENTRY SYMBOLS"
+          echo "== Info.plist =="; plutil -p "$VST3_PATH/Contents/Info.plist" || true
+          echo "== MacOS dir =="; ls -la "$VST3_PATH/Contents/MacOS" || true
+
       # pluginval escribe sus logs aqui; el directorio tiene que existir de antemano.
       - name: Prepare pluginval log directory
         run: mkdir -p "$RUNNER_TEMP/pluginval-logs"
