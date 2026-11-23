@@ -1,4 +1,4 @@
-﻿; TuneX - Copyright (C) 2026 Keinoaza
+﻿; TuneX - Copyright (C) 2026 GerX
 ; Part of TuneX, a modified version of PitchNet. Licensed under the GNU
 ; Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 ;
@@ -10,9 +10,9 @@
 ;
 ; It installs to the same places as the manual steps (INSTALL-Windows.txt),
 ; except the models, which go to the machine-wide folder the plug-in also
-; reads (%PROGRAMDATA%\Keinoaza\TuneX\models), and it installs the
+; reads (%PROGRAMDATA%\GerX\TuneX\models), and it installs the
 ; Visual C++ Redistributable that the bundled onnxruntime.dll needs.
-; The plug-in reads %APPDATA%\Keinoaza\TuneX\models instead whenever that
+; The plug-in reads %APPDATA%\GerX\TuneX\models instead whenever that
 ; folder exists (a manual install), so the README tells installer users to
 ; delete it.
 
@@ -32,12 +32,12 @@ AppId={{38373E75-C136-4F15-8F5D-6F966750C257}
 AppName=TuneX
 AppVersion={#AppVersion}
 AppVerName=TuneX {#AppVersion}
-AppPublisher=Keinoaza
-AppPublisherURL=https://github.com/keinoaza666-stack/tunex
-AppSupportURL=https://github.com/keinoaza666-stack/tunex/issues
+AppPublisher=GerX
+AppPublisherURL=https://github.com/GerXMusic/tunex
+AppSupportURL=https://github.com/GerXMusic/tunex/issues
 ; The licence texts and the uninstaller live here; the plug-in itself goes to
 ; the VST3 folder.
-DefaultDirName={commonpf64}\Keinoaza\TuneX
+DefaultDirName={commonpf64}\GerX\TuneX
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -76,7 +76,7 @@ Type: filesandordirs; Name: "{commoncf64}\VST3\TuneX.vst3"
 
 [Files]
 Source: "{#StageDir}\TuneX.vst3\*"; DestDir: "{commoncf64}\VST3\TuneX.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\Keinoaza\TuneX\models"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\GerX\TuneX\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\MODIFICATIONS.md"; DestDir: "{app}"; Flags: ignoreversion

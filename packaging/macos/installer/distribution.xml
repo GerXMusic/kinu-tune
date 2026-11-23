@@ -20,17 +20,17 @@
         <line choice="models"/>
     </choices-outline>
     <choice id="vst3" title="VST3_TITLE" description="VST3_DESCRIPTION">
-        <pkg-ref id="com.keinoaza.tunex.vst3"/>
+        <pkg-ref id="com.gerx.tunex.vst3"/>
     </choice>
     <choice id="au" title="AU_TITLE" description="AU_DESCRIPTION">
-        <pkg-ref id="com.keinoaza.tunex.au"/>
+        <pkg-ref id="com.gerx.tunex.au"/>
     </choice>
     <!-- Both plug-ins need the models, and the licence texts go with them,
          so this one cannot be unticked. -->
     <choice id="models" title="MODELS_TITLE" description="MODELS_DESCRIPTION" enabled="false" selected="true">
-        <pkg-ref id="com.keinoaza.tunex.models"/>
+        <pkg-ref id="com.gerx.tunex.models"/>
     </choice>
-    <pkg-ref id="com.keinoaza.tunex.vst3" version="@VERSION@">vst3.pkg</pkg-ref>
-    <pkg-ref id="com.keinoaza.tunex.au" version="@VERSION@">au.pkg</pkg-ref>
-    <pkg-ref id="com.keinoaza.tunex.models" version="@VERSION@">models.pkg</pkg-ref>
+    <pkg-ref id="com.gerx.tunex.vst3" version="@VERSION@">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.gerx.tunex.au" version="@VERSION@">au.pkg</pkg-ref>
+    <pkg-ref id="com.gerx.tunex.models" version="@VERSION@">models.pkg</pkg-ref>
 </installer-gui-script>

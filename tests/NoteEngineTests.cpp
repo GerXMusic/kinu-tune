@@ -74,7 +74,7 @@ juce::String noteEngineField(const juce::var &json, int index) {
 
 juce::String sha256OfBuffer(const juce::AudioBuffer<float> &buffer) {
     auto file = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                    .getNonexistentChildFile("kinu-note-engine-test", ".raw",
+                    .getNonexistentChildFile("tunex-note-engine-test", ".raw",
                                              false);
     {
         juce::FileOutputStream out(file);

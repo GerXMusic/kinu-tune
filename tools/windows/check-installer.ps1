@@ -18,7 +18,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Setup = (Resolve-Path $Setup).Path
-$work = Join-Path ([System.IO.Path]::GetTempPath()) "kinu-installer-check"
+$work = Join-Path ([System.IO.Path]::GetTempPath()) "tunex-installer-check"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Path $work | Out-Null
 
@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) { throw "configuring the test host failed" }
 cmake --build "$work/host-build" --config Release
 if ($LASTEXITCODE -ne 0) { throw "building the test host failed" }
 
-$stage = "C:\kinu-installer"
+$stage = "C:\tunex-installer"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item $Setup (Join-Path $stage "setup.exe")
@@ -51,7 +51,7 @@ if (Test-Path (Join-Path $env:SystemRoot "System32\msvcp140.dll")) {
 }
 Write-Host "Before: no Visual C++ runtime in System32"
 
-$run = Start-Process C:\kinu\setup.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=C:\kinu\setup.log" -Wait -PassThru
+$run = Start-Process C:\tunex\setup.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=C:\tunex\setup.log" -Wait -PassThru
 Write-Host "setup.exe -> exit code $($run.ExitCode)"
 if ($run.ExitCode -ne 0) { $failures += "the installer exited with $($run.ExitCode)" }
 
@@ -65,7 +65,7 @@ if (Test-Path $msvcp) { Write-Host "After: System32\msvcp140.dll $((Get-Item $ms
 else { $failures += "the Visual C++ Redistributable was not installed" }
 
 # The plug-in must load, and its onnxruntime.dll must work (no "unavailable").
-& C:\kinu\vst3_instantiate.exe $dll
+& C:\tunex\vst3_instantiate.exe $dll
 if ($LASTEXITCODE -ne 0) { $failures += "create the installed plug-in (exit code $LASTEXITCODE)" }
 
 # The uninstaller hands over to a copy of itself; wait for the files to go.
@@ -81,7 +81,7 @@ if (Test-Path $uninstaller) {
 }
 
 Write-Host "::group::Installer log"
-Get-Content C:\kinu\setup.log | Out-Host
+Get-Content C:\tunex\setup.log | Out-Host
 Write-Host "::endgroup::"
 if ($failures.Count -gt 0) {
     Write-Host "FAILED:"
@@ -101,7 +101,7 @@ $image = "mcr.microsoft.com/windows/server:$tag"
 Write-Host "::group::Pull $image"
 docker pull $image | Out-Host
 Write-Host "::endgroup::"
-docker run --rm --isolation=process -v "${stage}:C:\kinu" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\kinu\in-container.ps1 | Out-Host
+docker run --rm --isolation=process -v "${stage}:C:\tunex" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\tunex\in-container.ps1 | Out-Host
 $code = $LASTEXITCODE
 Write-Host "Clean machine install -> exit code $code"
 if ($code -ne 0) { exit 1 }

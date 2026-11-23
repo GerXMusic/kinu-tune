@@ -6,14 +6,16 @@
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: ~/Library/Application Support/Keinoaza/TuneX/models/, then
- *             /Library/Application Support/Keinoaza/TuneX/models/
+ *   - Models: ~/Library/Application Support/GerX/TuneX/models/, then
+ *             /Library/Application Support/GerX/TuneX/models/
+ *             (legacy fallback: .../Keinoaza/TuneX/models/)
  *   - Logs: ~/Library/Logs/TuneX/
  *   - Config: ~/Library/TuneX/
  *
  * Windows:
- *   - Models: %APPDATA%/Keinoaza/TuneX/models/, then
- *             %PROGRAMDATA%/Keinoaza/TuneX/models/
+ *   - Models: %APPDATA%/GerX/TuneX/models/, then
+ *             %PROGRAMDATA%/GerX/TuneX/models/
+ *             (legacy fallback: .../Keinoaza/TuneX/models/)
  *   - Logs: %APPDATA%/TuneX/Logs/
  *   - Config: %APPDATA%/TuneX/
  *
@@ -24,7 +26,11 @@
  */
 namespace PlatformPaths
 {
-    inline constexpr const char *kVendorFolderName = "Keinoaza";
+    /** Vendor folder of the product. TuneX is published by GerX. */
+    inline constexpr const char *kVendorFolderName = "GerX";
+    /** Vendor folder used by earlier builds (the Keinoaza "kinu-tune" fork).
+        Read-only fallback so an existing install keeps finding its models. */
+    inline constexpr const char *kLegacyVendorFolderName = "Keinoaza";
     inline constexpr const char *kProductFolderName = "TuneX";
 
     inline juce::File getProjectResourcesDirectory()
@@ -53,20 +59,41 @@ namespace PlatformPaths
 #else
         // TuneX keeps its resources apart from PitchNet's. The per-user
         // folder comes first so a local install needs no administrator rights.
-        auto resourcesUnder = [](juce::File::SpecialLocationType location)
+        auto resourcesUnder = [](juce::File::SpecialLocationType location,
+                                 const char *vendor)
         {
             return juce::File::getSpecialLocation(location)
 #if JUCE_MAC
                 .getChildFile("Application Support")
 #endif
-                .getChildFile(kVendorFolderName)
+                .getChildFile(vendor)
                 .getChildFile(kProductFolderName);
         };
 
-        auto userResources = resourcesUnder(juce::File::userApplicationDataDirectory);
-        if (userResources.getChildFile("models").isDirectory())
+        auto hasModels = [](const juce::File &root)
+        {
+            return root.getChildFile("models").isDirectory();
+        };
+
+        // Current vendor folder first, then the legacy one (Keinoaza) so that
+        // an install made before the rename keeps working without moving files.
+        auto userResources = resourcesUnder(juce::File::userApplicationDataDirectory,
+                                            kVendorFolderName);
+        if (hasModels(userResources))
             return userResources;
-        return resourcesUnder(juce::File::commonApplicationDataDirectory);
+
+        auto legacyUserResources = resourcesUnder(juce::File::userApplicationDataDirectory,
+                                                  kLegacyVendorFolderName);
+        if (hasModels(legacyUserResources))
+            return legacyUserResources;
+
+        auto commonResources = resourcesUnder(juce::File::commonApplicationDataDirectory,
+                                              kVendorFolderName);
+        if (hasModels(commonResources))
+            return commonResources;
+
+        return resourcesUnder(juce::File::commonApplicationDataDirectory,
+                              kLegacyVendorFolderName);
 #endif
     }
 

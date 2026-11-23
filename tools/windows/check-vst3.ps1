@@ -42,7 +42,7 @@ $modelFiles = "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifig
 $Vst3 = (Resolve-Path $Vst3).Path
 $dll = Join-Path $Vst3 "Contents\x86_64-win\TuneX.vst3"
 if (-not (Test-Path $dll)) { throw "plug-in DLL not found at $dll" }
-$work = Join-Path ([System.IO.Path]::GetTempPath()) "kinu-vst3-check"
+$work = Join-Path ([System.IO.Path]::GetTempPath()) "tunex-vst3-check"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Path $work | Out-Null
 
@@ -146,7 +146,7 @@ if (-not $SkipCleanMachine) {
     $tag = switch ($build) { 20348 { "ltsc2022" } 26100 { "ltsc2025" } default { throw "no container tag for Windows build $build" } }
     $image = "mcr.microsoft.com/windows/server:$tag"
 
-    $stage = "C:\kinu-clean"
+    $stage = "C:\tunex-clean"
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Path $stage | Out-Null
     Copy-Item -Recurse $Vst3 $stage
@@ -173,7 +173,7 @@ if ($InstallRedist) {
     Write-Host "System32\msvcp140.dll: $((Get-Item (Join-Path $env:SystemRoot "System32\msvcp140.dll")).VersionInfo.FileVersion)"
 }
 $missing = @()
-foreach ($name in Get-Content C:\kinu\imports.txt) {
+foreach ($name in Get-Content C:\tunex\imports.txt) {
     if ($name -like "api-ms-*" -or $name -like "ext-ms-*") { continue }
     $found = (Test-Path (Join-Path $env:SystemRoot "System32\$name")) -or (Test-Path (Join-Path $bundle $name))
     if (-not $found) { $missing += $name }
@@ -190,12 +190,12 @@ foreach ($name in "msvcp140.dll", "vcruntime140.dll", "onnxruntime.dll") {
 }
 $models = Join-Path $env:APPDATA "Keinoaza\TuneX"
 New-Item -ItemType Directory -Force -Path $models | Out-Null
-Copy-Item -Recurse C:\kinu\models $models
+Copy-Item -Recurse C:\tunex\models $models
 # Without the redistributable the plug-in must still be created, must not
 # load any onnxruntime.dll, and must report the missing runtime.
 $hostArgs = @()
 if (-not $InstallRedist) { $hostArgs += "--expect-onnx-runtime-missing" }
-& C:\kinu\vst3_instantiate.exe @hostArgs "$bundle\TuneX.vst3"
+& C:\tunex\vst3_instantiate.exe @hostArgs "$bundle\TuneX.vst3"
 $code = $LASTEXITCODE
 if ($unexpected.Count -gt 0 -and $code -eq 0) { $code = 4 }
 exit $code
@@ -205,7 +205,7 @@ exit $code
     docker pull $image | Out-Host
     Write-Host "::endgroup::"
     Write-Host "::group::Create the plug-in in a clean $image container"
-    docker run --rm --isolation=process -v "${stage}:C:\kinu" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\kinu\in-container.ps1 | Out-Host
+    docker run --rm --isolation=process -v "${stage}:C:\tunex" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\tunex\in-container.ps1 | Out-Host
     $cleanCode = $LASTEXITCODE
     Write-Host "::endgroup::"
     Write-Host "Clean machine -> exit code $cleanCode"
@@ -214,7 +214,7 @@ exit $code
     # The same clean machine after installing the Visual C++ Redistributable,
     # as INSTALL.txt asks. Each run starts from a fresh container.
     Write-Host "::group::Create the plug-in in a clean $image container with the Visual C++ Redistributable installed"
-    docker run --rm --isolation=process -v "${stage}:C:\kinu" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\kinu\in-container.ps1 -InstallRedist | Out-Host
+    docker run --rm --isolation=process -v "${stage}:C:\tunex" $image powershell -NoProfile -ExecutionPolicy Bypass -File C:\tunex\in-container.ps1 -InstallRedist | Out-Host
     $redistCode = $LASTEXITCODE
     Write-Host "::endgroup::"
     Write-Host "Clean machine with the redistributable -> exit code $redistCode"

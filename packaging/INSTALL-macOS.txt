@@ -9,9 +9,9 @@ TuneX - macOS (Apple silicon) インストール / Install
 
 2. AI のモデルを置くフォルダーを作ります。
    Finder のメニュー「移動 > フォルダへ移動…」に ~/Library/Application Support と入力して開き、
-   その中に「Keinoaza」という名前のフォルダーを、さらにその中に「TuneX」という名前のフォルダーを作ります。
+   その中に「GerX」という名前のフォルダーを、さらにその中に「TuneX」という名前のフォルダーを作ります。
    Create a folder for the AI models: in Finder choose Go > Go to Folder..., enter ~/Library/Application Support,
-   create a folder named "Keinoaza" there, and a folder named "TuneX" inside it.
+   create a folder named "GerX" there, and a folder named "TuneX" inside it.
 
 3. この zip の中の "models" フォルダーを、いま作った「TuneX」フォルダーの中に入れます。
    Move the "models" folder from this zip into that "TuneX" folder.
@@ -32,4 +32,4 @@ TuneX - macOS (Apple silicon) インストール / Install
 
 ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses/
 The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
-Source code: https://github.com/keinoaza666-stack/tunex
+Source code: https://github.com/GerXMusic/tunex
