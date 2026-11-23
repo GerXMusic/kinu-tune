@@ -74,6 +74,20 @@ jobs:
           cmake --build build --config Release --parallel 4 --target $mine
           if ($LASTEXITCODE -ne 0) { throw "build del shard fallo con $LASTEXITCODE" }
 
+          # onnxruntime.dll solo la copian los targets del plugin y TimingAudioTests; un
+          # shard que no los construye se queda sin DLL y AuditionHandoffTests falla
+          # (OnnxRuntime::useLinkedRuntimeForTesting, 2026-11-23). Se deja junto a los tests.
+          $ortDll = Get-ChildItem build -Recurse -Filter 'onnxruntime*.dll' -File -ErrorAction SilentlyContinue |
+                    Sort-Object Length -Descending | Select-Object -First 1
+          if ($ortDll) {
+            $dst = Join-Path $PWD 'build/tests/Release'
+            New-Item -ItemType Directory -Path $dst -Force | Out-Null
+            Copy-Item $ortDll.FullName (Join-Path $dst $ortDll.Name) -Force
+            Write-Host "onnxruntime.dll desde $($ortDll.FullName)"
+          } else {
+            Write-Host "aviso: no encontre onnxruntime.dll dentro de build/"
+          }
+
           # Nombres de test de este shard. Casi todos coinciden con el ejecutable;
           # estas son las excepciones reales (medidas con ctest --show-only en local).
           $extra = @{
