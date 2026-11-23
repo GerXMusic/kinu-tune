@@ -15,11 +15,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: hola
-        run: echo "macos-15 asignado: $(sw_vers -productVersion) $(uname -m)"
+        run: |
+          echo "macos-15 asignado"
+          sw_vers
+          uname -m
 
   macos-14:
     runs-on: macos-14
     timeout-minutes: 10
     steps:
       - name: hola
-        run: echo "macos-14 asignado: $(sw_vers -productVersion) $(uname -m)"
+        run: |
+          echo "macos-14 asignado"
+          sw_vers
+          uname -m
