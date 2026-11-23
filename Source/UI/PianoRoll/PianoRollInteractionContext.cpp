@@ -32,6 +32,12 @@ PianoRollInteractionContext::PianoRollInteractionContext(
 
 void PianoRollInteractionContext::repaint() { component.repaint(); }
 
+bool PianoRollInteractionContext::isNoteTopZone(const Note &note,
+                                                float worldY) const
+{
+  return component.isNoteTopZone(note, worldY);
+}
+
 void PianoRollInteractionContext::setMouseCursor(
     const juce::MouseCursor &cursorType)
 {

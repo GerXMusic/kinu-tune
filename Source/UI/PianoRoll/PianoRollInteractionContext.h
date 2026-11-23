@@ -65,6 +65,8 @@ public:
   bool isCanvasPoint(const juce::MouseEvent &e) const;
 
   Note *findNoteAt(float x, float y);
+  // Melodyne: franja superior de la nota = zona de corte.
+  bool isNoteTopZone(const Note &note, float worldY) const;
   std::vector<Note *> getSelectedNotes() const;
   void updatePitchToolHandlesFromSelection();
   void invalidateWaveformCache();
