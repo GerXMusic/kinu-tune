@@ -80,9 +80,14 @@ jobs:
           uname -m || true
           PV=$(command -v pluginval || find "$RUNNER_TEMP" "$HOME" -name pluginval -type f 2>/dev/null | head -1); echo "pluginval en: $PV"; file "$PV" || true
           file "$VST3_PATH/Contents/MacOS/$BIN" || true
+          otool -L "$VST3_PATH/Contents/Frameworks/libonnxruntime.dylib" || true
+          otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
 
       # Solo se pasan los flags que el binario declara en --help.
       - name: Validate the VST3 with pluginval (strictness 5)
+        env:
+          DYLD_PRINT_LIBRARIES: 1
+          DYLD_PRINT_RPATHS: 1
         run: |
           set -o pipefail
           bin=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval -perm -u+x | head -n1)
@@ -98,7 +103,7 @@ jobs:
             exit 1
           fi
 
-          args=(--strictness-level 5)
+          args=(--strictness-level 5 --verbose --output-dir "$RUNNER_TEMP/pluginval-logs")
           if grep -q -- "--skip-gui-tests" help.txt; then
             args+=(--skip-gui-tests)
           fi
@@ -110,6 +115,14 @@ jobs:
 
           echo "pluginval ${args[*]}"
           "$bin" "${args[@]}"
+
+      - name: Upload pluginval logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pluginval-logs
+          path: ${{ runner.temp }}/pluginval-logs
+          if-no-files-found: warn
 
       - name: Package the VST3
         run: |
