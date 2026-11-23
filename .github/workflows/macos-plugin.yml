@@ -84,6 +84,10 @@ jobs:
           otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
 
       # Solo se pasan los flags que el binario declara en --help.
+      # pluginval escribe sus logs aqui; el directorio tiene que existir de antemano.
+      - name: Prepare pluginval log directory
+        run: mkdir -p "$RUNNER_TEMP/pluginval-logs"
+
       - name: Validate the VST3 with pluginval (strictness 5)
         env:
           DYLD_PRINT_LIBRARIES: 1
