@@ -108,18 +108,32 @@ if ($Source) {
 }
 
 # ------------------------------------------------------------------ gh listo ---
-$gh = Get-Command gh -ErrorAction SilentlyContinue
-if (-not $gh) {
+# winget instala gh en Program Files pero las sesiones ya abiertas no ven el PATH nuevo
+$ghExe = $null
+$cmd = Get-Command gh -ErrorAction SilentlyContinue
+if ($cmd) {
+    $ghExe = $cmd.Source
+} else {
+    foreach ($c in @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe",
+                     "$env:LOCALAPPDATA\GitHubCLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")) {
+        if (Test-Path $c) { $ghExe = $c; break }
+    }
+    if ($ghExe) { $env:Path = "$(Split-Path -Parent $ghExe);$env:Path" }
+}
+if (-not $ghExe) {
     Write-Host 'No encuentro GitHub CLI (gh).' -ForegroundColor Red
     Write-Host '  winget install --id GitHub.cli' -ForegroundColor Yellow
     exit 1
 }
+$gh = $ghExe
 
 if (-not $Repo) { $Repo = RepoDeOrigin }
 Write-Host "[nube] repo $Repo  workflow $Workflow"
 
 # autenticacion: gh auth, o el token de git en el Credential Manager
-& gh auth status *> $null
+# (`gh auth status` escribe en stderr cuando no hay sesion, y con EAP=Stop eso aborta;
+#  por eso se pregunta a cmd, que solo devuelve un codigo)
+$null = & cmd.exe /d /c "`"$gh`" auth status >nul 2>nul"
 if ($LASTEXITCODE -ne 0) {
     $cred = "protocol=https`nhost=github.com`n`n" | git credential fill 2>$null
     $tok = ($cred | Select-String '^password=').Line -replace '^password=', ''
