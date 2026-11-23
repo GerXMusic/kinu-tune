@@ -2101,8 +2101,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       }
     }
   }
-  // On a segment Alt is Relative snap / Alt-click split; anywhere else on the
-  // canvas Alt-drag zooms vertically.
+  // On a segment: Alt ignora el iman (sin snap) y Alt-click sin arrastre corta el
+  // segmento; en el resto del lienzo Alt-drag hace zoom vertical.
   const bool altNoteDrag =
       editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
   if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
@@ -2836,10 +2836,10 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
 
-  // VariAudio-style: double-clicking a segment body resets it (pitch, curve,
-  // formant, volume and timing) as one undoable step. Smart controls keep
-  // their own double-click handling.
-  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+  // Restablecer a original: Option/Alt + doble clic en el segmento. El doble clic
+  // simple ahora corta (pedido 2026-11-23), y el menu contextual sigue teniendo
+  // «Restablecer original».
+  if (editMode == EditMode::Select && e.mods.isAltDown() && !e.mods.isCommandDown())
     if (auto *note = findNoteAt(adjustedX, adjustedY))
       if (!(pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0))
       {
@@ -2983,51 +2983,45 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     return;
   }
 
-  // Key-based zoom in grid area
+  // Key-based zoom in grid area: Cmd/Ctrl + wheel zooms BOTH axes around the
+  // pointer (pedido el 2026-11-23, como REAPER). Cmd/Ctrl + Shift mantiene el
+  // zoom vertical solo, para mover un eje cuando haga falta.
   if (e.mods.isCommandDown() || e.mods.isCtrlDown())
   {
     float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+    const float mouseY = static_cast<float>(e.y - headerHeight);
 
-    if (e.mods.isShiftDown())
+    if (!e.mods.isShiftDown())
     {
-      // Vertical zoom - center on mouse position
-      float mouseY = static_cast<float>(e.y - headerHeight);
-      float midiAtMouse = yToMidi(mouseY + static_cast<float>(scrollY));
-
-      float newPps = pixelsPerSemitone * zoomFactor;
-      if (zoomFactor < 1.0f)
-      {
-        const float range = minPps * 0.35f;
-        const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
-        newPps = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
-      }
-      juce::ignoreUnused(midiAtMouse);
-      setPixelsPerSemitone(newPps, mouseY);
-    }
-    else
-    {
-      // Horizontal zoom - center on mouse position
+      // Horizontal: mantener el tiempo bajo el puntero
       float mouseX = static_cast<float>(e.x - pianoKeysWidth);
       double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
 
-      float newPps = pixelsPerSecond * zoomFactor;
-      newPps =
-          juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPps);
+      float newPpsX = pixelsPerSecond * zoomFactor;
+      newPpsX = juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPpsX);
 
-      // Adjust scroll to keep mouse position stable
-      pixelsPerSecond = newPps;
-      coordMapper->setPixelsPerSecond(newPps);
-      float newMouseX = static_cast<float>(timeAtMouse * newPps);
+      pixelsPerSecond = newPpsX;
+      coordMapper->setPixelsPerSecond(newPpsX);
+      const float newMouseX = static_cast<float>(timeAtMouse * newPpsX);
       scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
       coordMapper->setScrollX(scrollX);
-
-      coordMapper->setPixelsPerSecond(newPps);
-      updateScrollBars();
-      repaint();
-
-      if (onZoomChanged)
-        onZoomChanged(pixelsPerSecond);
     }
+
+    // Vertical: mantener la nota bajo el puntero
+    float newPpsY = pixelsPerSemitone * zoomFactor;
+    if (zoomFactor < 1.0f)
+    {
+      const float range = minPps * 0.35f;
+      const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
+      newPpsY = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
+    }
+    setPixelsPerSemitone(juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, newPpsY), mouseY);
+
+    updateScrollBars();
+    repaint();
+
+    if (onZoomChanged)
+      onZoomChanged(pixelsPerSecond);
   }
 }
 
@@ -3402,12 +3396,14 @@ PitchEditor::DragSnapKind
 PianoRollComponent::resolveDragSnapKind(const juce::ModifierKeys &mods) const
 {
   using Kind = PitchEditor::DragSnapKind;
+  // Option/Alt desactiva el iman (pedido el 2026-11-23, como REAPER/Melodyne).
+  // Shift sigue valiendo como alias historico.
+  if (mods.isAltDown())
+    return Kind::Off;
   if (mods.isShiftDown())
     return Kind::Off;
   if (mods.isCommandDown())
     return Kind::Absolute;
-  if (mods.isAltDown())
-    return Kind::Relative;
   if (!snapToSemitoneDrag)
     return Kind::Off;
   return absoluteDragSnap ? Kind::Absolute : Kind::Relative;

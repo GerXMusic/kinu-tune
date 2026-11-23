@@ -72,9 +72,10 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
-  if (note && e.mods.isAltDown() && !e.mods.isCommandDown())
+  if (note && e.getNumberOfClicks() >= 2 && !e.mods.isCommandDown())
   {
-    // VariAudio: Alt-click on a segment splits it at the pointer.
+    // Doble clic sobre un segmento lo corta en el puntero (pedido 2026-11-23).
+    // El clic simple con Alt ya no corta: Option/Alt significa «sin iman».
     owner_.noteSplitter->splitNoteAtX(note, worldX);
     owner_.setHoveredNote(nullptr);
     owner_.repaint();

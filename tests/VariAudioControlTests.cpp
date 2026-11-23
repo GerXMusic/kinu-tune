@@ -140,7 +140,8 @@ int main()
         CHECK(roll.resolveDragSnapKind({}) == Kind::Absolute);
         CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::shiftModifier) == Kind::Off);
         CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::commandModifier) == Kind::Absolute);
-        CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::altModifier) == Kind::Relative);
+        // Option/Alt ignora el iman (como REAPER/Melodyne), no cambia a relativo.
+        CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::altModifier) == Kind::Off);
         roll.setSnapToSemitoneDrag(false);
         CHECK(roll.resolveDragSnapKind({}) == Kind::Off);
     }

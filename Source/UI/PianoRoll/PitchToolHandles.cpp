@@ -61,8 +61,8 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   addSquare(HandleType::CorrectPitch, centreX, bottom + s * 0.5f + gap);
 
   // No split line on the segment body: clicking a segment must only select
-  // it (user request, 2026-10-19). Splitting is Alt/Option-click or the
-  // Split tool.
+  // it (user request, 2026-10-19). Splitting is double-click (2026-11-23) or
+  // the Split tool.
 
   if (options.canGlueLeft)
     addSquare(HandleType::GlueLeft, left - s * 0.5f - 1.0f, bottom - s * 0.5f);

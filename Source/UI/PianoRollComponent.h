@@ -521,8 +521,8 @@ private:
   std::vector<float> inspectorEditSourceMidi;
   float correctionTargetFor(float sourceMidi) const;
   bool absoluteDragSnap = true; // Pitch Snap Mode Absolute by default
-  // The first click of the current (double-)click landed on a segment. An
-  // Option-click splits it, after which the double-click point may hit no
+  // The first click of the current (double-)click landed on a segment. The
+  // double-click splits it, after which the double-click point may hit no
   // segment; it must still not count as an empty-space double-click.
   bool clickStartedOnSegment = false;
 

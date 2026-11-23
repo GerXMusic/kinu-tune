@@ -291,7 +291,10 @@ int main()
                         (MAX_MIDI_NOTE - 63.0f) * f.roll.getPixelsPerSemitone() +
                         f.roll.getPixelsPerSemitone() * 0.5f -
                         static_cast<float>(f.roll.getScrollY());
-        f.roll.mouseDoubleClick(event(f.roll, {x, y}, juce::ModifierKeys::leftButtonModifier, 2));
+        // Restablecer: Option/Alt + doble clic (el doble clic simple corta el segmento).
+        f.roll.mouseDoubleClick(event(f.roll, {x, y},
+                                   juce::ModifierKeys(juce::ModifierKeys::altModifier |
+                                                      juce::ModifierKeys::leftButtonModifier), 2));
         CHECK(near(f.note(1).getMidiNote(), 61.8f));
         CHECK(near(f.note(1).getVibrato(), 1.0f));
         CHECK(near(f.note(1).getFormantShift(), 0.0f));
@@ -563,7 +566,7 @@ int main()
         CHECK(near(f.note(0).getLastNonMacroMidiNote(), 60.3f));
         CHECK(near(f.note(1).getLastNonMacroMidiNote(), 61.8f));
 
-        // Correct to 100%, then split with Option-click: both halves stay
+        // Correct to 100%, then a double-click splits: both halves stay
         // corrected (splitting is pitch-neutral).
         f.note(1).setSelected(false);
         f.roll.beginInspectorEdit(Param::CorrectPitch);
@@ -571,10 +574,12 @@ int main()
         f.roll.endInspectorEdit();
         CHECK(near(f.note(0).getMidiNote(), 60.0f));
         const size_t before = f.project.getNotes().size();
-        const auto alt = juce::ModifierKeys(juce::ModifierKeys::altModifier |
-                                            juce::ModifierKeys::leftButtonModifier);
-        f.roll.mouseDown(event(f.roll, {xAt(50), yAt(60.0f)}, alt, 1));
-        f.roll.mouseUp(event(f.roll, {xAt(50), yAt(60.0f)}, alt, 1));
+        const auto left = juce::ModifierKeys::leftButtonModifier;
+        // Primer clic (selecciona) y segundo clic del doble clic (corta).
+        f.roll.mouseDown(event(f.roll, {xAt(50), yAt(60.0f)}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yAt(60.0f)}, left, 1));
+        f.roll.mouseDown(event(f.roll, {xAt(50), yAt(60.0f)}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yAt(60.0f)}, left, 2));
         CHECK(f.project.getNotes().size() == before + 1);
         for (size_t i = 0; i < 2; ++i)
         {
@@ -672,13 +677,15 @@ int main()
                                       juce::ModifierKeys::leftButtonModifier, 2));
         CHECK(requests == 1);
 
-        // A double-click whose first Option-click landed on a segment (and
-        // split it) is not a zoom, even if the pointer ends up over no
-        // segment once the halves are re-centred.
+        // Un doble clic cuyo primer clic cayó en un segmento (y lo cortó) no es
+        // un zoom, aunque al final el puntero quede sobre espacio vacío.
         const size_t notesBefore = f.project.getNotes().size();
-        f.roll.mouseDown(event(f.roll, {xFor(50), yFor(60.3f)}, altLeft, 1));
-        f.roll.mouseUp(event(f.roll, {xFor(50), yFor(60.3f)}, altLeft, 1));
-        CHECK(f.project.getNotes().size() == notesBefore + 1); // Option-click split
+        const auto left = juce::ModifierKeys::leftButtonModifier;
+        f.roll.mouseDown(event(f.roll, {xFor(50), yFor(60.3f)}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xFor(50), yFor(60.3f)}, left, 1));
+        f.roll.mouseDown(event(f.roll, {xFor(50), yFor(60.3f)}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xFor(50), yFor(60.3f)}, left, 2));
+        CHECK(f.project.getNotes().size() == notesBefore + 1); // doble clic: corte
         f.roll.mouseDoubleClick(event(f.roll, {xFor(50), yFor(64.0f)}, altLeft, 2));
         CHECK(requests == 1);
         // The next double-click that starts on empty space zooms again.
