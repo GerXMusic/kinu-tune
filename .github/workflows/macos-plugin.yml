@@ -65,6 +65,11 @@ jobs:
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
           ditto -x -k "$RUNNER_TEMP/pluginval/pluginval.zip" "$RUNNER_TEMP/pluginval"
 
+      # Firma ad-hoc: sin certificado, solo para que el bundle cargue en el runner.
+      - name: Ad-hoc sign the bundle
+        run: codesign --force --deep --sign - "$VST3_PATH"
+
+      # Se ejecuta despues de firmar para que codesign --verify vea el bundle final.
       - name: Diagnose the bundle
         run: |
           ls -R "$VST3_PATH/Contents" || true
@@ -72,10 +77,9 @@ jobs:
           BIN=$(ls "$VST3_PATH/Contents/MacOS" | head -1)
           otool -L "$VST3_PATH/Contents/MacOS/$BIN" || true
           otool -D "$VST3_PATH/Contents/Frameworks/libonnxruntime.dylib" || true
-
-      # Firma ad-hoc: sin certificado, solo para que el bundle cargue en el runner.
-      - name: Ad-hoc sign the bundle
-        run: codesign --force --deep --sign - "$VST3_PATH"
+          uname -m || true
+          PV=$(command -v pluginval || find "$RUNNER_TEMP" "$HOME" -name pluginval -type f 2>/dev/null | head -1); echo "pluginval en: $PV"; file "$PV" || true
+          file "$VST3_PATH/Contents/MacOS/$BIN" || true
 
       # Solo se pasan los flags que el binario declara en --help.
       - name: Validate the VST3 with pluginval (strictness 5)
