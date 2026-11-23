@@ -55,30 +55,11 @@ jobs:
           SHARDS: 3
         run: |
           $ErrorActionPreference = 'Stop'
-          # Reparto estable: targets en orden alfabetico, uno de cada tres por shard.
-          # Se leen del propio ctest para que anadir un test no obligue a tocar el CI.
-          # Defensivo: si el JSON no trae 'command' (paso el 2026-11-23 en el runner),
-          # se construye y se ejecuta TODO en vez de fallar sin compilar nada.
-          $raw = ctest --test-dir build -C Release --show-only=json-v1
-          $parsed = $null
-          try { $parsed = $raw | ConvertFrom-Json } catch { $parsed = $null }
-          $tests = @()
-          if ($parsed -and $parsed.tests) {
-            $tests = @($parsed.tests | Where-Object { $_.command -and @($_.command).Count -ge 1 })
-          }
-          if ($tests.Count -eq 0) {
-            Write-Host "aviso: ctest no dio una lista util; se compila y ejecuta la suite completa"
-            Write-Host "primeras lineas del JSON: $((@($raw) | Select-Object -First 2) -join ' | ')"
-            cmake --build build --config Release --parallel 4
-            if ($LASTEXITCODE -ne 0) { throw "build completo fallo con $LASTEXITCODE" }
-            ctest --test-dir build -C Release --output-on-failure
-            if ($LASTEXITCODE -ne 0) { throw "ctest completo fallo con $LASTEXITCODE" }
-            exit 0
-          }
-
-          $targets = $tests |
-            ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.command[0]) } |
-            Select-Object -Unique | Sort-Object
+          # Los targets SON los .cpp de tests/ (tests/CMakeLists.txt usa NAME_WE), asi
+          # que el reparto se hace con el arbol de fuentes: estable y sin depender de
+          # que ctest nos de un JSON util (en el runner no lo dio: 2026-11-23).
+          $targets = Get-ChildItem tests -Filter *.cpp |
+            ForEach-Object { $_.BaseName } | Sort-Object
           $n = [int]$env:SHARDS; $mine = @()
           for ($i = 0; $i -lt $targets.Count; $i++) {
             if ($i % $n -eq [int]$env:SHARD) { $mine += $targets[$i] }
@@ -89,10 +70,26 @@ jobs:
           cmake --build build --config Release --parallel 4 --target $mine
           if ($LASTEXITCODE -ne 0) { throw "build del shard fallo con $LASTEXITCODE" }
 
+          # Nombres de test de este shard. Casi todos coinciden con el ejecutable;
+          # estas son las excepciones reales (medidas con ctest --show-only en local).
+          $extra = @{
+            'P1bHostPlayTests'      = @('P1b_hostplay')
+            'P1bSaveTests'          = @('P1b_save')
+            'P1bOpenTests'          = @('P1b_open')
+            'P1bSweepTests'         = @('P1b_sweep')
+            'P1bRenderAtPlayTests'  = @('P1b_deferred', 'P1b_wiring')
+            'EditSymptomAudioTests' = @('EditSymptom_sbedge')
+          }
           $names = @()
-          foreach ($t in $tests) {
-            $exe = [IO.Path]::GetFileNameWithoutExtension($t.command[0])
-            if ($mine -contains $exe) { $names += [regex]::Escape($t.name) }
+          foreach ($t in $mine) {
+            $names += [regex]::Escape($t)
+            if ($extra.ContainsKey($t)) { foreach ($e in $extra[$t]) { $names += [regex]::Escape($e) } }
+          }
+          # Los SourceGuard_* no tienen ejecutable: lanzan cmake con un script.
+          if ([int]$env:SHARD -eq 0) {
+            foreach ($g in 'SourceGuard_pitch-writes', 'SourceGuard_audition-output', 'SourceGuard_render-controllers') {
+              $names += [regex]::Escape($g)
+            }
           }
           Write-Host "tests: $($names.Count)"
           ctest --test-dir build -C Release -R "^($($names -join '|'))$" --output-on-failure
