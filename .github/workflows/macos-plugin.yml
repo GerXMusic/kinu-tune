@@ -90,6 +90,15 @@ jobs:
           echo "== exports =="; nm -gU "$VST3_PATH/Contents/MacOS/$BIN" | grep -E "bundleEntry|bundleExit|GetPluginFactory" || echo "NO VST3 ENTRY SYMBOLS"
           echo "== Info.plist =="; plutil -p "$VST3_PATH/Contents/Info.plist" || true
           echo "== MacOS dir =="; ls -la "$VST3_PATH/Contents/MacOS" || true
+          cat "$VST3_PATH/Contents/Info.plist" || true
+
+      - name: Show inspection summary
+        run: |
+          echo "Pega este bloque:"
+          echo "----"
+          cat "$VST3_PATH/Contents/Info.plist" | grep -E "CFBundleExecutable|CFBundlePackageType|CFBundleIdentifier" || true
+          ls "$VST3_PATH/Contents/MacOS" || true
+          echo "----"
 
       # pluginval escribe sus logs aqui; el directorio tiene que existir de antemano.
       - name: Prepare pluginval log directory
