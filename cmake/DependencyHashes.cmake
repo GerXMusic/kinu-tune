@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Keinoaza
+﻿# Copyright (C) 2026 Keinoaza
 # This file is part of TuneX and is licensed under the GNU Affero General
 # Public License, version 3. See LICENSE.
 #
@@ -63,6 +63,7 @@ endfunction()
 
 pitchnet_record_sha256("onnxruntime-1.19.2-osx-arm64"      "370c49770e2e1f243e17c7b227bb7f4b3da793b847d02f38016dc0e46c30fbe1") # onnxruntime-osx-arm64-1.19.2.tgz (the macOS release build)
 pitchnet_record_sha256("onnxruntime-nuget-1.19.2-osx-arm64" "fa133c8fe6238445a0dd3e8447baa5c7d16f418caa8e576c7e253ba77b27b61b") # Microsoft.ML.OnnxRuntime 1.19.2 from nuget.org (macOS arm64)
+pitchnet_record_sha256("onnxruntime-nuget-1.19.2-win-x64" "fa133c8fe6238445a0dd3e8447baa5c7d16f418caa8e576c7e253ba77b27b61b") # Microsoft.ML.OnnxRuntime 1.19.2 from nuget.org (Windows x64, mismo paquete)
 pitchnet_record_sha256("onnxruntime-1.19.2-osx-x86_64"     "6536e36d7ea92e32d53dad7ddd0fdf10be5b62d1dace85a13e1295ff81e9b5d4") # onnxruntime-osx-x86_64-1.19.2.tgz
 pitchnet_record_sha256("onnxruntime-1.19.2-osx-universal2" "b0289ddbc32f76e5d385abc7b74cc7c2c51cdf2285b7d118bf9d71206e5aee3a") # onnxruntime-osx-universal2-1.19.2.tgz
 pitchnet_record_sha256("onnxruntime-1.19.2-win-x64"        "dc4f841e511977c0a4f02e5066c3d9a58427644010ab4f89b918614a1cd4c2b0") # onnxruntime-win-x64-1.19.2.zip (CI and the Windows release build)

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+﻿cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
 
 # Ship universal macOS binaries by default. A caller can still request a
@@ -186,9 +186,12 @@ else()
             set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/${ONNXRUNTIME_VERSION}")
             message(STATUS "Downloading ONNX Runtime DirectML package from NuGet (Windows)")
         else()
-            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-${ONNXRUNTIME_VERSION}-win-x64")
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
-            message(STATUS "Downloading ONNX Runtime CPU package (Windows)")
+            # El zip CPU del release de GitHub ya no existe (404 en 1.19.2); se usa el
+            # paquete NuGet, el mismo que en macOS, con la misma comprobacion de hash.
+            set(ONNXRUNTIME_WIN_NUGET ON)
+            set(ONNXRUNTIME_PACKAGE_KEY "onnxruntime-nuget-${ONNXRUNTIME_VERSION}-win-x64")
+            set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/${ONNXRUNTIME_VERSION}")
+            message(STATUS "Downloading ONNX Runtime NuGet package Microsoft.ML.OnnxRuntime (Windows, CPU)")
         endif()
     elseif(APPLE)
         if(USE_GPU)
@@ -239,8 +242,8 @@ else()
 endif()
 
 # Handle different directory structures for DirectML NuGet package vs regular packages
-if(WIN32 AND USE_DIRECTML)
-    # DirectML NuGet package has different structure: runtimes/win-x64/native/
+if(WIN32 AND (USE_DIRECTML OR ONNXRUNTIME_WIN_NUGET))
+    # Los paquetes NuGet tienen la estructura runtimes/<rid>/native: runtimes/win-x64/native/
     set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/build/native/include)
     set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_ROOT}/runtimes/win-x64/native/onnxruntime.lib)
     set(ONNXRUNTIME_DLL_DIR ${ONNXRUNTIME_ROOT}/runtimes/win-x64/native)
@@ -436,6 +439,19 @@ else()
     message(STATUS "ARA SDK not found - run: git submodule update --init --recursive")
 endif()
 
+# D-277: this value must be a literal, not a generator expression. JUCE also
+# writes it to JuceLibraryCode/Info.txt, which juceaide reads to generate the
+# AU Info.plist. With `$<BOOL:${ARA_AVAILABLE}>` the compile definition still
+# resolved to 1 (so VST3 ARA worked), but Info.txt contained the literal
+# `$<BOOL:TRUE>`; juceaide read that as false and the AU bundle shipped without
+# the `<string>ARA</string>` tag in AudioComponents. Hosts that detect ARA from
+# the AudioComponent cache then never offered ARA for the AU.
+if(ARA_AVAILABLE)
+    set(PITCHNET_IS_ARA_EFFECT TRUE)
+else()
+    set(PITCHNET_IS_ARA_EFFECT FALSE)
+endif()
+
 # Create VST3 plugin
 juce_add_plugin(PitchNetPlugin
     PRODUCT_NAME "${PITCHNET_PRODUCT_NAME}"
@@ -450,7 +466,7 @@ juce_add_plugin(PitchNetPlugin
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
-    IS_ARA_EFFECT $<BOOL:${ARA_AVAILABLE}>
+    IS_ARA_EFFECT ${PITCHNET_IS_ARA_EFFECT}
     ARA_ANALYSIS_TYPES kARAContentTypeNotes
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
