@@ -129,9 +129,10 @@ void testSourceWiring() {
   CHECK(marks >= 7);
   // D-227 adds the third: the flush chain re-renders when an edit arrived
   // while the requested render was in flight. D-249 (politica A) adds the
-  // fourth: the debounced edit render served from the UI timer. D-285 adds the
-  // fifth: the retry after a failed close while the work is still dirty.
-  CHECK(renders == 5);
+  // fourth: the debounced edit render served from the UI timer. D-285/2 quito
+  // el quinto (el reintento de un cierre fallido ya no arranca un render
+  // inmediato: deja el pase agendado).
+  CHECK(renders == 4);
 
   // D-227/D-254: un cierre limpia solo la instantanea del pase (por revision);
   // lo que llego despues conserva su dirty y se renderiza en su propio pase.
