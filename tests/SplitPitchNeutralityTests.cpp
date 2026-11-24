@@ -122,6 +122,23 @@ void testControlWithoutCut() {
               diff.body, diff.seam);
   CHECK(diff.body <= 1.0e-3f);
   CHECK(diff.seam <= 1.0e-3f);
+
+  // D-285/2: el instrumento que dice si la curva quedo desfasada de las notas.
+  // Consistente: ~0. Si una nota se mueve sin reconstruir la base: ~el salto.
+  CHECK(project.maxCurveNotesDisagreement() <= 0.1f);
+  auto &notes = project.getNotes();
+  for (auto &note : notes)
+    if (!note.isRest())
+      note.setMidiNote(note.getMidiNote() + 7.0f);
+  const float desynced = project.maxCurveNotesDisagreement();
+  std::printf("2.3 desfase a proposito: %.3f st (esperado ~7)\n", desynced);
+  CHECK(desynced > 6.0f);
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  const float repaired = project.maxCurveNotesDisagreement();
+  std::printf("2.3 tras reconstruir la base: %.4f st (esperado < 0,1)\n", repaired);
+  // La base se suaviza con un coseno: al centro de una nota quedan ~5 cents,
+  // muy por debajo del 0,5 st con el que se distingue un desfase de verdad.
+  CHECK(repaired <= 0.1f);
 }
 
 void testSplitIsPitchNeutral() {

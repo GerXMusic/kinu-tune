@@ -507,6 +507,32 @@ std::vector<float> Project::getAdjustedF0() const
     return adjustedF0;
 }
 
+float Project::maxCurveNotesDisagreement() const
+{
+    const auto &audio = audioData;
+    const int frames = static_cast<int>(audio.f0.size());
+    if (frames <= 0 || notes.empty())
+        return 0.0f;
+
+    float worst = 0.0f;
+    for (const auto &note : notes)
+    {
+        if (note.isRest())
+            continue;
+        const int start = std::max(0, note.getStartFrame());
+        const int end = std::min(frames, note.getEndFrame());
+        if (end <= start)
+            continue;
+        const int middle = start + (end - start) / 2;
+        const float hz = audio.f0[static_cast<size_t>(middle)];
+        if (!(hz > 0.0f) || !std::isfinite(hz))
+            continue;
+        const float curveMidi = freqToMidi(hz);
+        worst = std::max(worst, std::abs(curveMidi - note.getAdjustedMidiNote()));
+    }
+    return worst;
+}
+
 std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) const
 {
     if (audioData.basePitch.empty() || audioData.deltaPitch.empty())

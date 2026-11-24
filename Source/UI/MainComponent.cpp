@@ -2003,6 +2003,13 @@ void MainComponent::pollMcpControl()
                           static_cast<juce::int64>(dirtyRevision));
     instance->setProperty("last_retry_revision",
                           static_cast<juce::int64>(lastRetryRevision));
+    instance->setProperty("retry_attempts", retryAttemptsForRevision);
+    // D-285/2: cuanto se desvia la curva compuesta del centro de cada nota
+    // (semitonos). Si no es ~0, la base quedo desfasada y se ve la curva en
+    // otro sitio que las notas.
+    instance->setProperty("curve_vs_notes_st",
+                          project ? project->maxCurveNotesDisagreement() : 0.0f);
+    instance->setProperty("curve_repair_attempts", curveRepairAttempts);
     // D-266: invariante de reposo del lado de la UI. `backendFlushActive`
     // vive en el procesador (PluginProcessor) y no es visible desde aqui: se
     // verifica por la traza de D-264, no por este canal. Se publica aparte
@@ -4583,6 +4590,10 @@ void MainComponent::markRenderDirty()
     deferredRenders.markBlock(range.first, range.second);
 
   ++dirtyRevision;
+  // D-285/2: una edicion nueva es intencion nueva: reinicia el presupuesto de
+  // reintento, para que el trabajo no herede un «ya lo intente» viejo.
+  retryAttemptsForRevision = 0;
+  lastRetryRevision = 0;
   LOG("P1b: markRenderDirty rev=" + juce::String(dirtyRevision) +
       " range=[" + juce::String(range.first) + "," +
       juce::String(range.second) + ")");
@@ -4742,17 +4753,13 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   if (!hasDirtyBlocks || renderState.flushChainActive)
     return false;
 
-  // D-285/2: si este trabajo ya gasto su reintento y no hay nada en vuelo, no
-  // se para el transporte. Antes el Play se paraba, el flush no podia limpiar
-  // y el play moria a los ~100 ms en cada intento. Se suena el ultimo audio
-  // publicado; el trabajo se reintenta en la siguiente edicion o en cuanto el
-  // vigilante lo re-arme.
-  if (!renderState.renderPending() && dirtyRevision == lastRetryRevision)
-  {
-    LOG("P1b: Play sin flush (rev " + juce::String(dirtyRevision) +
-        " ya reintentada); suena el ultimo audio publicado");
-    return false;
-  }
+  // D-285/2: un Play es intencion del usuario: se intenta el flush (stop ->
+  // render -> play). Lo que NO puede pasar es que el transporte se quede
+  // parado: `finishBackendRender` lo reanuda siempre, con el audio nuevo si no
+  // queda trabajo y con el ultimo publicado si queda. Un fallo persistente
+  // cuesta un stop/play por Play, nunca un play muerto.
+  retryAttemptsForRevision = 0;
+  lastRetryRevision = 0;
 
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
   // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
@@ -5355,7 +5362,7 @@ void MainComponent::finishBackendRender(bool success)
   // este bloque se saltaba entero y los pestillos (`flushChainActive`) se
   // quedaban clavados: despues ya no habia nadie que pudiera renderizar.
   auto *projectNow = getProject();
-  // D-285 (2): un cierre SIN instantanea no decide nada. La cadena de
+  // D-285/2: un cierre SIN instantanea no decide nada. La cadena de
   // `EditorController` entrega `onComplete` y ademas relanza el pase con el
   // mismo callback, asi que despues de un cierre bueno puede llegar un segundo
   // cierre del relanzamiento (que no encontro nada que hacer). Ese cierre no
@@ -5412,7 +5419,11 @@ void MainComponent::finishBackendRender(bool success)
   if (renderState.flushChainActive)
   {
     renderState.flushChainActive = false;
-    if (playAfterFlush && (!stillDirty || !hadSnapshot))
+    // D-285/2: pase lo que pase con el trabajo pendiente, el transporte vuelve
+    // a sonar (con el audio nuevo si esta listo, con el ultimo publicado si
+    // no). Un play que se queda parado es otro mute, solo que del transporte;
+    // el reintento sigue en segundo plano.
+    if (playAfterFlush)
     {
       playAfterFlush = false;
       if (onRequestHostSeek)
@@ -5437,16 +5448,28 @@ void MainComponent::finishBackendRender(bool success)
   // publicado en vez de morir a los milisegundos.
   if (stillDirty)
   {
-    if (lastRetryRevision == dirtyRevision)
+    // D-285/2: el presupuesto no puede ser un callejon sin salida. Se agenda
+    // con una espera (un fallo transitorio se resuelve; una cancelacion del
+    // vocoder deja paso al pase siguiente). Con tope, para no girar sin fin.
+    if (lastRetryRevision == dirtyRevision &&
+        retryAttemptsForRevision >= kMaxRetryAttempts)
     {
-      LOG("P1b: cierre fallido sin reintento (rev " +
-          juce::String(dirtyRevision) + " ya reintentada); queda pendiente");
+      LOG("P1b: cierre fallido sin mas reintentos (rev " +
+          juce::String(dirtyRevision) + "); queda pendiente hasta la proxima "
+          "edicion o Play");
       renderState.deferredRenderPending = true;
       return;
     }
-    lastRetryRevision = dirtyRevision;
-    renderState.editRenderInFlight = true;
-    resynthesizeIncremental();
+    if (lastRetryRevision != dirtyRevision)
+    {
+      lastRetryRevision = dirtyRevision;
+      retryAttemptsForRevision = 0;
+    }
+    ++retryAttemptsForRevision;
+    renderState.deferredRenderPending = true;
+    renderState.editRenderScheduled = true;
+    editRenderRequestedAtMs =
+        juce::Time::getMillisecondCounterHiRes() + kRetryBackoffMs;
     return;
   }
 
@@ -5455,6 +5478,51 @@ void MainComponent::finishBackendRender(bool success)
 
   pianoRoll.invalidateWaveformCache();
   pianoRoll.repaint();
+}
+
+// D-285/2 (medicion): la curva se dibuja y se sintetiza desde base + delta, y
+// las notas se dibujan desde su centro. `curve_vs_notes_st` del heartbeat mide
+// cuanto se separan; se dejo SIN reparacion automatica a proposito: si la base
+// manda, reconstruirla desde las notas "arreglaria" el dibujo cambiando el
+// audio (y horneando una edicion que puede ser un accidente del raton). Lo que
+// corresponde es medir, decirlo y dejar que el usuario deshaga.
+void MainComponent::repairDesyncedCurve()
+{
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return;
+  if (renderState.renderPending() || project->hasDirtyNotes() ||
+      project->hasF0DirtyRange())
+    return;
+  if (curveRepairAttempts >= 3)
+    return;
+
+  const float disagreement = project->maxCurveNotesDisagreement();
+  if (disagreement <= 0.5f)
+    return;
+
+  ++curveRepairAttempts;
+  LOG("P1b: curva desfasada de las notas (" + juce::String(disagreement, 3) +
+      " st); reconstruyo la base desde las notas (intento " +
+      juce::String(curveRepairAttempts) + ")");
+  PitchCurveProcessor::rebuildBaseFromNotes(*project);
+  pianoRoll.invalidateBasePitchCache();
+  pianoRoll.invalidateWaveformCache();
+  pianoRoll.repaint();
+  // La base manda: si cambio, el audio tiene que volver a renderizarse. Si las
+  // notas son neutrales no hay nada que marcar por nota, asi que se marca el
+  // rango F0 completo (una reparacion es rara y el audio tiene que coincidir
+  // con lo que se ve).
+  project->markEditedNotesDirty();
+  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange())
+  {
+    const int frames = static_cast<int>(project->getAudioData().f0.size());
+    if (frames > 0)
+      project->setF0DirtyRange(0, frames);
+  }
+  markRenderDirty();
+  if (isPluginMode() && onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 void MainComponent::showSettings()

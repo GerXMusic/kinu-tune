@@ -286,6 +286,14 @@ public:
     // Get adjusted F0 for a specific frame range
     std::vector<float> getAdjustedF0ForRange(int startFrame, int endFrame) const;
 
+    // D-285/2: cuanto se desvia la curva compuesta (base + delta, la que se
+    // dibuja y se sintetiza) del centro de cada nota, en semitonos. Cero con
+    // un proyecto consistente. Sirve para detectar una base que quedo
+    // desfasada de las notas (por ejemplo tras restaurar un archivo): la curva
+    // se ve en otro sitio que las notas. Lee `audioData.f0`, que ya es la curva
+    // compuesta, asi que es barato.
+    float maxCurveNotesDisagreement() const;
+
     // Get frame range that needs resynthesis (based on dirty notes)
     // Returns {-1, -1} if no dirty notes
     std::pair<int, int> getDirtyFrameRange() const;

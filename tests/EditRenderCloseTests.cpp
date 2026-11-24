@@ -443,9 +443,9 @@ void testCloseWithoutSnapshotDecidesNothing() {
   CHECK(access.phase() != RenderState::Phase::Dirty);
 }
 
-// D-285/2: con el reintento de esa revision ya gastado, el borde de Play no
-// para el transporte (antes lo paraba, el flush no podia limpiar y el play
-// moria a los milisegundos en cada intento).
+// D-285/2: el contrato del borde de Play no es «no parar nunca» sino «terminar
+// sonando». Con un render que falla siempre, el Play para, intenta el flush y
+// el cierre vuelve a arrancar el transporte con el ultimo audio publicado.
 void testExhaustedRetryDoesNotStopPlay() {
   EditorController controller(false);
   PitchUndoManager history(100);
@@ -459,8 +459,8 @@ void testExhaustedRetryDoesNotStopPlay() {
   mc.setOnRequestBackendRender(
       [&backend](const Project &source) { backend.request(source); });
 
-  int playStateCalls = 0;
-  mc.setOnRequestHostPlayState([&playStateCalls](bool) { ++playStateCalls; });
+  std::vector<bool> transport;
+  mc.setOnRequestHostPlayState([&transport](bool play) { transport.push_back(play); });
 
   auto &project = *controller.getProject();
   project.getNotes()[0].markDirty();
@@ -471,13 +471,18 @@ void testExhaustedRetryDoesNotStopPlay() {
   backend.pumpUntil(2); // pase + reintento, los dos fallidos
   CHECK(access.deferredRenderPending());
 
-  playStateCalls = 0;
+  // Un Play: se para para el flush y el cierre lo devuelve a sonar.
   const bool held = access.flushForHostPlay();
-  std::printf("D-285/2 Play con reintento gastado: retenido %d (esperado 0) | "
-              "llamadas al transporte %d (esperado 0)\n",
-              held ? 1 : 0, playStateCalls);
-  CHECK(!held);
-  CHECK(playStateCalls == 0);
+  backend.pumpUntil(backend.requests + 1);
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(150);
+
+  const bool endsPlaying = !transport.empty() && transport.back();
+  std::printf("D-285/2 Play con render que falla: retenido %d | llamadas al "
+              "transporte %d | termina sonando %d (esperado 1)\n",
+              held ? 1 : 0, static_cast<int>(transport.size()),
+              endsPlaying ? 1 : 0);
+  CHECK(held);              // si hay trabajo, el Play espera al flush
+  CHECK(endsPlaying);       // pero nunca se queda parado
 }
 
 // D-285: «no hay nada que renderizar» es exito, no fallo. Antes ese `false`

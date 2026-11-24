@@ -347,6 +347,11 @@ private:
   // D-285: red por si un cierre se pierde igual. Suelta la cadena, re-arma un
   // intento (uno por revision) y lo registra. Se sirve desde el timer.
   void rescueStalledRender();
+  // D-285/2: si la curva compuesta quedo desfasada de las notas (se ve la curva
+  // en otro sitio), se reconstruye la base desde las notas. Con tope de
+  // intentos: si no se arregla, se deja de tocar y se reporta.
+  void repairDesyncedCurve();
+  int curveRepairAttempts = 0;
   // D-266 (T6): un unico estado derivado para el render de la UI. Agrupa
   // editRenderScheduled, editRenderInFlight, mcpRenderPending, flushChainActive
   // y deferredRenderPending con el mismo significado y la misma vida (D-261),
@@ -372,6 +377,13 @@ private:
   std::uint64_t flushRenderRevision = 0;
   // D-285: presupuesto de reintento tras un cierre fallido, por revision.
   std::uint64_t lastRetryRevision = 0;
+  // D-285/2: cuantos reintentos lleva esta revision (para no girar sin fin) y
+  // la espera entre ellos. Un cierre fallido no puede dejar el trabajo sin
+  // nadie que lo intente: se agenda y, agotados los intentos, se deja pendiente
+  // hasta la siguiente edicion o Play (que reinician el presupuesto).
+  int retryAttemptsForRevision = 0;
+  static constexpr double kRetryBackoffMs = 1500.0;
+  static constexpr int kMaxRetryAttempts = 3;
   // D-254: lo que el render en vuelo incluyo, por revision. El cierre limpia
   // solo eso (Project::clearDirtyForPass); una edicion que llega despues
   // conserva su dirty y pide su propio pase. Sustituye el barrido global
