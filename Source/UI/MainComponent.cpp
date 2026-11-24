@@ -6308,6 +6308,17 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
       if (!ProjectSerializer::fromJson(*project, json))
         return false;
 
+      // D-285/3: mismo chequeo que en la restauracion del ARA; ver alli.
+      {
+        const float desync = project->maxCurveNotesDisagreement();
+        if (desync > 0.5f)
+        {
+          LOG("P1b: proyecto abierto con la curva desfasada (" +
+              juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
+          PitchCurveProcessor::rebuildBaseFromNotes(*project);
+          project->markEditedNotesDirty();
+        }
+      }
       applyProjectSynthesisEngine();
       pianoRoll.setProject(project);
       pianoRollView.setProject(project);
@@ -6337,6 +6348,20 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
     *project = snapshot;
     if (macroParameters)
       project->setMacroParameters(macroParameters);
+    // D-285/3: un archivo restaurado puede traer las notas ya transpuestas y la
+    // base de antes (visto en vivo: notas +7 semitonos y la curva 7 por debajo).
+    // La nota es la verdad del proyecto: si la curva compuesta no esta en su
+    // centro, se reconstruye la base desde las notas. Una vez, al cargar.
+    {
+      const float desync = project->maxCurveNotesDisagreement();
+      if (desync > 0.5f)
+      {
+        LOG("P1b: archivo restaurado con la curva desfasada (" +
+            juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        project->markEditedNotesDirty();
+      }
+    }
     applyProjectSynthesisEngine();
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
