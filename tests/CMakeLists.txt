@@ -204,6 +204,13 @@ target_link_libraries(SplitPitchNeutralityTests PRIVATE pitchnet_ui)
 target_compile_features(SplitPitchNeutralityTests PRIVATE cxx_std_17)
 add_test(NAME SplitPitchNeutralityTests COMMAND SplitPitchNeutralityTests)
 
+# D-285/3: la curva sigue a las notas después de cada gesto de altura (arrastre,
+# selección, flechas, doble clic, inspector, cortar/unir).
+add_executable(CurveFollowsNotesTests CurveFollowsNotesTests.cpp)
+target_link_libraries(CurveFollowsNotesTests PRIVATE pitchnet_ui)
+target_compile_features(CurveFollowsNotesTests PRIVATE cxx_std_17)
+add_test(NAME CurveFollowsNotesTests COMMAND CurveFollowsNotesTests)
+
 # D-266 (T6): estado unico derivado del render (tabla de transiciones).
 add_executable(RenderStateTests RenderStateTests.cpp)
 target_link_libraries(RenderStateTests PRIVATE pitchnet_core)

@@ -2010,6 +2010,12 @@ void MainComponent::pollMcpControl()
     instance->setProperty("curve_vs_notes_st",
                           project ? project->maxCurveNotesDisagreement() : 0.0f);
     instance->setProperty("curve_repair_attempts", curveRepairAttempts);
+    // D-285/3: ultimo gesto del historial. Si la curva se desfasa, esto dice
+    // cual fue el gesto que lo hizo sin tener que adivinarlo.
+    instance->setProperty("undo_name",
+                          undoManager ? undoManager->getUndoName() : juce::String());
+    instance->setProperty("redo_name",
+                          undoManager ? undoManager->getRedoName() : juce::String());
     // D-266: invariante de reposo del lado de la UI. `backendFlushActive`
     // vive en el procesador (PluginProcessor) y no es visible desde aqui: se
     // verifica por la traza de D-264, no por este canal. Se publica aparte
