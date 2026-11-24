@@ -636,12 +636,9 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     didProcessHostSync = true;
     checkParameterChanges();
 
-    // P1b: durante el flush de Play en plugin no suena el audio anterior.
-    if (backendFlushActive.load(std::memory_order_acquire))
-    {
-      buffer.clear();
-      return;
-    }
+    // D-285: `backendFlushActive` ya no es una puerta de audio; se queda como
+    // estado (isQuiescent, D-266). Silenciar aqui ocultaba el audio viejo que
+    // el usuario tiene que seguir oyendo mientras llega el render nuevo.
 
     const bool handled = processBlockForARA(buffer, isRealtime(), getPlayHead());
     if (handled) {
@@ -1484,10 +1481,19 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   if (controller == nullptr)
     return;
 
-  // P1b: si este render viene del flush de Play, se silencia la salida hasta
-  // que termine (se limpia en el callAsync de cierre).
-  if (mainComponent != nullptr && mainComponent->isFlushChainActive())
+  // P1b: si este render viene del flush de Play, se marca el backend como
+  // ocupado (estado de reposo, D-266). D-285: ya no es una puerta de audio.
+  const bool setFlushGate =
+      mainComponent != nullptr && mainComponent->isFlushChainActive();
+  if (setFlushGate)
     backendFlushActive.store(true, std::memory_order_release);
+
+  // D-285: todo final —bien, mal o descartado— levanta la marca. Antes habia
+  // returns que la dejaban puesta para siempre.
+  const auto clearFlushGate = [this, setFlushGate]() {
+    if (setFlushGate)
+      backendFlushActive.store(false, std::memory_order_release);
+  };
 
   auto *backendProject = controller->getProject();
   if (!backendProject)
@@ -1539,6 +1545,11 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               current->second.revision != renderRegionRevision) {
             if (target != nullptr) modificationRenders[renderRegionKey].pending.store(false);
             else regionCanvasRenderPendingRerun.store(false);
+            // D-285: este final tambien tiene que abrir lo que cerro. Antes
+            // volvia sin limpiar `renderPending` ni la marca del backend.
+            if (renderModification != nullptr)
+              renderModification->renderPending.store(false, std::memory_order_release);
+            clearFlushGate();
             return; // The host split/replaced this project's note and audio data.
           }
         }
@@ -1641,21 +1652,23 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
           }
         }
 
-        // P1b: el render termino (bien o mal): se levanta el silencio. Si fallo,
-        // vuelve a oirse el audio anterior en lugar de quedar mudo.
+        // P1b: el render termino (bien o mal): se levanta el estado pendiente.
+        // D-285: tambien en el camino `target != nullptr`, que antes volvia sin
+        // resetear la marca del backend.
         if (renderModification != nullptr)
           renderModification->renderPending.store(false, std::memory_order_release);
         if (target != nullptr) {
           if (auto it = araRegions.find(renderRegionKey); it != araRegions.end())
             ++it->second.revision;
+          clearFlushGate();
           return;
         }
         juce::Component::SafePointer<juce::Component> renderSafeMain(
             mainComponent ? mainComponent->getComponent() : nullptr);
         juce::MessageManager::callAsync(
             [this, renderSafeMain, success, renderActiveAraRegion,
-             renderRegionStartSeconds]() {
-              backendFlushActive.store(false, std::memory_order_release);
+             renderRegionStartSeconds, clearFlushGate]() {
+              clearFlushGate();
               if (auto *view =
                       dynamic_cast<IMainView *>(renderSafeMain.getComponent())) {
                 if (success) {

@@ -73,6 +73,57 @@ void testStopFlushStartOrder() {
   CHECK(dirty < stop);
 }
 
+// D-285: los pestillos ya no son puertas de audio. Estas guardas de fuente no
+// sustituyen a la escucha; fijan que el mute no vuelva por descuido.
+void testNoRenderPendingMuteInPlaybackRenderer() {
+  const std::string controller =
+      readFile(std::string(P1B_SOURCE_DIR) + "/Plugin/ARADocumentController.cpp");
+  CHECK(!controller.empty());
+  // `renderPending` se queda como estado (lo escribe el procesador), pero el
+  // playback renderer no lo consulta para silenciar.
+  CHECK(controller.find("renderPending.load") == std::string::npos);
+}
+
+void testNoBackendFlushMuteInAudioProcessor() {
+  const std::string processor =
+      readFile(std::string(P1B_SOURCE_DIR) + "/Plugin/PluginProcessor.cpp");
+  CHECK(!processor.empty());
+  // `backendFlushActive` se queda como estado de reposo (D-266), no como puerta.
+  CHECK(processor.find("backendFlushActive.load") == std::string::npos);
+}
+
+void testFinishBackendRenderAlwaysUnmountsChain() {
+  const std::string mainComponent =
+      readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
+  const std::string body =
+      windowAfter(mainComponent, "MainComponent::finishBackendRender", 3000);
+  CHECK(!body.empty());
+  // El desmontaje de la cadena no puede vivir dentro de `if (success ...)`.
+  CHECK(body.find("if (success && flushSnapshotValid)") == std::string::npos);
+  CHECK(body.find("flushChainActive = false") != std::string::npos);
+}
+
+// D-285 F2: el vocoder consulta la cancelacion entre trozos de 1024 frames, y el
+// sintetizador le pasa la bandera del pase (antes solo la miraba antes de
+// empezar: un cambio de motor esperaba al archivo entero).
+void testVocoderCancelsBetweenChunks() {
+  const std::string vocoder =
+      readFile(std::string(P1B_SOURCE_DIR) + "/Audio/Vocoder.cpp");
+  CHECK(!vocoder.empty());
+  CHECK(vocoder.find("cancelled()") != std::string::npos);
+  const std::string loop = windowAfter(vocoder, "Long input: chunked inference", 2200);
+  CHECK(!loop.empty());
+  CHECK(loop.find("isShuttingDown.load()") != std::string::npos);
+  CHECK(loop.find("cancelled()") != std::string::npos);
+
+  const std::string synth =
+      readFile(std::string(P1B_SOURCE_DIR) + "/Audio/Synthesis/IncrementalSynthesizer.cpp");
+  CHECK(!synth.empty());
+  const std::string call = windowAfter(synth, "vocoder->inferAsync(", 300);
+  CHECK(!call.empty());
+  CHECK(call.find("capturedCancelFlag") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -80,6 +131,10 @@ int main() {
   testMainViewHookExists();
   testPlayStateEdgeCallsTheHook();
   testStopFlushStartOrder();
+  testNoRenderPendingMuteInPlaybackRenderer();
+  testNoBackendFlushMuteInAudioProcessor();
+  testFinishBackendRenderAlwaysUnmountsChain();
+  testVocoderCancelsBetweenChunks();
   std::cout << "P1b fase 3 passed\n";
   return 0;
 }

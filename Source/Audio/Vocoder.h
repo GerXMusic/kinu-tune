@@ -65,10 +65,14 @@ public:
    * @param mel Mel spectrogram [T, NUM_MELS] (T frames, each with NUM_MELS
    * values)
    * @param f0 F0 values [T] (fundamental frequency per frame)
-   * @return Synthesized waveform, or empty vector on failure
+   * @param cancelFlag D-285: si se pone a true, se abandona entre trozos de
+   * 1024 frames. El resultado es el mismo que sin cancelar; solo cambia cuando
+   * se deja de esperar.
+   * @return Synthesized waveform, or empty vector on failure/cancellation
    */
   std::vector<float> infer(const std::vector<std::vector<float>> &mel,
-                           const std::vector<float> &f0);
+                           const std::vector<float> &f0,
+                           const std::atomic<bool> *cancelFlag = nullptr);
 
   /**
    * Synthesize with pitch shift.

@@ -72,6 +72,31 @@ int main()
 
     std::cout << "RenderStateTests: Idle -> Dirty(7) -> Rendering(7,100-200,3) "
                  "-> Published; quiescent en Idle/Published\n";
+
+    // D-285: vigilante del cierre perdido. Reloj falso.
+    {
+        RenderState wd;
+        wd.editRenderInFlight = true; // la UI cree que hay un pase en vuelo
+        wd.noteRenderInFlight(1000.0);
+        // Con una peticion viva (mcpRenderPending) nunca se rescata.
+        wd.mcpRenderPending = true;
+        CHECK(!wd.shouldRescueStall(9000.0, 42));
+        wd.mcpRenderPending = false;
+        // Antes del tope, tampoco.
+        CHECK(!wd.shouldRescueStall(2500.0, 42));
+        // Pasado el tope sin peticion viva: rescate.
+        CHECK(wd.shouldRescueStall(1000.0 + RenderState::kStallTimeoutMs, 42));
+        // Un rescate por revision: la misma revision no se repite.
+        wd.lastRescueRevision = 42;
+        CHECK(!wd.shouldRescueStall(9000.0, 42));
+        // Una revision nueva vuelve a tener presupuesto.
+        CHECK(wd.shouldRescueStall(9000.0, 43));
+        // Sin render en vuelo no hay nada que rescatar.
+        wd.noteRenderClosed();
+        CHECK(!wd.shouldRescueStall(9000.0, 44));
+        std::cout << "RenderStateTests: vigilante (3 s, una vez por revision) "
+                     "en verde\n";
+    }
     std::cout << "RenderStateTests: en verde\n";
     return 0;
 }

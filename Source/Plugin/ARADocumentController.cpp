@@ -958,22 +958,11 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
-  // P1b: silencio durante el flush de Play (mismo flag que processBlock).
-  if (auto *proc = docCtrl->getEditorProcessor();
-      proc != nullptr && proc->isBackendFlushActive()) {
-    static std::atomic<juce::int64> lastMuteLogMs{0};
-    const auto nowMs = (juce::int64)juce::Time::getMillisecondCounterHiRes();
-    if (nowMs - lastMuteLogMs.load(std::memory_order_relaxed) >= 1000) {
-      lastMuteLogMs.store(nowMs, std::memory_order_relaxed);
-      juce::File::getSpecialLocation(juce::File::tempDirectory)
-          .getChildFile("pitchcore_p1b_trace.log")
-          .appendText("[mute] flushActive=" +
-                      juce::String(proc->isBackendFlushActive() ? 1 : 0) + "\n");
-    }
-    buffer.clear();
-    return true;
-  }
-
+  // D-285: el render pendiente ya NO es una puerta de audio. Mientras el nuevo
+  // render llega se oye el ultimo audio publicado (criterio de Melodyne: nunca
+  // silencio, como mucho el audio anterior). Este mute era el que dejaba la
+  // region muda para siempre cuando un cierre se perdia.
+  //
   // Produce nothing while the host is mutating the model graph: any region
   // this block would read may be freed before the block finishes.
   //
@@ -993,21 +982,9 @@ bool PitchNetPlaybackRenderer::processBlock(
     return true;
   }
 
-  // P1b: mientras la modificacion tenga un render pendiente no se oye el audio
-  // anterior. No depende de isPlaying ni de transiciones de play.
-  const bool realtimeNow =
-      (realtime == juce::AudioProcessor::Realtime::yes);
-  bool anyPending = false;
-  for (auto *region : getPlaybackRegions())
-    if (auto *mod = region->getAudioModification<PitchNetAudioModification>();
-        mod != nullptr && mod->renderPending.load(std::memory_order_acquire)) {
-      anyPending = true;
-      break;
-    }
-  if (realtimeNow && anyPending) {
-    buffer.clear();
-    return true;
-  }
+  // P1b: mientras la modificacion tenga un render pendiente ya no se silencia
+  // (D-285): se oye el ultimo audio publicado y, al llegar el render, el nuevo.
+  // El mute por `renderPending` convertia un cierre perdido en un mute eterno.
 
   auto timeInSamples = posInfo.getTimeInSamples().orFallback(0);
   bool isPlaying = posInfo.getIsPlaying();

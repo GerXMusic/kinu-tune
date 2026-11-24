@@ -138,7 +138,7 @@ Vocoder::Vocoder()
         continue;
       }
 
-      auto result = infer(task.mel, task.f0);
+      auto result = infer(task.mel, task.f0, task.cancelFlag.get());
 
       // Mark task done
       if (activeAsyncTasks.fetch_sub(1) == 1) {
@@ -496,7 +496,8 @@ bool Vocoder::loadModel(const juce::File &modelPath)
 }
 
 std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
-                                  const std::vector<float> &f0)
+                                  const std::vector<float> &f0,
+                                  const std::atomic<bool> *cancelFlag)
 {
   if (!loaded || mel.empty() || f0.empty())
     return {};
@@ -505,6 +506,15 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   std::lock_guard<std::mutex> lock(inferenceMutex);
 
   if (isShuttingDown.load())
+    return {};
+
+  // D-285 (F2): la cancelacion se consulta entre trozos, no solo antes de
+  // empezar. Un cambio de motor deja de esperar al archivo entero: como mucho
+  // espera al trozo en curso. El resultado es el mismo sin cancelar; solo
+  // cambia cuando se abandona.
+  const auto cancelled = [cancelFlag]()
+  { return cancelFlag != nullptr && cancelFlag->load(); };
+  if (cancelled())
     return {};
 
   const size_t numFrames = std::min(mel.size(), f0.size());
@@ -543,6 +553,11 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
            ++chunkIdx, frameOff += step) {
         if (isShuttingDown.load())
           return std::vector<float>{};
+        if (cancelled()) {
+          log("Core ML inference cancelled before chunk " +
+              std::to_string(chunkIdx));
+          return std::vector<float>{};
+        }
         const size_t chunkEnd =
             std::min(frameOff + maxChunkFrames, numFrames);
         const size_t chunkFrames = chunkEnd - frameOff;
@@ -681,6 +696,12 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
     {
       if (isShuttingDown.load())
         return {};
+      if (cancelled())
+      {
+        log("Chunked inference cancelled before chunk " +
+            std::to_string(chunkIdx));
+        return {};
+      }
       const size_t chunkEnd =
           std::min(frameOff + kMaxChunkFrames, numFrames);
       const size_t chunkFrames = chunkEnd - frameOff;

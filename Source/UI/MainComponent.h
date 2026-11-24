@@ -344,6 +344,9 @@ private:
   // ya esperando un flush.
   void serviceEditRender();
   double editRenderRequestedAtMs = 0.0;
+  // D-285: red por si un cierre se pierde igual. Suelta la cadena, re-arma un
+  // intento (uno por revision) y lo registra. Se sirve desde el timer.
+  void rescueStalledRender();
   // D-266 (T6): un unico estado derivado para el render de la UI. Agrupa
   // editRenderScheduled, editRenderInFlight, mcpRenderPending, flushChainActive
   // y deferredRenderPending con el mismo significado y la misma vida (D-261),
@@ -367,6 +370,8 @@ private:
   // the "sometimes it does not smooth" report).
   std::uint64_t dirtyRevision = 0;
   std::uint64_t flushRenderRevision = 0;
+  // D-285: presupuesto de reintento tras un cierre fallido, por revision.
+  std::uint64_t lastRetryRevision = 0;
   // D-254: lo que el render en vuelo incluyo, por revision. El cierre limpia
   // solo eso (Project::clearDirtyForPass); una edicion que llega despues
   // conserva su dirty y pide su propio pase. Sustituye el barrido global

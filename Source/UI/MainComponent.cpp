@@ -3006,6 +3006,7 @@ void MainComponent::timerCallback()
 
   pollMcpControl();
   serviceEditRender();
+  rescueStalledRender();
   dispatchPendingDragAudition();
 
   // Handle throttled cursor updates (30Hz max)
@@ -4417,6 +4418,8 @@ void MainComponent::resynthesizeIncremental()
   }
 
   renderState.mcpRenderPending = true;
+  // D-285: el vigilante cuenta desde la primera peticion viva de esta cadena.
+  renderState.noteRenderInFlight(nowMs());
   ++renderState.generation;
   // D-266: que cubre este pase. El rango se afina con las notas sucias en la
   // rama del plugin (abajo); si no hay notas, se usa el rango F0.
@@ -4487,6 +4490,7 @@ void MainComponent::resynthesizeIncremental()
           return;
 
         safeThis->renderState.mcpRenderPending = false;
+        safeThis->renderState.noteRenderClosed();
         safeThis->pushSweepState();
 
         safeThis->setToolGroupEnabled(true);
@@ -4496,6 +4500,24 @@ void MainComponent::resynthesizeIncremental()
 
         if (!success)
         {
+          // D-285: un pase fallido no puede dejar clavada la cadena de flush
+          // (el pestillo que dejaba el editor sin poder pedir otro render).
+          safeThis->renderState.noteRenderClosed();
+          if (safeThis->renderState.flushChainActive)
+          {
+            safeThis->renderState.flushChainActive = false;
+            auto *chainProject = safeThis->getProject();
+            const bool stillDirty =
+                chainProject != nullptr &&
+                (chainProject->hasDirtyNotes() ||
+                 chainProject->hasF0DirtyRange());
+            if (!stillDirty && safeThis->playAfterFlush)
+            {
+              safeThis->playAfterFlush = false;
+              safeThis->play();
+            }
+            LOG("P1b: pase de edicion fallido; cadena liberada, queda pendiente");
+          }
           return;
         }
 
@@ -4593,6 +4615,63 @@ void MainComponent::serviceEditRender()
       " f0Dirty=" + juce::String(project->hasF0DirtyRange() ? 1 : 0));
   renderState.editRenderInFlight = true;
   resynthesizeIncremental();
+}
+
+// D-285: red por si un cierre se pierde igual. Si el estado dice que hay un
+// render en vuelo pero no hay ninguna peticion viva durante 3 s, se suelta la
+// cadena y se re-arma un intento (uno por revision). No es un parche del
+// sintoma —ese lo cierran los pestillos de finishBackendRender—, es lo que
+// impide que un cierre perdido vuelva a dejar el editor sin poder renderizar.
+void MainComponent::rescueStalledRender()
+{
+  if (!renderState.shouldRescueStall(nowMs(), dirtyRevision))
+    return;
+
+  const bool wasChain = renderState.flushChainActive;
+  renderState.lastRescueRevision = dirtyRevision;
+  renderState.editRenderInFlight = false;
+  renderState.flushChainActive = false;
+  renderState.noteRenderClosed();
+
+  auto *project = getProject();
+  const bool stillDirty =
+      project != nullptr &&
+      (project->hasDirtyNotes() || project->hasF0DirtyRange());
+
+  LOG("P1b: rescate del render atascado rev=" + juce::String(dirtyRevision) +
+      " chain=" + juce::String(wasChain ? 1 : 0) +
+      " stillDirty=" + juce::String(stillDirty ? 1 : 0));
+
+  if (stillDirty)
+  {
+    // Sin debounce: ya se esperaron los 3 s del vigilante.
+    renderState.editRenderScheduled = true;
+    editRenderRequestedAtMs = 0.0;
+    if (wasChain)
+    {
+      renderState.deferredRenderPending = true;
+      flushDirtyBlocks();
+    }
+    else
+    {
+      serviceEditRender();
+    }
+    return;
+  }
+
+  renderState.deferredRenderPending = false;
+  if (wasChain && playAfterFlush)
+  {
+    playAfterFlush = false;
+    if (onRequestHostSeek)
+      onRequestHostSeek(flushResumePosition);
+    play();
+  }
+  if (resumeSaveAfterFlush)
+  {
+    resumeSaveAfterFlush = false;
+    saveProject(saveAsAfterFlush);
+  }
 }
 
 // P1b fase 6: el barrido se alimenta de la cola, no del proyecto. Solo se
@@ -5223,6 +5302,8 @@ void MainComponent::hideAnalysisProgress()
 void MainComponent::finishBackendRender(bool success)
 {
   renderState.mcpRenderPending = false;
+  // D-285: el reloj del vigilante solo corre entre peticion y cierre.
+  renderState.noteRenderClosed();
   pushSweepState();
   setToolGroupEnabled(true);
   toolbar.hideProgress();
@@ -5235,52 +5316,88 @@ void MainComponent::finishBackendRender(bool success)
   // sin tocar el transporte. Asi el estado sucio del editor no puede quedarse
   // puesto (que es lo que deja la region muda por renderPending).
   renderState.editRenderInFlight = false;
-  if (success && flushSnapshotValid)
+
+  // D-285: la instantanea se consume SIEMPRE. Antes, con `success == false`,
+  // este bloque se saltaba entero y los pestillos (`flushChainActive`) se
+  // quedaban clavados: despues ya no habia nadie que pudiera renderizar.
+  auto *projectNow = getProject();
+  if (flushSnapshotValid)
   {
-    auto *doneProject = getProject();
-    if (doneProject != nullptr)
-    {
-      // D-254: se limpia solo lo que este pase renderizo, por revision. Lo que
-      // llego despues conserva su dirty (D-227 no borra la edicion nueva) y se
-      // pide su propio pase aqui abajo.
-      doneProject->clearDirtyForPass(flushDirtyNoteSnapshot, flushF0SnapshotStart,
-                                     flushF0SnapshotEnd,
-                                     flushF0SnapshotRevision);
-    }
+    // D-254: se limpia solo lo que este pase renderizo, por revision. Lo que
+    // llego despues conserva su dirty (D-227 no borra la edicion nueva) y se
+    // pide su propio pase aqui abajo. Un pase fallido no limpia nada.
+    if (success && projectNow != nullptr)
+      projectNow->clearDirtyForPass(flushDirtyNoteSnapshot, flushF0SnapshotStart,
+                                    flushF0SnapshotEnd, flushF0SnapshotRevision);
     flushDirtyNoteSnapshot.clear();
     flushSnapshotValid = false;
-    const bool stillDirty =
-        doneProject != nullptr &&
-        (doneProject->hasDirtyNotes() || doneProject->hasF0DirtyRange());
-    LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
-        " requestRev=" + juce::String(flushRenderRevision) +
-        " stillDirty=" + juce::String(stillDirty ? 1 : 0));
-    if (stillDirty)
-    {
-      // D-227/D-254: el estado nuevo se renderiza ya; su cierre limpiara su
-      // propia instantanea (antes quedaba sucio para siempre, porque el
-      // re-render se cerraba sin pasar por la rama de limpieza).
-      if (!renderState.flushChainActive)
-        renderState.editRenderInFlight = true;
-      resynthesizeIncremental();
-      return;
-    }
+  }
+
+  const bool stillDirty =
+      projectNow != nullptr &&
+      (projectNow->hasDirtyNotes() || projectNow->hasF0DirtyRange());
+
+  LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
+      " requestRev=" + juce::String(flushRenderRevision) +
+      " success=" + juce::String(success ? 1 : 0) +
+      " stillDirty=" + juce::String(stillDirty ? 1 : 0));
+
+  // Camino bueno con trabajo nuevo: el pase siguiente, sin tocar la cadena
+  // (D-227/D-254).
+  if (success && stillDirty)
+  {
+    if (!renderState.flushChainActive)
+      renderState.editRenderInFlight = true;
+    resynthesizeIncremental();
+    return;
+  }
+
+  if (!stillDirty)
+  {
     deferredRenders.clear();
     renderState.deferredRenderPending = false;
     // D-266: ya no queda nada en vuelo ni en cola; el estado derivado pasa a
     // Published aunque haya sido un render de edicion (no de Play).
-    if (renderState.flushChainActive)
+  }
+
+  // D-285: la cadena se desmonta en todo final. Si este flush paro el
+  // transporte, solo se reanuda cuando ya no queda nada sucio.
+  if (renderState.flushChainActive)
+  {
+    renderState.flushChainActive = false;
+    if (!stillDirty && playAfterFlush)
     {
-      renderState.flushChainActive = false;
-      // Solo se reanuda si este flush fue quien paro el transporte.
-      if (playAfterFlush)
-      {
-        playAfterFlush = false;
-        if (onRequestHostSeek)
-          onRequestHostSeek(flushResumePosition);
-        play();
-      }
+      playAfterFlush = false;
+      if (onRequestHostSeek)
+        onRequestHostSeek(flushResumePosition);
+      play();
     }
+  }
+
+  // P1b fase 4: el guardado que esperaba al flush se reanuda aqui, con los
+  // bloques ya limpios.
+  if (!stillDirty && resumeSaveAfterFlush)
+  {
+    resumeSaveAfterFlush = false;
+    saveProject(saveAsAfterFlush);
+  }
+
+  // Fallo con trabajo pendiente: se re-arma un intento, con presupuesto de uno
+  // por revision (D-285). Agotado el presupuesto, el trabajo queda pendiente
+  // hasta la siguiente edicion o Play, y se dice en el LOG: nunca un mute.
+  if (stillDirty)
+  {
+    if (lastRetryRevision == dirtyRevision)
+    {
+      LOG("P1b: cierre fallido sin reintento (rev " +
+          juce::String(dirtyRevision) + " ya reintentada); queda pendiente");
+      renderState.deferredRenderPending = true;
+      return;
+    }
+    lastRetryRevision = dirtyRevision;
+    renderState.editRenderInFlight = true;
+    resynthesizeIncremental();
+    return;
   }
 
   if (!success)

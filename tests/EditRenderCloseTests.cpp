@@ -159,10 +159,14 @@ struct MainComponentTestAccess {
 
   void serviceEditRender() { mc.serviceEditRender(); }
   void markRenderDirty() { mc.markRenderDirty(); }
+  void flushDirtyBlocks() { mc.flushDirtyBlocks(); }
   void bypassDebounce() {
     mc.editRenderRequestedAtMs = juce::Time::getMillisecondCounterHiRes() - 1000.0;
   }
   bool editRenderInFlight() const { return mc.renderState.editRenderInFlight; }
+  bool flushChainActive() const { return mc.renderState.flushChainActive; }
+  bool deferredRenderPending() const { return mc.renderState.deferredRenderPending; }
+  RenderState::Phase phase() const { return mc.renderState.phase(); }
 };
 
 namespace {
@@ -211,6 +215,32 @@ struct BackendSim {
 };
 
 } // namespace
+
+// D-285: backend que cierra con el resultado que se le diga. Sirve para medir
+// que un cierre fallido suelta la cadena y deja pedir otro render.
+struct FailingBackend {
+  std::function<void(bool)> finish;
+  int requests = 0;
+  bool fail = true;
+
+  void request(const Project &) {
+    ++requests;
+    const bool ok = !fail;
+    juce::MessageManager::callAsync([this, ok]() {
+      if (finish)
+        finish(ok);
+    });
+  }
+
+  void pumpUntil(int wantedRequests) {
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+    while (requests < wantedRequests &&
+           juce::Time::getMillisecondCounterHiRes() < deadline)
+      juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+    // Deja correr el cierre pendiente de la ultima peticion.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+  }
+};
 
 // Test
 namespace {
@@ -312,9 +342,102 @@ void testS4dCloseKeepsSecondEdit() {
 }
 } // namespace
 
+namespace {
+// D-285: un cierre fallido no puede clavar la cadena. Antes `finishBackendRender`
+// se saltaba entero el desmontaje con `success == false` y el siguiente cambio
+// de motor ya no tenia quien renderizase: la region quedaba muda hasta quitar y
+// reinsertar el plugin.
+void testFailedCloseReleasesChainAndRecovers() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false); // plugin: sin dispositivo de audio
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  FailingBackend backend;
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  auto &project = *controller.getProject();
+  project.getNotes()[0].markDirty();
+  project.getNotes()[0].markSynthDirty();
+  access.markRenderDirty();
+
+  // Cadena de Play: un solo bloque sucio.
+  access.flushDirtyBlocks();
+  CHECK(access.flushChainActive());
+  CHECK(backend.requests == 1);
+
+  // La primera peticion cierra con `false`: la cadena se suelta y se re-arma un
+  // intento. El segundo `false` agota el presupuesto (uno por revision).
+  backend.pumpUntil(2);
+
+  std::printf("D-285 cierre fallido: peticiones %d (esperado 2) | cadena %d "
+              "(esperado 0) | en vuelo %d (esperado 0) | fase %s\n",
+              backend.requests, access.flushChainActive() ? 1 : 0,
+              access.editRenderInFlight() ? 1 : 0,
+              RenderState::phaseName(access.phase()));
+  CHECK(backend.requests == 2);
+  CHECK(!access.flushChainActive());
+  CHECK(!access.editRenderInFlight());
+  CHECK(access.phase() != RenderState::Phase::Rendering);
+  // No se limpio nada: el trabajo sigue pendiente para la siguiente edicion.
+  CHECK(project.getNotes()[0].isDirty());
+  CHECK(access.deferredRenderPending());
+
+  // Recuperacion sin reinsertar el plugin: un cambio de motor posterior (aqui,
+  // otra edicion con el mismo camino) pide y completa un render.
+  backend.fail = false;
+  access.markRenderDirty();
+  access.bypassDebounce();
+  access.serviceEditRender();
+  CHECK(access.editRenderInFlight());
+  CHECK(backend.requests == 3);
+  backend.pumpUntil(4);
+  std::printf("D-285 recuperacion: nota 0 dirty %d (esperado 0) | en vuelo %d "
+              "(esperado 0)\n",
+              project.getNotes()[0].isDirty() ? 1 : 0,
+              access.editRenderInFlight() ? 1 : 0);
+  CHECK(!access.editRenderInFlight());
+  CHECK(!project.getNotes()[0].isDirty());
+}
+
+// D-285: «no hay nada que renderizar» es exito, no fallo. Antes ese `false`
+// envenenaba la cadena de cierre y mostraba «Render fallo» sin fallo alguno.
+void testCleanProjectIsNoOpSuccess() {
+  EditorController controller(false);
+  auto &project = *controller.getProject();
+  project = makeProject(NoteEngine::Psola);
+  project.clearAllDirty();
+  CHECK(!project.hasDirtyNotes());
+  CHECK(!project.hasF0DirtyRange());
+
+  std::atomic<bool> pendingRerun{false};
+  bool called = false;
+  bool reported = false;
+  controller.resynthesizeIncrementalAsync(
+      project, nullptr,
+      [&](bool ok) {
+        called = true;
+        reported = ok;
+      },
+      pendingRerun, /*isPluginMode*/ false);
+
+  std::printf("D-285 proyecto limpio: onComplete %d (esperado 1) | valor %d "
+              "(esperado 1)\n",
+              called ? 1 : 0, reported ? 1 : 0);
+  CHECK(called);
+  CHECK(reported);
+}
+} // namespace
+
 int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   testS4dCloseKeepsSecondEdit();
+  testFailedCloseReleasesChainAndRecovers();
+  testCleanProjectIsNoOpSuccess();
   std::printf("EditRenderCloseTests: en verde\n");
   return 0;
 }

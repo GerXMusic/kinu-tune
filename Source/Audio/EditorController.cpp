@@ -589,6 +589,18 @@ void EditorController::resynthesizeIncrementalAsync(
       onComplete(false);
     return;
   }
+
+  // D-285: "no hay nada que renderizar" no es un fallo. Antes este caso
+  // entregaba `false`, envenenaba la cadena de cierre (finishBackendRender con
+  // fallo) y mostraba «Render fallo» sin que nada hubiera fallado. Va antes de
+  // la carga del vocoder: un proyecto limpio no tiene por que cargarlo.
+  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())
+  {
+    if (onComplete)
+      onComplete(true);
+    return;
+  }
+
   if (!vocoder->isReady())
   {
     auto modelPath = PlatformPaths::getVocoderModelFile();
@@ -632,8 +644,11 @@ void EditorController::resynthesizeIncrementalAsync(
   }
 
   if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())  {
+    // D-285: sin trabajo no hay fallo (ver la comprobacion temprana). Este
+    // punto solo se alcanza si el proyecto se limpio mientras cargaba el
+    // vocoder; tambien es un no-op correcto.
     if (onComplete)
-      onComplete(false);
+      onComplete(true);
     return;
   }
 

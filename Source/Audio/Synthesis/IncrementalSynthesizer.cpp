@@ -900,8 +900,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
   if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
       !project->hasF0DirtyRange()) {
+    // D-285: sin trabajo no hay fallo; antes este no-op se contaba como render
+    // fallido y cerraba la cadena con `false`.
     if (onComplete)
-      onComplete(false);
+      onComplete(true);
     return;
   }
 
@@ -936,8 +938,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int rawDirtyStart = dirtyStart;
   const int rawDirtyEnd = dirtyEnd;
   if (dirtyStart < 0 || dirtyEnd < 0) {
+    // D-285: no hay rango dirty = no hay trabajo. No es un fallo de render.
     if (onComplete)
-      onComplete(false);
+      onComplete(true);
     return;
   }
 
@@ -2267,7 +2270,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                         capturedCancelFlag);
     } else {
       vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
-                          std::move(onRendered));
+                          std::move(onRendered), capturedCancelFlag);
     }
     return;
   }

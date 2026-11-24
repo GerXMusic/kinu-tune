@@ -49,6 +49,43 @@ struct RenderState
     int passEndFrame = 0;
     std::uint32_t generation = 0;
 
+    // D-285: vigilante del cierre perdido. Si este estado dice que hay un render
+    // en vuelo pero no hay ninguna peticion viva (`mcpRenderPending` falso)
+    // durante kStallTimeoutMs, el cierre se perdio y hay que soltar la cadena y
+    // re-armar un intento. El reloj entra por parametro para poder medirlo con
+    // un reloj falso.
+    static constexpr double kStallTimeoutMs = 3000.0;
+    double inFlightSinceMs = -1.0;
+    // Presupuesto: un rescate por revision de edicion (D-285).
+    std::uint64_t lastRescueRevision = 0;
+
+    // Se llama cuando se pide un render de verdad (mcpRenderPending acaba de
+    // pasar a true). Conserva el primer instante: encadenar bloques no reinicia
+    // el reloj del vigilante.
+    void noteRenderInFlight(double nowMs)
+    {
+        if (inFlightSinceMs < 0.0)
+            inFlightSinceMs = nowMs;
+    }
+
+    // Se llama en todo cierre (bien, mal o descartado).
+    void noteRenderClosed() { inFlightSinceMs = -1.0; }
+
+    bool shouldRescueStall(double nowMs, std::uint64_t revision) const
+    {
+        if (mcpRenderPending)
+            return false; // hay un render vivo: no es un atasco
+        if (!renderPending())
+            return false;
+        if (inFlightSinceMs < 0.0)
+            return false;
+        if (nowMs - inFlightSinceMs < kStallTimeoutMs)
+            return false;
+        if (revision != 0 && revision == lastRescueRevision)
+            return false; // ya se rescato esta revision
+        return true;
+    }
+
     bool renderPending() const
     {
         return editRenderInFlight || mcpRenderPending || flushChainActive;
