@@ -942,6 +942,15 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
   parameterPanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
   {
+    // D-288: con el transporte sonando, no.
+    if (isPlaying)
+    {
+      LOG("engine: cambio global rechazado, el transporte esta sonando (D-288)");
+      enginePanel.setBlockNotice(
+          "Para cambiar de motor, para la reproducci�n.");
+      parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
+      return;
+    }
     settingsManager->setSynthesisEngineType(type);
     settingsManager->saveConfig();
     // The preference above is the default for new documents. This document
@@ -965,6 +974,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   enginePanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
   enginePanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
   {
+    // D-288: con el transporte sonando, no. La seleccion del rail vuelve a la
+    // que manda el documento y el aviso de bloqueo sigue en el propio rail.
+    if (isPlaying)
+    {
+      LOG("engine: cambio global rechazado, el transporte esta sonando (D-288)");
+      enginePanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
+      return;
+    }
     settingsManager->setSynthesisEngineType(type);
     settingsManager->saveConfig();
     if (auto *project = getProject())
@@ -2378,6 +2395,13 @@ void MainComponent::pollMcpControl()
           indices.push_back(static_cast<int>(value));
       if (!engineValid || indices.empty())
         response->setProperty("error", "Se requieren índices de nota y un motor válido: Inherit, Vocoder, PSOLA o Pitchcore.");
+      else if (isPlaying)
+      {
+        // D-288: misma regla que la UI; el canal no puede discrepar de ella.
+        response->setProperty("error",
+                              "Para cambiar de motor hay que parar la reproducción (D-288).");
+        response->setProperty("blocked_while_playing", true);
+      }
       else
       {
         const auto &notes = project->getNotes();
@@ -2698,6 +2722,13 @@ void MainComponent::pollMcpControl()
 
       if (!valid)
         response->setProperty("error", "engine debe ser PSOLA, Pitchcore o Vocoder.");
+      else if (isPlaying)
+      {
+        // D-288: misma regla que la UI.
+        response->setProperty("error",
+                              "Para cambiar de motor hay que parar la reproducción (D-288).");
+        response->setProperty("blocked_while_playing", true);
+      }
       else
       {
         // Same path as the Rendering card, so the document records its own
@@ -4987,6 +5018,15 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   auto *project = getProject();
   if (project == nullptr)
     return 0;
+  // D-288: con el transporte sonando no se cambia el motor. Es la misma regla
+  // que deshabilita el selector; aqui es la puerta de atras (menu, MCP).
+  if (isPlaying)
+  {
+    LOG("engine block: rechazado, el transporte esta sonando (D-288)");
+    enginePanel.setBlockNotice(
+        "Para cambiar de motor, para la reproducci�n.");
+    return 0;
+  }
   auto &notes = project->getNotes();
   if (notes.empty() || indices.empty())
     return 0;
@@ -6238,6 +6278,11 @@ void MainComponent::updateHostPlaybackState(bool hostIsPlaying)
   isPlaying = hostIsPlaying;
   toolbar.setPlaying(hostIsPlaying);
   pianoRoll.setPlaybackActive(hostIsPlaying);
+  // D-288: un cambio de motor re-renderiza todo el proyecto; con el transporte
+  // sonando la publicacion por bloque mezclaria dos motores durante un rato
+  // (medido en vivo: 10 notas en Pitchcore y el resto en Vocoder). Se bloquea el
+  // selector del rail mientras suena y se explica en el propio rail.
+  enginePanel.setEngineEditingEnabled(!hostIsPlaying);
 }
 
 void MainComponent::updateHostTimelineState(double bpm, int numerator,

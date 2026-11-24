@@ -76,6 +76,8 @@ int EnginePanel::ChoiceList::rowAt(juce::Point<int> p) const
 
 void EnginePanel::ChoiceList::mouseDown(const juce::MouseEvent& e)
 {
+    if (!interactionEnabled)
+        return;
     const int row = rowAt(e.getPosition());
     if (row < 0 ||
         (row < static_cast<int>(rowEnabled.size()) && !rowEnabled[static_cast<size_t>(row)]))
@@ -299,8 +301,29 @@ void EnginePanel::setRenderStatusText(const juce::String& text)
 
 void EnginePanel::setBlockNotice(const juce::String& text)
 {
-    blockNotice.setText(text, juce::dontSendNotification);
-    blockNotice.setVisible(text.isNotEmpty());
+    pendingBlockNotice = text;
+    applyNotice();
+}
+
+void EnginePanel::setEngineEditingEnabled(bool enabled)
+{
+    if (engineEditingEnabled == enabled)
+        return;
+    engineEditingEnabled = enabled;
+    engineChoices.setInteractionEnabled(enabled);
+    blockChoices.setInteractionEnabled(enabled);
+    // D-288: el rail dice por que no se puede, sin dialogo modal (D-263).
+    applyNotice();
+}
+
+void EnginePanel::applyNotice()
+{
+    const juce::String message =
+        engineEditingEnabled
+            ? pendingBlockNotice
+            : juce::String("Para cambiar de motor, para la reproducción.");
+    blockNotice.setText(message, juce::dontSendNotification);
+    blockNotice.setVisible(message.isNotEmpty());
     resized();
     repaint();
 }

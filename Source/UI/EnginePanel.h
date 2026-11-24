@@ -40,6 +40,12 @@ public:
     juce::String getBlockNoticeText() const { return blockNotice.getText(); }
     bool isBlockNoticeVisible() const { return blockNotice.isVisible(); }
 
+    // D-288: bloqueo del selector de motor mientras el transporte suena. El
+    // aviso del rail dice por que, sin dialogo (D-263: un AlertWindow cerro
+    // REAPER). Al desbloquear se restaura el aviso D-258 que hubiera.
+    void setEngineEditingEnabled(bool enabled);
+    bool isEngineEditingEnabled() const { return engineEditingEnabled; }
+
     // Tarea 1 (2026-11-22): comprobacion del alineado del cajon. Devuelve los
     // rectangulos de todos los controles y si los rotulos van a la izquierda.
     juce::Array<juce::Rectangle<int>> getAlignedControlBounds() const;
@@ -57,6 +63,12 @@ private:
         void setOptions(std::vector<juce::String> labels);
         void setSelected(int index, bool notify);
         void setRowEnabled(int index, bool enabled);
+        // D-288: con el transporte sonando no se puede cambiar de motor (un
+        // cambio es un re-render de todo el proyecto y publicaria una mezcla de
+        // dos motores; medido en vivo: 10 notas en Pitchcore y el resto en
+        // Vocoder). La fila se ve igual; solo deja de responder.
+        void setInteractionEnabled(bool enabled) { interactionEnabled = enabled; }
+        bool isInteractionEnabled() const { return interactionEnabled; }
         int getSelected() const { return selected; }
         int getPreferredHeight() const;
         void paint(juce::Graphics& g) override;
@@ -71,10 +83,12 @@ private:
         std::vector<bool> rowEnabled;
         int selected = -1;
         int hovered = -1;
+        bool interactionEnabled = true;
     };
 
     void timerCallback() override;
     void applyModeVisibility();
+    void applyNotice();
 
     EditorUiMode editorMode = EditorUiMode::Basic;
     bool aiAvailable = true;
@@ -101,6 +115,9 @@ private:
     int deviceIndex = 0;
     juce::String renderStatus;
     bool hasDeviceRow = false;
+    // D-288
+    bool engineEditingEnabled = true;
+    juce::String pendingBlockNotice;
 
     LocalisationWatcher languageWatcher{[this] {
         refreshLocalisedText();

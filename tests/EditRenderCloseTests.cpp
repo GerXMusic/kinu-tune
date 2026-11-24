@@ -178,6 +178,10 @@ struct MainComponentTestAccess {
     mc.dirtyRevision = dirty;
     mc.lastCatchUpRevision = 0;
   }
+  // D-288
+  int applyNoteEngineToIndices(const std::vector<int> &indices, NoteEngine engine) {
+    return mc.applyNoteEngineToIndices(indices, engine);
+  }
 };
 
 namespace {
@@ -351,6 +355,37 @@ void testS4dCloseKeepsSecondEdit() {
   CHECK(diff <= 1.0e-7f);
   CHECK(!project.getNotes()[2].isDirty());
 }
+// D-288: con el transporte sonando no se cambia el motor. Un cambio de motor es
+// un re-render de todo el proyecto y la publicacion es por bloque: medido en
+// vivo, con Play el primer bloque entro en Pitchcore y el resto siguio en
+// Vocoder durante un rato. La regla se comprueba en la puerta de atras (el
+// mismo camino que el MCP y el menu), no solo deshabilitando el rail.
+void testEngineChangeBlockedWhilePlaying() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  auto &notes = controller.getProject()->getNotes();
+  CHECK(notes[0].getEngine() == NoteEngine::Psola);
+
+  mc.updateHostPlaybackState(true);
+  access.applyNoteEngineToIndices({0}, NoteEngine::Vocoder);
+  const bool blocked = notes[0].getEngine() == NoteEngine::Psola;
+  std::printf("D-288 motor con Play: sin cambio %d (esperado 1)\n",
+              blocked ? 1 : 0);
+  CHECK(blocked);
+
+  mc.updateHostPlaybackState(false);
+  access.applyNoteEngineToIndices({0}, NoteEngine::Vocoder);
+  const bool applied = notes[0].getEngine() == NoteEngine::Vocoder;
+  std::printf("D-288 motor parado: aplicado %d (esperado 1)\n",
+              applied ? 1 : 0);
+  CHECK(applied);
+}
+
 // D-287: el audio publicado no puede quedarse en una revision anterior a la del
 // modelo. Medido en vivo: pass=44 < dirty=47, nada agendado ni en vuelo, notas
 // limpias y el buffer aun con el motor anterior mientras el estado decia
@@ -577,6 +612,7 @@ void testCleanProjectIsNoOpSuccess() {
 int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   testS4dCloseKeepsSecondEdit();
+  testEngineChangeBlockedWhilePlaying();
   testStaleAudioIsCaughtUpOnce();
   testFailedCloseReleasesChainAndRecovers();
   testCloseWithoutSnapshotDecidesNothing();

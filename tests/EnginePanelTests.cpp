@@ -59,6 +59,23 @@ int main()
     panel.setBlockNotice({});
     CHECK(!panel.isBlockNoticeVisible());
 
+    // D-288: con el transporte sonando el selector no responde y el rail dice
+    // por que; al soltar, vuelve el aviso que hubiera y no queda ningun dialogo.
+    panel.setBlockNotice(notice);
+    panel.setEngineEditingEnabled(false);
+    std::cout << "D-288 selector bloqueado: habilitado="
+              << (panel.isEngineEditingEnabled() ? 1 : 0)
+              << " aviso=\"" << panel.getBlockNoticeText().toStdString() << "\"\n";
+    CHECK(!panel.isEngineEditingEnabled());
+    CHECK(panel.isBlockNoticeVisible());
+    CHECK(panel.getBlockNoticeText().containsIgnoreCase("reproducci"));
+    CHECK(!anyDialogOnDesktop());
+
+    panel.setEngineEditingEnabled(true);
+    CHECK(panel.isEngineEditingEnabled());
+    CHECK(panel.getBlockNoticeText() == notice); // vuelve el aviso D-258
+    CHECK(!anyDialogOnDesktop());
+
     std::cout << "EnginePanelTests: en verde\n";
     return 0;
 }
