@@ -386,6 +386,106 @@ void testEngineChangeBlockedWhilePlaying() {
   CHECK(applied);
 }
 
+// D-289 (candidato): un cambio de motor GLOBAL tiene que re-renderizar TODOS los
+// bloques, no solo los primeros. Medido en vivo: con «seguir global» en todas las
+// notas, el usuario oia «las 10 primeras notas con el motor nuevo y el resto con
+// el anterior». El recorrido D-197 pide un bloque por pase; si se corta, el
+// cierre limpia la instantanea entera (todas las notas de la misma revision) y
+// el resto se queda con el motor viejo para siempre.
+namespace {
+Project makeThreeBlockProject() {
+  Project project;
+  auto &audio = project.getAudioData();
+  audio.sampleRate = kSampleRate;
+  const int frames = 560;
+  juce::AudioBuffer<float> buffer(1, frames * kHop);
+  struct Span { int a, b; float midi; };
+  const Span spans[] = {{40, 120, 57.0f}, {120, 200, 59.0f},   // bloque 1
+                        {240, 320, 62.0f},                    // bloque 2
+                        {360, 440, 64.0f}};                   // bloque 3
+  audio.melSpectrogram.assign(static_cast<size_t>(frames),
+                              std::vector<float>(NUM_MELS, 1.0f));
+  audio.denseF0.assign(static_cast<size_t>(frames), 0.0f);
+  audio.voicedMask.assign(static_cast<size_t>(frames), false);
+  for (const auto &span : spans) {
+    for (int f = span.a; f < span.b; ++f) {
+      audio.voicedMask[static_cast<size_t>(f)] = true;
+      audio.denseF0[static_cast<size_t>(f)] = midiHz(span.midi);
+    }
+    Note note(span.a, span.b, span.midi);
+    note.setOriginalMidiNote(span.midi);
+    note.setEngine(NoteEngine::Inherit);
+    note.setPitchOffset(2.0f); // editada: entra en el plan de bloques
+    note.setOriginalDeltaPitch(
+        std::vector<float>(span.b - span.a, 0.0f));
+    project.addNote(note);
+  }
+  double phase = 0.0;
+  for (int i = 0; i < buffer.getNumSamples(); ++i) {
+    const int frame = i / kHop;
+    float midi = 0.0f;
+    for (const auto &span : spans)
+      if (frame >= span.a && frame < span.b)
+        midi = span.midi;
+    float value = 0.0f;
+    if (midi > 0.0f) {
+      phase += 2.0 * 3.14159265358979323846 * midiHz(midi) / kSampleRate;
+      value = 0.30f * static_cast<float>(std::sin(phase));
+    } else {
+      phase = 0.0;
+    }
+    buffer.setSample(0, i, value);
+  }
+  audio.originalWaveform.makeCopyOf(buffer);
+  audio.waveform.makeCopyOf(buffer);
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  return project;
+}
+
+void testEngineChangeRendersEveryBlock() {
+  EditorController controller(false);
+  auto &project = *controller.getProject();
+  project = makeThreeBlockProject();
+  project.setSynthesisEngine(SynthesisEngineType::Psola);
+  controller.setSynthesisEngineType(SynthesisEngineType::Psola);
+
+  // Cambio de motor global: mismo camino que rerenderEditedNotes().
+  const int marked = project.markEditedNotesDirty();
+  CHECK(marked == 4);
+  CHECK(project.hasEditedBlockPlan());
+
+  std::atomic<bool> pendingRerun{false};
+  bool done = false;
+  bool ok = false;
+  controller.resynthesizeIncrementalAsync(
+      project, nullptr,
+      [&](bool success) {
+        done = true;
+        ok = success;
+      },
+      pendingRerun, /*isPluginMode*/ false);
+  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+  while (!done && juce::Time::getMillisecondCounterHiRes() < deadline)
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+  CHECK(done);
+  CHECK(ok);
+
+  // Referencia: el audio original (sin procesar). Cada bloque tiene notas con
+  // +2 st, asi que un bloque renderizado TIENE que diferir del original; uno que
+  // nunca se re-renderizo se queda igual (que es el fallo medido en vivo).
+  const auto &rendered = project.getAudioData().waveform;
+  const auto &original = project.getAudioData().originalWaveform;
+  const float d1 = maxAbsDiff(rendered, original, 45, 195);
+  const float d2 = maxAbsDiff(rendered, original, 245, 315);
+  const float d3 = maxAbsDiff(rendered, original, 365, 435);
+  std::printf("D-289 bloques 1/2/3 vs original: %.8f %.8f %.8f (lim > 1e-3)\n",
+              d1, d2, d3);
+  CHECK(d1 > 1.0e-3f);
+  CHECK(d2 > 1.0e-3f);
+  CHECK(d3 > 1.0e-3f);
+}
+} // namespace
+
 // D-287: el audio publicado no puede quedarse en una revision anterior a la del
 // modelo. Medido en vivo: pass=44 < dirty=47, nada agendado ni en vuelo, notas
 // limpias y el buffer aun con el motor anterior mientras el estado decia
@@ -613,6 +713,7 @@ int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   testS4dCloseKeepsSecondEdit();
   testEngineChangeBlockedWhilePlaying();
+  testEngineChangeRendersEveryBlock();
   testStaleAudioIsCaughtUpOnce();
   testFailedCloseReleasesChainAndRecovers();
   testCloseWithoutSnapshotDecidesNothing();

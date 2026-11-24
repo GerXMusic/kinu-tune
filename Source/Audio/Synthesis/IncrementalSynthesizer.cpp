@@ -957,6 +957,32 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
+  // D-289: en el recorrido D-197 la ventana de un pase es UN bloque, pero la
+  // instantanea de limpieza se armaba con todas las notas sucias del proyecto.
+  // Al cerrar el primer bloque se limpiaban tambien las de los bloques que ese
+  // pase no habia renderizado, el recorrido veia "no queda trabajo" y terminaba:
+  // el resto del proyecto se quedaba con el motor anterior para siempre
+  // (medido en vivo: las 10 primeras notas con el motor nuevo y el resto con el
+  // viejo; en el test, bloques 2 y 3 con 0,606 de diferencia). Un pase solo
+  // limpia lo que su BLOQUE cubre: la ventana de render lleva padding mas alla
+  // del bloque (contexto), asi que el filtro va sobre el rango del bloque, no
+  // sobre la ventana.
+  if (hasRenderRangeOverride) {
+    const auto &allNotes = project->getNotes();
+    passDirtyNotes.erase(
+        std::remove_if(passDirtyNotes.begin(), passDirtyNotes.end(),
+                       [&](const std::pair<int, std::uint64_t> &entry) {
+                         if (entry.first < 0 ||
+                             entry.first >= static_cast<int>(allNotes.size()))
+                           return true;
+                         const auto &note =
+                             allNotes[static_cast<size_t>(entry.first)];
+                         return note.getEndFrame() <= renderRangeOverrideStart ||
+                                note.getStartFrame() >= renderRangeOverrideEnd;
+                       }),
+        passDirtyNotes.end());
+  }
+
   // Generate blend mask before async call (voicedMask is stable here).
   // Both engines share the analysis frame grid; the phase vocoder just may
   // not have a model to ask for it.
