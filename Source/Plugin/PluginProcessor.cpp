@@ -1538,7 +1538,7 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       [this, controller, renderActiveAraRegion, renderRegionKey, renderRegionRevision,
        renderModification, renderStartSampleInModification,
        renderRegionStartSeconds, renderRegionEndSeconds,
-       target](bool success) {
+       target, clearFlushGate](bool success) {
         if (renderActiveAraRegion) {
           const auto current = araRegions.find(renderRegionKey);
           if (current == araRegions.end() ||
