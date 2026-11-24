@@ -119,7 +119,11 @@ void testVocoderCancelsBetweenChunks() {
   const std::string synth =
       readFile(std::string(P1B_SOURCE_DIR) + "/Audio/Synthesis/IncrementalSynthesizer.cpp");
   CHECK(!synth.empty());
-  const std::string call = windowAfter(synth, "vocoder->inferAsync(", 300);
+  // El camino de un solo bloque es el que antes no pasaba la bandera; el de
+  // varios bloques ya la pasaba con otro nombre, asi que se ancla en la llamada
+  // de un bloque (`std::move(melRange)`).
+  const std::string call =
+      windowAfter(synth, "vocoder->inferAsync(std::move(melRange)", 300);
   CHECK(!call.empty());
   CHECK(call.find("capturedCancelFlag") != std::string::npos);
 }

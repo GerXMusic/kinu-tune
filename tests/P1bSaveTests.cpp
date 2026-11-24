@@ -50,8 +50,13 @@ void testSaveFlushesBeforeWriting() {
 void testFlushChainResumesTheSave() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
-  CHECK(windowAfter(mainComponent, "renderState.flushChainActive = false;", 700)
-            .find("saveProject") != std::string::npos);
+  // D-285: el ancla es el cierre del render del plugin, no la primera aparicion
+  // de `flushChainActive = false` (que ahora esta tambien en el camino
+  // standalone de un pase fallido).
+  const auto finish = windowAfter(
+      mainComponent, "void MainComponent::finishBackendRender", 4000);
+  CHECK(!finish.empty());
+  CHECK(finish.find("saveProject(saveAsAfterFlush)") != std::string::npos);
   CHECK(mainComponent.find("resumeSaveAfterFlush = false") !=
         std::string::npos);
 }

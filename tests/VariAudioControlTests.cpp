@@ -258,8 +258,8 @@ int main()
                                     juce::Time::getCurrentTime(), 1, dragged);
         };
 
-        // Empty canvas: the content follows the pointer, and the click clears
-        // the selection.
+        // D-285: empty canvas now draws the selection box instead of panning.
+        // The view must stay put, and the click still clears the selection.
         const juce::Point<float> start(viewX(400), canvasCentreY);
         const double scrollXBefore = roll.getScrollX();
         const double scrollYBefore = roll.getScrollY();
@@ -267,8 +267,8 @@ int main()
         CHECK(!project.getNotes()[0].isSelected());
         roll.mouseDrag(event(start + juce::Point<float>(-60.0f, -40.0f), start, true));
         roll.mouseUp(event(start + juce::Point<float>(-60.0f, -40.0f), start, true));
-        CHECK(near(static_cast<float>(roll.getScrollX() - scrollXBefore), 60.0f, 0.5f));
-        CHECK(near(static_cast<float>(roll.getScrollY() - scrollYBefore), 40.0f, 0.5f));
+        CHECK(near(static_cast<float>(roll.getScrollX()), static_cast<float>(scrollXBefore), 0.5f));
+        CHECK(near(static_cast<float>(roll.getScrollY()), static_cast<float>(scrollYBefore), 0.5f));
 
         // From the waveform the drag selects instead; the view stays put.
         const juce::Point<float> onWave(viewX(150), canvasCentreY);
