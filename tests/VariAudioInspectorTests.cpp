@@ -732,13 +732,16 @@ int main()
         f.history.undo();
         CHECK(near(f.note(0).getMidiNote(), 60.3f));
 
-        // Franja superior: corta en el puntero, no afina.
+        // Franja superior: corta en el puntero, no afina. El orden es el real de
+        // JUCE: down(1) -> up -> down(2) -> doubleClick -> up.
         const size_t before = f.project.getNotes().size();
         const float yTop = yAt(60.3f) - f.roll.getPixelsPerSemitone() * 0.35f;
         f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 1));
         f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 1));
         f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseDoubleClick(event(f.roll, {xAt(50), yTop}, left, 2));
         f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 2));
+        // D-285/2: el corte se queda; el doubleClick de este mismo gesto no lo une.
         CHECK(f.project.getNotes().size() == before + 1);
         CHECK(near(f.note(0).getMidiNote(), 60.3f)); // el corte no afina
     }
@@ -777,12 +780,17 @@ int main()
         CHECK(!f.note(1).isSelected());
 
         // 2.2: cortar y volver a unir con doble clic en la frontera, en un paso.
+        // Se usan los dos ordenes reales: el gesto de corte completo (con su
+        // doubleClick) y luego el gesto de union.
         const float yTop = yAt(60.3f) - f.roll.getPixelsPerSemitone() * 0.35f;
         const size_t notesBefore = f.project.getNotes().size();
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 1));
         f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseDoubleClick(event(f.roll, {xAt(50), yTop}, left, 2));
         f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 2));
         CHECK(f.project.getNotes().size() == notesBefore + 1);
-        // El primer clic del doble clic ya no deja otro corte en la frontera.
+        // El primer clic del siguiente doble clic tampoco deja otro corte.
         f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 1));
         f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 1));
         CHECK(f.project.getNotes().size() == notesBefore + 1);

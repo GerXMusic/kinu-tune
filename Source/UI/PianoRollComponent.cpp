@@ -2023,6 +2023,10 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
 {
   swallowGestureUntilMouseUp = false;
   mouseDownTrackTargets.reset(); // fetched at most once for this click
+  // D-285/2: un gesto nuevo empieza con el primer clic. La marca de «acabo de
+  // cortar» solo vive hasta el mouseDoubleClick del mismo doble clic.
+  if (e.getNumberOfClicks() < 2)
+    splitJustPerformed = false;
 
   if (!project)
   {
@@ -2851,7 +2855,13 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   // D-285: doble clic sobre un corte ya hecho vuelve a unir (Melodyne). Va
   // antes del afinar del cuerpo para que un corte no se convierta en un cambio
   // de afinacion. Solo une verdaderos cortes (misma nota partida, D-225).
-  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+  //
+  // D-285/2: si el corte lo acaba de hacer el `mouseDown` de ESTE mismo doble
+  // clic, no se une: se marca y se consume, para que el gesto deje el corte.
+  const bool splitJustPerformed = this->splitJustPerformed;
+  this->splitJustPerformed = false;
+  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown() &&
+      !splitJustPerformed)
   {
     if (auto mergeable = noteSplitter->findMergeableNotesAt(adjustedX, adjustedY);
         mergeable.first != nullptr && mergeable.second != nullptr)

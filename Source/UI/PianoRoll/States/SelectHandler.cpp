@@ -88,7 +88,11 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   {
     // Melodyne: el doble clic en la franja superior de la nota es el corte, y el
     // cursor lo anuncia al pasar por encima. En el cuerpo, el doble clic afina.
-    owner_.noteSplitter->splitNoteAtX(note, worldX);
+    const bool split = owner_.noteSplitter->splitNoteAtX(note, worldX);
+    // D-285/2: este corte es de ESTE gesto; el mouseDoubleClick que viene
+    // detras no puede interpretarlo como «doble clic sobre un corte existente».
+    if (split)
+      owner_.splitJustPerformed = true;
     owner_.setHoveredNote(nullptr);
     owner_.repaint();
     return true;

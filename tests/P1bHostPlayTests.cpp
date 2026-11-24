@@ -57,7 +57,7 @@ void testStopFlushStartOrder() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
   const std::string body = windowAfter(
-      mainComponent, "MainComponent::flushDirtyBlocksForHostPlay", 1400);
+      mainComponent, "MainComponent::flushDirtyBlocksForHostPlay", 2400);
   CHECK(!body.empty());
   const auto stop = body.find("onRequestHostPlayState(false)");
   const auto flush = body.find("flushDirtyBlocks()");
@@ -96,7 +96,7 @@ void testFinishBackendRenderAlwaysUnmountsChain() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
   const std::string body =
-      windowAfter(mainComponent, "MainComponent::finishBackendRender", 3000);
+      windowAfter(mainComponent, "MainComponent::finishBackendRender", 6000);
   CHECK(!body.empty());
   // El desmontaje de la cadena no puede vivir dentro de `if (success ...)`.
   CHECK(body.find("if (success && flushSnapshotValid)") == std::string::npos);

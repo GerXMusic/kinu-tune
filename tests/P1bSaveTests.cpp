@@ -54,7 +54,7 @@ void testFlushChainResumesTheSave() {
   // de `flushChainActive = false` (que ahora esta tambien en el camino
   // standalone de un pase fallido).
   const auto finish = windowAfter(
-      mainComponent, "void MainComponent::finishBackendRender", 4000);
+      mainComponent, "void MainComponent::finishBackendRender", 5200);
   CHECK(!finish.empty());
   CHECK(finish.find("saveProject(saveAsAfterFlush)") != std::string::npos);
   CHECK(mainComponent.find("resumeSaveAfterFlush = false") !=

@@ -44,6 +44,11 @@ public:
   juce::int64 &lastDragRepaintTime;
   static constexpr juce::int64 minDragRepaintInterval = 16;
 
+  // D-285/2: el corte del doble clic de la franja superior marca que lo hizo
+  // este mismo gesto, para que el `mouseDoubleClick` que llega despues no lo
+  // vuelva a unir («hace el corte y lo cancela al instante»).
+  bool &splitJustPerformed;
+
   std::function<void(Note *)> &onNoteSelected;
   std::function<void()> &onPitchEdited;
   std::function<void()> &onPitchEditFinished;

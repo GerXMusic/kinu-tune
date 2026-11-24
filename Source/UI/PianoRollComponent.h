@@ -476,6 +476,11 @@ private:
   // y el doble clic ahi separa; el doble clic en el cuerpo afina al 100 %.
   bool isNoteTopZone(const Note &note, float worldY) const;
   static constexpr float noteTopZoneRatio = 0.32f;
+  // D-285/2: el doble clic en la franja superior corta en el segundo
+  // `mouseDown`; el `mouseDoubleClick` que llega DESPUES encontraba ese corte
+  // recien hecho en el puntero y lo volvia a unir («hace el corte y lo cancela
+  // al instante»). El corte deja esta marca para que ese doble clic no lo una.
+  bool splitJustPerformed = false;
   juce::Rectangle<int> getPreviewButtonLocalBounds(const Note &note) const;
   juce::Rectangle<int> getResetButtonLocalBounds(const Note &note) const;
   void updatePreviewButtonBounds();

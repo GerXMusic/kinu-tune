@@ -18,6 +18,7 @@ PianoRollInteractionContext::PianoRollInteractionContext(
       selectedScaleMode(component.selectedScaleMode),
       selectedScaleRootNote(component.selectedScaleRootNote),
       lastDragRepaintTime(component.lastDragRepaintTime),
+      splitJustPerformed(component.splitJustPerformed),
       onNoteSelected(component.onNoteSelected),
       onPitchEdited(component.onPitchEdited),
       onPitchEditFinished(component.onPitchEditFinished),

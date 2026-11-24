@@ -1994,6 +1994,15 @@ void MainComponent::pollMcpControl()
     instance->setProperty("edit_in_flight", renderState.editRenderInFlight);
     instance->setProperty("flush_chain_active", renderState.flushChainActive);
     instance->setProperty("deferred_pending", renderState.deferredRenderPending);
+    // D-285/2: por que sigue sucio. Sin esto, un estado `Dirty` sin nada en
+    // vuelo obliga a adivinar cual de las dos marcas queda puesta.
+    instance->setProperty("dirty_notes", project ? project->hasDirtyNotes() : false);
+    instance->setProperty("f0_dirty", project ? project->hasF0DirtyRange() : false);
+    instance->setProperty("deferred_blocks", deferredRenders.dirtyBlockCount());
+    instance->setProperty("dirty_revision",
+                          static_cast<juce::int64>(dirtyRevision));
+    instance->setProperty("last_retry_revision",
+                          static_cast<juce::int64>(lastRetryRevision));
     // D-266: invariante de reposo del lado de la UI. `backendFlushActive`
     // vive en el procesador (PluginProcessor) y no es visible desde aqui: se
     // verifica por la traza de D-264, no por este canal. Se publica aparte
@@ -4608,7 +4617,20 @@ void MainComponent::serviceEditRender()
   if (project == nullptr || editorController == nullptr)
     return;
   if (!project->hasDirtyNotes() && !project->hasF0DirtyRange())
+  {
+    // D-285/2: la cola del barrido puede tener un bloque que ya no responde a
+    // ninguna nota sucia (su nota se limpio en otro pase). Si se deja, el
+    // estado se queda en Dirty para siempre y el Play intenta un flush que no
+    // puede limpiar nada.
+    if (deferredRenders.dirtyBlockCount() > 0)
+    {
+      deferredRenders.clear();
+      renderState.deferredRenderPending = false;
+      pushSweepState();
+      pianoRoll.repaint();
+    }
     return;
+  }
 
   LOG("P1b: edit render rev=" + juce::String(dirtyRevision) +
       " dirtyNotes=" + juce::String(project->hasDirtyNotes() ? 1 : 0) +
@@ -4719,6 +4741,18 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
     return false;
   if (!hasDirtyBlocks || renderState.flushChainActive)
     return false;
+
+  // D-285/2: si este trabajo ya gasto su reintento y no hay nada en vuelo, no
+  // se para el transporte. Antes el Play se paraba, el flush no podia limpiar
+  // y el play moria a los ~100 ms en cada intento. Se suena el ultimo audio
+  // publicado; el trabajo se reintenta en la siguiente edicion o en cuanto el
+  // vigilante lo re-arme.
+  if (!renderState.renderPending() && dirtyRevision == lastRetryRevision)
+  {
+    LOG("P1b: Play sin flush (rev " + juce::String(dirtyRevision) +
+        " ya reintentada); suena el ultimo audio publicado");
+    return false;
+  }
 
   // Peticiones ARA en cola: el host puede atenderlas tarde o ignorarlas.
   // P1b: stop -> flush -> start tambien en plugin; el silencio tapa el audio viejo.
@@ -5321,6 +5355,16 @@ void MainComponent::finishBackendRender(bool success)
   // este bloque se saltaba entero y los pestillos (`flushChainActive`) se
   // quedaban clavados: despues ya no habia nadie que pudiera renderizar.
   auto *projectNow = getProject();
+  // D-285 (2): un cierre SIN instantanea no decide nada. La cadena de
+  // `EditorController` entrega `onComplete` y ademas relanza el pase con el
+  // mismo callback, asi que despues de un cierre bueno puede llegar un segundo
+  // cierre del relanzamiento (que no encontro nada que hacer). Ese cierre no
+  // puede juzgar el trabajo pendiente: ni limpia, ni reintenta, ni deja la cola
+  // clavada; solo desmonta y devuelve el transporte. Sin esto, el segundo
+  // cierre veia un rango F0 sucio que no habia pedido y se quedaba con
+  // `deferred_pending` para siempre (medido en vivo: phase=Dirty, nada en vuelo,
+  // play que se paraba a los 100 ms).
+  const bool hadSnapshot = flushSnapshotValid;
   if (flushSnapshotValid)
   {
     // D-254: se limpia solo lo que este pase renderizo, por revision. Lo que
@@ -5334,12 +5378,13 @@ void MainComponent::finishBackendRender(bool success)
   }
 
   const bool stillDirty =
-      projectNow != nullptr &&
+      hadSnapshot && projectNow != nullptr &&
       (projectNow->hasDirtyNotes() || projectNow->hasF0DirtyRange());
 
   LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
       " requestRev=" + juce::String(flushRenderRevision) +
       " success=" + juce::String(success ? 1 : 0) +
+      " snapshot=" + juce::String(hadSnapshot ? 1 : 0) +
       " stillDirty=" + juce::String(stillDirty ? 1 : 0));
 
   // Camino bueno con trabajo nuevo: el pase siguiente, sin tocar la cadena
@@ -5361,11 +5406,13 @@ void MainComponent::finishBackendRender(bool success)
   }
 
   // D-285: la cadena se desmonta en todo final. Si este flush paro el
-  // transporte, solo se reanuda cuando ya no queda nada sucio.
+  // transporte, vuelve a sonar SIEMPRE: con el audio nuevo si no queda nada
+  // pendiente y con el ultimo publicado si queda. Un play que se queda parado
+  // es otro mute, solo que del transporte.
   if (renderState.flushChainActive)
   {
     renderState.flushChainActive = false;
-    if (!stillDirty && playAfterFlush)
+    if (playAfterFlush && (!stillDirty || !hadSnapshot))
     {
       playAfterFlush = false;
       if (onRequestHostSeek)
@@ -5384,7 +5431,10 @@ void MainComponent::finishBackendRender(bool success)
 
   // Fallo con trabajo pendiente: se re-arma un intento, con presupuesto de uno
   // por revision (D-285). Agotado el presupuesto, el trabajo queda pendiente
-  // hasta la siguiente edicion o Play, y se dice en el LOG: nunca un mute.
+  // hasta la siguiente edicion o Play, se dice en el LOG y **el transporte no se
+  // bloquea**: `flushDirtyBlocksForHostPlay` ya no para un Play cuyo trabajo
+  // agoto el presupuesto (D-285/2), asi que el Play suena con el ultimo audio
+  // publicado en vez de morir a los milisegundos.
   if (stillDirty)
   {
     if (lastRetryRevision == dirtyRevision)

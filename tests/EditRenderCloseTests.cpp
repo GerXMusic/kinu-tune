@@ -167,6 +167,7 @@ struct MainComponentTestAccess {
   bool flushChainActive() const { return mc.renderState.flushChainActive; }
   bool deferredRenderPending() const { return mc.renderState.deferredRenderPending; }
   RenderState::Phase phase() const { return mc.renderState.phase(); }
+  bool flushForHostPlay() { return mc.flushDirtyBlocksForHostPlay(); }
 };
 
 namespace {
@@ -404,6 +405,81 @@ void testFailedCloseReleasesChainAndRecovers() {
   CHECK(!project.getNotes()[0].isDirty());
 }
 
+// D-285/2: un cierre sin instantanea (el relanzamiento con el mismo
+// `onComplete`) no puede juzgar el trabajo pendiente. Antes dejaba
+// `deferred_pending` clavado, la fase en Dirty para siempre y el Play se paraba
+// a los ~100 ms en cada intento (medido en vivo).
+void testCloseWithoutSnapshotDecidesNothing() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  FailingBackend backend;
+  backend.fail = false;
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  auto &project = *controller.getProject();
+  project.getNotes()[0].markDirty();
+  project.getNotes()[0].markSynthDirty();
+  access.markRenderDirty();
+  access.bypassDebounce();
+  access.serviceEditRender();
+  backend.pumpUntil(1);
+  CHECK(!access.editRenderInFlight());
+
+  // El relanzamiento del EditorController entrega un segundo cierre que no
+  // tiene instantanea: no limpia, no reintenta y no deja cola pendiente.
+  mc.finishBackendRender(true);
+  std::printf("D-285/2 cierre sin instantanea: fase %s | cola %d (esperado 0)\n",
+              RenderState::phaseName(access.phase()),
+              access.deferredRenderPending() ? 1 : 0);
+  CHECK(!access.deferredRenderPending());
+  CHECK(access.phase() != RenderState::Phase::Rendering);
+  CHECK(access.phase() != RenderState::Phase::Dirty);
+}
+
+// D-285/2: con el reintento de esa revision ya gastado, el borde de Play no
+// para el transporte (antes lo paraba, el flush no podia limpiar y el play
+// moria a los milisegundos en cada intento).
+void testExhaustedRetryDoesNotStopPlay() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  FailingBackend backend; // falla siempre
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  int playStateCalls = 0;
+  mc.setOnRequestHostPlayState([&playStateCalls](bool) { ++playStateCalls; });
+
+  auto &project = *controller.getProject();
+  project.getNotes()[0].markDirty();
+  project.getNotes()[0].markSynthDirty();
+  access.markRenderDirty();
+
+  access.flushDirtyBlocks();
+  backend.pumpUntil(2); // pase + reintento, los dos fallidos
+  CHECK(access.deferredRenderPending());
+
+  playStateCalls = 0;
+  const bool held = access.flushForHostPlay();
+  std::printf("D-285/2 Play con reintento gastado: retenido %d (esperado 0) | "
+              "llamadas al transporte %d (esperado 0)\n",
+              held ? 1 : 0, playStateCalls);
+  CHECK(!held);
+  CHECK(playStateCalls == 0);
+}
+
 // D-285: «no hay nada que renderizar» es exito, no fallo. Antes ese `false`
 // envenenaba la cadena de cierre y mostraba «Render fallo» sin fallo alguno.
 void testCleanProjectIsNoOpSuccess() {
@@ -437,6 +513,8 @@ int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   testS4dCloseKeepsSecondEdit();
   testFailedCloseReleasesChainAndRecovers();
+  testCloseWithoutSnapshotDecidesNothing();
+  testExhaustedRetryDoesNotStopPlay();
   testCleanProjectIsNoOpSuccess();
   std::printf("EditRenderCloseTests: en verde\n");
   return 0;
