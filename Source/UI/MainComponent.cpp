@@ -2001,6 +2001,12 @@ void MainComponent::pollMcpControl()
     instance->setProperty("deferred_blocks", deferredRenders.dirtyBlockCount());
     instance->setProperty("dirty_revision",
                           static_cast<juce::int64>(dirtyRevision));
+    // D-287: revision que representa el audio publicado. Si es menor que
+    // `dirty_revision`, el audio va por detras del modelo; el catch-up lo
+    // vuelve a pedir y este par lo deja medido en vez de oido.
+    instance->setProperty("published_revision",
+                          static_cast<juce::int64>(publishedRevision));
+    instance->setProperty("audio_stale", publishedRevision < dirtyRevision);
     instance->setProperty("last_retry_revision",
                           static_cast<juce::int64>(lastRetryRevision));
     instance->setProperty("retry_attempts", retryAttemptsForRevision);
@@ -3029,6 +3035,7 @@ void MainComponent::timerCallback()
   pollMcpControl();
   serviceEditRender();
   rescueStalledRender();
+  catchUpStaleAudio();
   dispatchPendingDragAudition();
 
   // Handle throttled cursor updates (30Hz max)
@@ -4494,6 +4501,10 @@ void MainComponent::resynthesizeIncremental()
 
   flushSnapshotValid = false;
 
+  // D-287: la revision que esta pasada en modo standalone representa, para
+  // marcar el audio publicado cuando cierre bien.
+  const auto thisPassRevision = renderState.passRevision;
+
   juce::Component::SafePointer<MainComponent> safeThis(this);
   editorController->resynthesizeIncrementalAsync(
       *project,
@@ -4506,7 +4517,7 @@ void MainComponent::resynthesizeIncremental()
         // render no toca el piano roll por su cuenta.
         safeThis->pianoRoll.repaint();
       },
-      [safeThis](bool success)
+      [safeThis, thisPassRevision](bool success)
       {
         if (safeThis == nullptr)
           return;
@@ -4577,6 +4588,8 @@ void MainComponent::resynthesizeIncremental()
         safeThis->pianoRoll.repaint();
         if (safeThis->isPluginMode())
           safeThis->notifyProjectDataChanged();
+        // D-287: el audio publicado ya representa la revision de este pase.
+        safeThis->publishedRevision = thisPassRevision;
       },
       pendingIncrementalResynth,
       isPluginMode());
@@ -4711,6 +4724,56 @@ void MainComponent::rescueStalledRender()
     resumeSaveAfterFlush = false;
     saveProject(saveAsAfterFlush);
   }
+}
+
+// D-287: el audio publicado tiene que ser el de la ultima revision editada.
+// Medido en vivo (sesion del usuario, 24-11): con el transporte sonando y
+// cambios rapidos de motor de bloque, `pass_revision=44 < dirty_revision=47`,
+// nada agendado ni en vuelo, las notas ya limpias y el buffer publicado aun con
+// el Vocoder mientras el modelo decia Pitchcore en las 42 notas. El estado se
+// daba por `Published`/`quiescent`: no habia ni un contador que dijera "el audio
+// va por detras".
+//
+// No se persigue el agujero concreto (hay varios historicos: D-247, D-285,
+// D-285/2): se pone la invariante. Si el ultimo pase bueno es anterior a la
+// revision actual y no hay nada en vuelo, se vuelve a pedir el render de las
+// notas editadas, UNA vez por revision (mismo criterio que el vigilante).
+void MainComponent::catchUpStaleAudio()
+{
+  if (publishedRevision >= dirtyRevision)
+    return;
+  if (renderState.editRenderScheduled || renderState.editRenderInFlight ||
+      renderState.mcpRenderPending || renderState.flushChainActive)
+    return;
+  if (lastCatchUpRevision == dirtyRevision)
+    return; // un intento por revision; un fallo persistente no gira sin fin
+  if (playAfterFlush || resumeSaveAfterFlush)
+    return; // una cadena viva lo sirve ella misma
+
+  auto *project = getProject();
+  if (project == nullptr || editorController == nullptr)
+    return;
+
+  lastCatchUpRevision = dirtyRevision;
+  LOG("P1b: audio publicado en la rev " +
+      juce::String(static_cast<juce::int64>(publishedRevision)) +
+      " y el modelo en la " + juce::String(static_cast<juce::int64>(dirtyRevision)) +
+      "; se vuelve a pedir el render de lo editado");
+
+  // Se vuelve a marcar desde el modelo, no desde una cola que ya se perdio: la
+  // nota es la verdad del proyecto.
+  const int marked = project->markEditedNotesDirty();
+  if (marked == 0 && !project->hasF0DirtyRange())
+  {
+    // Nada con audio propio: el modelo no puede sonar distinto de lo publicado.
+    publishedRevision = dirtyRevision;
+    return;
+  }
+  markRenderDirty();
+  // `markRenderDirty` suma una revision: el presupuesto se consume en esa.
+  lastCatchUpRevision = dirtyRevision;
+  if (isPluginMode() && onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 // P1b fase 6: el barrido se alimenta de la cola, no del proyecto. Solo se
@@ -5348,6 +5411,10 @@ void MainComponent::hideAnalysisProgress()
 
 void MainComponent::finishBackendRender(bool success)
 {
+  // D-287: la revision que este pase representa. Se captura antes de nada:
+  // el relanzamiento de abajo vuelve a llamar a resynthesizeIncremental y
+  // reescribe passRevision.
+  const auto committedRevision = renderState.passRevision;
   renderState.mcpRenderPending = false;
   // D-285: el reloj del vigilante solo corre entre peticion y cierre.
   renderState.noteRenderClosed();
@@ -5393,6 +5460,13 @@ void MainComponent::finishBackendRender(bool success)
   const bool stillDirty =
       hadSnapshot && projectNow != nullptr &&
       (projectNow->hasDirtyNotes() || projectNow->hasF0DirtyRange());
+
+  // D-287: este pase commiteo lo que su instantanea cubria; a partir de aqui el
+  // audio publicado representa esa revision. Si llego mas trabajo durante el
+  // pase, `dirtyRevision` ya la supera y el catch-up (o el re-render de abajo)
+  // se encarga. Un cierre sin instantanea no dice nada y no toca la marca.
+  if (success && hadSnapshot)
+    publishedRevision = committedRevision;
 
   LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +
       " requestRev=" + juce::String(flushRenderRevision) +
@@ -6279,6 +6353,9 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
               juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
           project->markEditedNotesDirty();
+          // D-247/D-287: marcar sucio sin pedir el render deja el audio viejo
+          // sonando con el modelo ya cambiado.
+          markRenderDirty();
         }
       }
       applyProjectSynthesisEngine();
@@ -6324,6 +6401,9 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
             juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
         project->markEditedNotesDirty();
+        // D-247/D-287: marcar sucio sin pedir el render deja el audio viejo
+        // sonando con el modelo ya cambiado.
+        markRenderDirty();
       }
     }
     applyProjectSynthesisEngine();

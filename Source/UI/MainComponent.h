@@ -347,6 +347,12 @@ private:
   // D-285: red por si un cierre se pierde igual. Suelta la cadena, re-arma un
   // intento (uno por revision) y lo registra. Se sirve desde el timer.
   void rescueStalledRender();
+  // D-287: el audio publicado tiene que ser el de la ultima revision. Si un
+  // pase se pierde (medido en vivo: pass=44 < dirty=47, todo en reposo y el
+  // buffer aun del motor anterior), se vuelve a pedir el render de las notas
+  // editadas, una vez por revision. Sin esto el editor puede quedarse sonando
+  // un motor que ya no esta en el modelo y decirlo `Published`/`quiescent`.
+  void catchUpStaleAudio();
   // D-285/3 (corregido en D-286): si la BASE quedo desfasada de las notas (se
   // ve la curva en otro sitio), se reconstruye la base desde las notas al
   // cargar. Solo al cargar, y una vez por carga. El contador cuenta esas
@@ -375,6 +381,12 @@ private:
   // the "sometimes it does not smooth" report).
   std::uint64_t dirtyRevision = 0;
   std::uint64_t flushRenderRevision = 0;
+  // D-287: revision del ultimo pase que cerro con exito y con instantanea: la
+  // que el audio publicado representa. `publishedRevision < dirtyRevision` =
+  // el audio va por detras del modelo (medido en vivo: 44 < 47 con el buffer
+  // aun del motor anterior y el estado diciendo `Published`).
+  std::uint64_t publishedRevision = 0;
+  std::uint64_t lastCatchUpRevision = 0;
   // D-285: presupuesto de reintento tras un cierre fallido, por revision.
   std::uint64_t lastRetryRevision = 0;
   // D-285/2: cuantos reintentos lleva esta revision (para no girar sin fin) y

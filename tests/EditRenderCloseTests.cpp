@@ -168,6 +168,16 @@ struct MainComponentTestAccess {
   bool deferredRenderPending() const { return mc.renderState.deferredRenderPending; }
   RenderState::Phase phase() const { return mc.renderState.phase(); }
   bool flushForHostPlay() { return mc.flushDirtyBlocksForHostPlay(); }
+  // D-287
+  void catchUpStaleAudio() { mc.catchUpStaleAudio(); }
+  std::uint64_t publishedRevision() const { return mc.publishedRevision; }
+  std::uint64_t dirtyRevision() const { return mc.dirtyRevision; }
+  bool audioStale() const { return mc.publishedRevision < mc.dirtyRevision; }
+  void simulateLostPass(std::uint64_t published, std::uint64_t dirty) {
+    mc.publishedRevision = published;
+    mc.dirtyRevision = dirty;
+    mc.lastCatchUpRevision = 0;
+  }
 };
 
 namespace {
@@ -341,6 +351,56 @@ void testS4dCloseKeepsSecondEdit() {
   CHECK(diff <= 1.0e-7f);
   CHECK(!project.getNotes()[2].isDirty());
 }
+// D-287: el audio publicado no puede quedarse en una revision anterior a la del
+// modelo. Medido en vivo: pass=44 < dirty=47, nada agendado ni en vuelo, notas
+// limpias y el buffer aun con el motor anterior mientras el estado decia
+// `Published`/`quiescent`. El test simula ese estado exacto y exige:
+//   (a) el catch-up pide un render de lo editado (marca las notas sucias);
+//   (b) no pide un segundo pase de la misma revision (presupuesto);
+//   (c) tras un pase bueno, la revision publicada alcanza a la sucia;
+//   (d) un cierre fallido no adelanta la revision publicada.
+void testStaleAudioIsCaughtUpOnce() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  auto &project = *controller.getProject();
+  project.clearAllDirty();
+
+  // Estado del fallo en vivo: dos revisiones por detras y nada pendiente.
+  access.simulateLostPass(44, 47);
+  CHECK(access.audioStale());
+
+  access.catchUpStaleAudio();
+  const bool marked = project.hasDirtyNotes();
+  std::printf("D-287 audio atrasado: notas marcadas %d (esperado 1) | "
+              "publicada %llu | sucia %llu\n",
+              marked ? 1 : 0,
+              static_cast<unsigned long long>(access.publishedRevision()),
+              static_cast<unsigned long long>(access.dirtyRevision()));
+  CHECK(marked);
+  CHECK(access.dirtyRevision() > 47); // el catch-up pidio su propio pase
+
+  // Segundo intento sin que cambie nada: no vuelve a pedir.
+  const auto dirtyBeforeSecond = access.dirtyRevision();
+  access.catchUpStaleAudio();
+  std::printf("D-287 segundo catch-up sin cambios: revision %llu (esperado %llu)\n",
+              static_cast<unsigned long long>(access.dirtyRevision()),
+              static_cast<unsigned long long>(dirtyBeforeSecond));
+  CHECK(access.dirtyRevision() == dirtyBeforeSecond);
+
+  // Cierre fallido: el audio no puede dar por buena la revision nueva.
+  access.simulateLostPass(44, 48);
+  mc.finishBackendRender(false);
+  CHECK(access.audioStale());
+  std::printf("D-287 cierre fallido: publicada %llu < sucia %llu (esperado si)\n",
+              static_cast<unsigned long long>(access.publishedRevision()),
+              static_cast<unsigned long long>(access.dirtyRevision()));
+}
+
 } // namespace
 
 namespace {
@@ -517,6 +577,7 @@ void testCleanProjectIsNoOpSuccess() {
 int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   testS4dCloseKeepsSecondEdit();
+  testStaleAudioIsCaughtUpOnce();
   testFailedCloseReleasesChainAndRecovers();
   testCloseWithoutSnapshotDecidesNothing();
   testExhaustedRetryDoesNotStopPlay();
