@@ -18,13 +18,20 @@
 # 3. pluginval at strictness 5 with the models installed. GUI tests are
 #    skipped: the runner is not a real user desktop, so an editor result
 #    there would prove little either way.
-# 4. Unless -SkipCleanMachine: the minimal host again, inside a Windows Server
+# 4. Windows ships its own onnxruntime.dll in System32 (Windows 11 build 26300
+#    and the Server 2025 container both do). That is normal and is NOT a
+#    failure (D-283): the plug-in must load its OWN bundled runtime anyway.
+#    This check copies System32's copy next to the host - the place Windows
+#    searches first for a delay-loaded DLL - and requires the plug-in to load
+#    the bundled one from its own folder.
+# 5. Unless -SkipCleanMachine: the minimal host again, inside a Windows Server
 #    container that has no Visual C++ runtime and no developer tools. The
-#    bundled onnxruntime.dll cannot load there; the plug-in must still be
-#    created and activated without crashing, load no onnxruntime.dll (not the
-#    older one in System32 either) and report the missing runtime. pluginval
-#    cannot run there (it needs the runtime itself, and shipping one next to it
-#    would hand that runtime to the plug-in too), so this is the host only.
+#    bundled onnxruntime.dll cannot load there (it needs the runtime) and
+#    neither can System32's. The plug-in must still be created and activated
+#    without crashing, must not use any onnxruntime.dll from outside its own
+#    folder, and must report the missing runtime. pluginval cannot run there
+#    (it needs the shared runtime itself, and shipping one next to it would
+#    hand that runtime to the plug-in too), so this is the host only.
 #    Then once more in a fresh container after installing the Visual C++
 #    Redistributable, as INSTALL.txt asks users to: there it must fully work.
 #
@@ -98,6 +105,29 @@ if ((Run-Host "Create the plug-in (runner's Visual C++ runtime)" $hostExe) -ne 0
     $failures += "create the plug-in on the runner's Visual C++ runtime"
 }
 
+# --- 1b. The bundled ONNX Runtime wins over System32's (D-283) ----------------
+# Newer Windows ships its own onnxruntime.dll in System32; that is normal, not a
+# failure. What must not happen is the plug-in using it. The host already fails
+# when the loaded onnxruntime.dll is not the one next to the plug-in, and here
+# System32's copy is put where Windows looks first (next to the host, which is
+# the application directory) so the search would find it if it ever was
+# name-based. The plug-in loads its own copy by absolute path.
+$systemOrt = Join-Path $env:SystemRoot "System32\onnxruntime.dll"
+if (Test-Path $systemOrt) {
+    $systemVersion = (Get-Item $systemOrt).VersionInfo.FileVersion
+    $systemSize = (Get-Item $systemOrt).Length
+    Write-Host "System32\onnxruntime.dll present: version $systemVersion, $systemSize bytes (normal on this Windows)"
+    $shadowDir = Join-Path $work "system-ort-host"
+    New-Item -ItemType Directory -Path $shadowDir | Out-Null
+    Copy-Item $hostExe $shadowDir
+    Copy-Item $systemOrt (Join-Path $shadowDir "onnxruntime.dll")
+    if ((Run-Host "Create the plug-in (System32's onnxruntime.dll next to the host)" (Join-Path $shadowDir "vst3_instantiate.exe")) -ne 0) {
+        $failures += "load the plug-in with its own ONNX Runtime while System32 has another"
+    }
+} else {
+    Write-Host "System32\onnxruntime.dll absent on this image: the shadow test does not apply here."
+}
+
 # --- 2. An older runtime next to the host ------------------------------------
 # The msvc-runtime package on PyPI repackages Microsoft's redistributable DLLs
 # at fixed versions. Pinned by hash.
@@ -142,6 +172,13 @@ if (-not $SkipCleanMachine) {
     # runner's. The full "server" image is used rather than Server Core because
     # the plug-in imports Direct2D, DXGI and DirectComposition, which Server
     # Core lacks; neither image has a Visual C++ runtime.
+    #
+    # D-283: this image may well ship onnxruntime.dll in System32 (Server 2025
+    # does). The premise here is only "no Visual C++ runtime", not "no ONNX
+    # Runtime": the bundled one cannot load without the runtime and System32's
+    # cannot either, so the plug-in must report that ONNX Runtime is
+    # unavailable. It must never fall back to a foreign onnxruntime.dll; the
+    # host checks which module was loaded.
     $build = [System.Environment]::OSVersion.Version.Build
     $tag = switch ($build) { 20348 { "ltsc2022" } 26100 { "ltsc2025" } default { throw "no container tag for Windows build $build" } }
     $image = "mcr.microsoft.com/windows/server:$tag"
@@ -163,7 +200,7 @@ if (-not $SkipCleanMachine) {
     @'
 param([switch] $InstallRedist)
 $ErrorActionPreference = "Stop"
-$bundle = "C:\TuneXX.vst3\Contents\x86_64-win"
+$bundle = "C:\tunex\TuneX.vst3\Contents\x86_64-win"
 Write-Host "Windows $([System.Environment]::OSVersion.Version)"
 if ($InstallRedist) {
     # What INSTALL.txt tells a user to do.
@@ -186,16 +223,18 @@ else { Write-Host "Every imported DLL is in System32 or in the bundle." }
 $unexpected = @($missing | Where-Object { $InstallRedist -or $_ -notmatch '^(msvcp140|vcruntime140)' })
 if ($unexpected.Count -gt 0) { Write-Host "Missing and not explained by the Visual C++ runtime: $($unexpected -join ', ')" }
 foreach ($name in "msvcp140.dll", "vcruntime140.dll", "onnxruntime.dll") {
-    Write-Host "System32\$name present: $(Test-Path (Join-Path $env:SystemRoot "System32\$name"))"
+    $path = Join-Path $env:SystemRoot "System32\$name"
+    $version = if (Test-Path $path) { (Get-Item $path).VersionInfo.FileVersion } else { "(absent)" }
+    Write-Host "System32\$name: $version"
 }
 $models = Join-Path $env:APPDATA "Keinoaza\TuneX"
 New-Item -ItemType Directory -Force -Path $models | Out-Null
 Copy-Item -Recurse C:\tunex\models $models
-# Without the redistributable the plug-in must still be created, must not
-# load any onnxruntime.dll, and must report the missing runtime.
-$hostArgs = @()
-if (-not $InstallRedist) { $hostArgs += "--expect-onnx-runtime-missing" }
-& C:\tunex\vst3_instantiate.exe @hostArgs "$bundle\TuneX.vst3"
+# D-283: System32's onnxruntime.dll is normal on this Windows; what matters is
+# that the plug-in never uses it. The host checks which module was loaded. With
+# or without the redistributable the rule is the same: its OWN bundled ONNX
+# Runtime, or none reported as unavailable.
+& C:\tunex\vst3_instantiate.exe --allow-missing-onnx-runtime "$bundle\TuneX.vst3"
 $code = $LASTEXITCODE
 if ($unexpected.Count -gt 0 -and $code -eq 0) { $code = 4 }
 exit $code
@@ -209,7 +248,7 @@ exit $code
     $cleanCode = $LASTEXITCODE
     Write-Host "::endgroup::"
     Write-Host "Clean machine -> exit code $cleanCode"
-    if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows (no Visual C++ runtime) and have it report the missing runtime" }
+    if ($cleanCode -ne 0) { $failures += "create the plug-in on a clean Windows without the Visual C++ runtime (its own ONNX Runtime or none, never a foreign one)" }
 
     # The same clean machine after installing the Visual C++ Redistributable,
     # as INSTALL.txt asks. Each run starts from a fresh container.

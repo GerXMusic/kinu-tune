@@ -146,14 +146,14 @@ jobs:
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel 4
 
       # Creates the plug-in in a minimal host on the runner's runtime and on an
-      # older Visual C++ runtime, then runs pluginval. See the script.
+      # older Visual C++ runtime, with System32's onnxruntime.dll shadowing the
+      # bundled one, then runs pluginval. See the script.
       #
-      # Non-blocking while D-283 is open: the clean Windows Server 2025 container
-      # now ships onnxruntime.dll in System32, so the "no runtime at all" premise
-      # of the check no longer holds and LoadLibrary fails with 126. The runner's
-      # own pass (and pluginval) still has to be green.
+      # D-283: blocking again. The premise is no longer "a clean machine has no
+      # ONNX Runtime" (newer Windows ships one in System32); what must hold is
+      # that the plug-in uses ITS OWN bundled runtime, checked on the loaded
+      # module, and that it never falls back to a foreign one.
       - name: Check the VST3 like a host does
-        continue-on-error: true
         shell: pwsh
         run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/TuneX.vst3"
 

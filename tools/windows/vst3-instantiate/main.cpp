@@ -18,17 +18,20 @@
 // toolset that needs MSVCP140 14.40 or later.
 //
 // After the run, onnxruntime.dll must have come from the plug-in's own folder.
-// Windows ships an older onnxruntime.dll in System32, and the delay-load
-// helper falls back to it when the bundled one cannot be loaded.
+// Windows ships an older onnxruntime.dll in System32 (Windows 11 build 26300 and
+// the Server 2025 container both do), and the delay-load helper falls back to it
+// when the bundled one cannot be loaded. The plug-in loads its own copy by
+// absolute path through OnnxRuntimeLoader, so the rule is about *which* module
+// is loaded, never about whether the system has one (D-283).
 //
-// With --expect-onnx-runtime-missing (a machine without the Visual C++
-// Redistributable, which the bundled onnxruntime.dll needs) the plug-in must
-// still be created without crashing, must not load any onnxruntime.dll, and
-// must report "ONNX Runtime is unavailable". It reports through the debugger
-// output (OutputDebugString), which this program reads the way DebugView
-// does, through the DBWIN buffer.
+// With --allow-missing-onnx-runtime (a machine without the Visual C++
+// Redistributable, which the bundled onnxruntime.dll needs) the plug-in may
+// legitimately end up with no ONNX Runtime at all, but only if it says so
+// ("ONNX Runtime is unavailable"). It must never fall back to a foreign
+// onnxruntime.dll. It reports through the debugger output (OutputDebugString),
+// which this program reads the way DebugView does, through the DBWIN buffer.
 //
-// Usage: vst3_instantiate [--expect-onnx-runtime-missing] <path to the DLL inside Contents\x86_64-win>
+// Usage: vst3_instantiate [--allow-missing-onnx-runtime] <path to the DLL inside Contents\x86_64-win>
 // Exit codes: 0 = every stage passed, 1 = usage, 2 = the DLL or its factory
 // could not be loaded, 3 = a stage crashed or failed.
 
@@ -269,11 +272,11 @@ private:
 
 int wmain (int argc, wchar_t** argv)
 {
-    const bool expectOnnxRuntimeMissing =
-        argc == 3 && std::wcscmp (argv[1], L"--expect-onnx-runtime-missing") == 0;
-    if (argc != 2 && ! expectOnnxRuntimeMissing)
+    const bool allowMissingOnnxRuntime =
+        argc == 3 && std::wcscmp (argv[1], L"--allow-missing-onnx-runtime") == 0;
+    if (argc != 2 && ! allowMissingOnnxRuntime)
     {
-        std::printf ("usage: vst3_instantiate [--expect-onnx-runtime-missing] <plug-in DLL>\n");
+        std::printf ("usage: vst3_instantiate [--allow-missing-onnx-runtime] <plug-in DLL>\n");
         return 1;
     }
 
@@ -348,17 +351,20 @@ int wmain (int argc, wchar_t** argv)
         passed = false;
     }
 
-    if (expectOnnxRuntimeMissing)
+    if (allowMissingOnnxRuntime)
     {
-        if (! reportedMissing)
+        if (onnxRuntimePath.empty())
         {
-            std::printf ("  the plug-in did not report that ONNX Runtime is unavailable\n");
-            passed = false;
+            // No ONNX Runtime at all is only correct if the plug-in said so.
+            if (! reportedMissing)
+            {
+                std::printf ("  no onnxruntime.dll was loaded and the plug-in did not report that ONNX Runtime is unavailable\n");
+                passed = false;
+            }
         }
-
-        if (! onnxRuntimePath.empty())
+        else if (_wcsicmp (directoryOf (onnxRuntimePath).c_str(), directoryOf (pluginPath).c_str()) != 0)
         {
-            std::printf ("  an onnxruntime.dll was loaded although none can work here\n");
+            std::printf ("  an onnxruntime.dll from outside the plug-in's folder was loaded\n");
             passed = false;
         }
     }
