@@ -225,7 +225,7 @@ if ($unexpected.Count -gt 0) { Write-Host "Missing and not explained by the Visu
 foreach ($name in "msvcp140.dll", "vcruntime140.dll", "onnxruntime.dll") {
     $path = Join-Path $env:SystemRoot "System32\$name"
     $version = if (Test-Path $path) { (Get-Item $path).VersionInfo.FileVersion } else { "(absent)" }
-    Write-Host "System32\$name: $version"
+    Write-Host "System32\${name}: $version"
 }
 $models = Join-Path $env:APPDATA "Keinoaza\TuneX"
 New-Item -ItemType Directory -Force -Path $models | Out-Null

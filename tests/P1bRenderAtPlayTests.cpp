@@ -140,13 +140,13 @@ void testSourceWiring() {
       mainComponent.find("void MainComponent::finishBackendRender");
   CHECK(finishHook != std::string::npos);
   const auto perPassClear =
-      mainComponent.find("doneProject->clearDirtyForPass(", finishHook);
+      mainComponent.find("->clearDirtyForPass(", finishHook);
   const auto stillGuard = mainComponent.find("if (stillDirty)", finishHook);
   CHECK(perPassClear != std::string::npos);
   CHECK(stillGuard != std::string::npos);
   CHECK(perPassClear < stillGuard);
   // El barrido global ya no puede volver en el cierre del plugin.
-  CHECK(mainComponent.find("doneProject->clearAllDirty();", finishHook) ==
+  CHECK(mainComponent.find("->clearAllDirty();", finishHook) ==
         std::string::npos);
 
   // Phase 2: the UI Play flushes the dirty blocks before starting playback.
