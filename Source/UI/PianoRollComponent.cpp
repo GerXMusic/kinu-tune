@@ -2124,34 +2124,11 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  // A plain drag on empty canvas (not a segment, control or the waveform)
-  // pans the view with the pointer. A click there still clears the selection,
-  // as the zero-size box selection it replaces did; dragging from the
-  // waveform keeps box selection.
-  if (editMode == EditMode::Select && e.mods.isLeftButtonDown() &&
-      !e.mods.isAnyModifierKeyDown() && isCanvasPoint(e) &&
-      isEmptyCanvasPoint(e.position))
-  {
-    if (project)
-      project->deselectAllNotes();
-    if (trackViewMode && mouseDownTrackTargets)
-    {
-      // syncTrackPreviewSelection() reads trackGestureTargets.
-      trackGestureTargets = std::move(*mouseDownTrackTargets);
-      mouseDownTrackTargets.reset();
-      for (auto& target : trackGestureTargets)
-        if (!target.isValid || target.isValid())
-          for (auto& note : target.project->getNotes())
-            note.setSelected(false);
-      syncTrackPreviewSelection();
-    }
-    updatePitchToolHandlesFromSelection();
-    modifierPanDragActive = true;
-    modifierPanLastPosition = e.position;
-    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
-    repaint();
-    return;
-  }
+  // D-285: un arrastre con clic izquierdo en vacio dibuja el recuadro de
+  // seleccion (Melodyne), no panea. El paneo queda en el boton central (arriba)
+  // y en Alt-arrastre. El clic simple en vacio sigue deseleccionando: el
+  // SelectHandler arranca un recuadro de tamano cero y lo cierra sin notas.
+  // (Antes este bloque ponia modifierPanDragActive y se comia el recuadro.)
 
   // Handle timeline clicks - seek to position
   if (e.y < timelineHeight && e.x >= pianoKeysWidth)
@@ -2870,6 +2847,35 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
   if (editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
       pitchDrawingHandler_->removeAnchorAt(adjustedX, adjustedY))
     return;
+
+  // D-285: doble clic sobre un corte ya hecho vuelve a unir (Melodyne). Va
+  // antes del afinar del cuerpo para que un corte no se convierta en un cambio
+  // de afinacion. Solo une verdaderos cortes (misma nota partida, D-225).
+  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+  {
+    if (auto mergeable = noteSplitter->findMergeableNotesAt(adjustedX, adjustedY);
+        mergeable.first != nullptr && mergeable.second != nullptr)
+    {
+      if (noteSplitter->mergeNotes(mergeable.first, mergeable.second))
+      {
+        // mergeNotes rebuilds the note list; pointers into it are no longer safe.
+        dropTransientNotePointers();
+        updatePitchToolHandlesFromSelection();
+        repaint();
+      }
+      return;
+    }
+  }
+
+  // Melodyne: en la franja superior de la nota el doble clic es un corte (ya
+  // hecho por el mouseDown, que es quien conoce los clics). Aqui no se afina:
+  // cortar no debe cambiar la afinacion de ninguna mitad (D-285). Sin esta
+  // guarda, el segundo clic cortaba y este afinaba, que es el sintoma
+  // «cortar parece afinar».
+  if (editMode == EditMode::Select && !e.mods.isAnyModifierKeyDown())
+    if (auto *topZoneNote = findNoteAt(adjustedX, adjustedY))
+      if (isNoteTopZone(*topZoneNote, adjustedY))
+        return;
 
   // Melodyne: doble clic en el cuerpo de la nota (fuera de la franja superior)
   // afina al 100 % hacia el semitono mas cercano. Pasa por el inspector para que

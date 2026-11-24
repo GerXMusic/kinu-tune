@@ -72,6 +72,17 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
+  // D-285: sobre un corte ya hecho la franja superior no corta otra vez. El
+  // doble clic ahi une (PianoRollComponent::mouseDoubleClick); el primer clic
+  // del doble clic no debe dejar un corte nuevo ni un micro-segmento.
+  if (note && owner_.isNoteTopZone(*note, worldY) &&
+      !e.mods.isCommandDown())
+  {
+    const auto mergeable = owner_.noteSplitter->findMergeableNotesAt(worldX, worldY);
+    if (mergeable.first != nullptr && mergeable.second != nullptr)
+      return true;
+  }
+
   if (note && e.getNumberOfClicks() >= 2 && !e.mods.isCommandDown() &&
       owner_.isNoteTopZone(*note, worldY))
   {

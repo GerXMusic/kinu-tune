@@ -197,6 +197,13 @@ add_test(NAME EditRenderCloseTests COMMAND EditRenderCloseTests)
 # (nota del borde de la frase) como entrada propia de ctest.
 add_test(NAME EditSymptom_sbedge COMMAND EditSymptomAudioTests sb-edge)
 
+# D-285 (2.2/2.3): cortar no afina y unir es un solo paso; medido en cents sobre
+# la curva compuesta, con control sin cortar.
+add_executable(SplitPitchNeutralityTests SplitPitchNeutralityTests.cpp)
+target_link_libraries(SplitPitchNeutralityTests PRIVATE pitchnet_ui)
+target_compile_features(SplitPitchNeutralityTests PRIVATE cxx_std_17)
+add_test(NAME SplitPitchNeutralityTests COMMAND SplitPitchNeutralityTests)
+
 # D-266 (T6): estado unico derivado del render (tabla de transiciones).
 add_executable(RenderStateTests RenderStateTests.cpp)
 target_link_libraries(RenderStateTests PRIVATE pitchnet_core)

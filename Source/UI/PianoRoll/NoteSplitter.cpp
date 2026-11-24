@@ -31,33 +31,6 @@ float calculatePitchCenter(const AudioData& audioData, int startFrame,
                ? static_cast<float>(midiSum / voicedCount)
                : fallback;
 }
-
-void rebasePitchDeviation(Note& note, float amount)
-{
-    if (std::abs(amount) < 0.0001f)
-        return;
-
-    if (note.hasOriginalDeltaPitch()) {
-        auto delta = note.getOriginalDeltaPitch();
-        for (auto& value : delta)
-            value += amount;
-        note.setOriginalDeltaPitch(std::move(delta));
-    }
-
-    if (note.hasDeltaPitch()) {
-        auto delta = note.getDeltaPitch();
-        for (auto& value : delta)
-            value += amount;
-        note.setDeltaPitch(std::move(delta));
-    }
-
-    if (note.hasBakedDeltaPitch()) {
-        auto delta = note.getBakedDeltaPitch();
-        for (auto& value : delta)
-            value += amount;
-        note.setBakedDeltaPitch(std::move(delta));
-    }
-}
 }
 
 Note* NoteSplitter::findNoteAt(float x, float y) {
@@ -90,11 +63,6 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     int startFrame = note->getStartFrame();
     int endFrame = note->getEndFrame();
-    const float previousPitchCenter = note->getAdjustedMidiNote();
-    // Splitting is pitch-neutral, so both halves keep the gap between the
-    // Correct Pitch reference (the sung pitch) and the pitch.
-    const float correctionOffset =
-        note->getLastNonMacroMidiNote() - note->getMidiNote();
 
     // Keep at least one analysis frame on each side of the split.
     if (splitFrame <= startFrame || splitFrame >= endFrame)
@@ -212,21 +180,22 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         secondNote.setF0Values(std::move(rightF0));
     }
 
-    // Recalculate each half's center from its own voiced pitch frames. Rebase
-    // its deviation curve by the opposite amount so splitting is pitch-neutral.
+    // D-285 (2.3): cortar no mueve la afinacion. Las dos mitades conservan el
+    // centro y la referencia de correccion de la nota original, y sus curvas de
+    // desviacion se reparten tal cual: la curva compuesta (base + delta) queda
+    // identica y solo cambian los bordes.
+    //
+    // Antes cada mitad se recentraba en la media de sus propias tramas y se
+    // rebasaba su desviacion para compensar. Parecia inofensivo, pero la base
+    // se genera desde los centros de las notas y se suaviza con un coseno, asi
+    // que el corte dejaba un escalon de ~0,28 semitonos que la curva compuesta
+    // si oia: 14,6 c medidos en SplitPitchNeutralityTests, que es el «cortar
+    // parece afinar» del reporte. El precio de no recentrar es que «Corregir
+    // afinacion» sobre una mitad apunta al semitono de la nota original y no
+    // al de la media de esa mitad; queda escrito en D-285.
     const auto& audioData = project->getAudioData();
-    const float leftPitchCenter = calculatePitchCenter(
-        audioData, startFrame, splitFrame, previousPitchCenter);
-    const float rightPitchCenter = calculatePitchCenter(
-        audioData, splitFrame, endFrame, previousPitchCenter);
-
-    rebasePitchDeviation(*note, previousPitchCenter - leftPitchCenter);
-    rebasePitchDeviation(secondNote, previousPitchCenter - rightPitchCenter);
-    NotePitch::restore(*note, leftPitchCenter, leftPitchCenter + correctionOffset);
-    note->setOriginalMidiNote(leftPitchCenter);
     note->setPitchOffset(0.0f);
-    NotePitch::restore(secondNote, rightPitchCenter, rightPitchCenter + correctionOffset);
-    secondNote.setOriginalMidiNote(rightPitchCenter);
+    secondNote.setOriginalMidiNote(note->getOriginalMidiNote());
     secondNote.setPitchOffset(0.0f);
 
     // Modify the first note (left part)
@@ -368,9 +337,21 @@ bool NoteSplitter::mergeNotes(Note *first, Note *second)
     // Restore a single pitch center over the merged duration. Each half may
     // have been rebased when it was split, so convert its deviations through
     // the current absolute pitch before expressing them around the new center.
-    const float mergedPitchCenter = calculatePitchCenter(
-        project->getAudioData(), mergedNote.getStartFrame(),
-        mergedNote.getEndFrame(), firstNote.getAdjustedMidiNote());
+    //
+    // D-285 (2.3): unir el corte que hizo splitNoteAtFrame es la operacion
+    // inversa del corte y tampoco puede mover la afinacion. Ahora el corte deja
+    // las dos mitades con el MISMO centro, asi que se conserva tal cual; volver
+    // a calcular la media de la union entera movia la base (2,9 c medidos en
+    // SplitPitchNeutralityTests al unir). Para dos notas de centro distinto
+    // (Unir del inspector, unir dos segmentos que no vienen de un corte) se
+    // sigue usando la media, que es lo correcto.
+    const bool sameCenter =
+        std::abs(firstNote.getMidiNote() - secondNote.getMidiNote()) <= 1.0e-4f;
+    const float mergedPitchCenter =
+        sameCenter ? firstNote.getMidiNote()
+                   : calculatePitchCenter(
+                         project->getAudioData(), mergedNote.getStartFrame(),
+                         mergedNote.getEndFrame(), firstNote.getAdjustedMidiNote());
     const auto mergeDeviation = [mergedPitchCenter](
                                   const std::vector<float> &firstValues,
                                   float firstCenter,

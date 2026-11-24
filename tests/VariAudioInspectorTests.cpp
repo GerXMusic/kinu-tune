@@ -743,6 +743,61 @@ int main()
         CHECK(near(f.note(0).getMidiNote(), 60.3f)); // el corte no afina
     }
 
+    // --- D-285 (2.1/2.2): recuadro en vacio y unir en el corte --------------
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        const auto left = juce::ModifierKeys::leftButtonModifier;
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f -
+                   static_cast<float>(f.roll.getScrollY());
+        };
+
+        // 2.1: arrastrar con el clic izquierdo en vacio dibuja el recuadro y
+        // selecciona lo que toca; no panea. El hueco 200-250 esta vacio.
+        const float scrollBefore = f.roll.getScrollX();
+        const juce::Point<float> start(xAt(205), yAt(56.5f));
+        const juce::Point<float> end(xAt(320), yAt(65.0f));
+        f.roll.mouseDown(event(f.roll, start, left, 1));
+        f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(15.0f, 10.0f), left, 1));
+        f.roll.mouseDrag(event(f.roll, end, left, 1));
+        f.roll.mouseUp(event(f.roll, end, left, 1));
+        CHECK(near(f.roll.getScrollX(), scrollBefore)); // no es la mano
+        CHECK(f.note(2).isSelected());                  // la cubre el recuadro
+        CHECK(!f.note(0).isSelected());
+        CHECK(!f.note(1).isSelected());
+
+        // 2.2: cortar y volver a unir con doble clic en la frontera, en un paso.
+        const float yTop = yAt(60.3f) - f.roll.getPixelsPerSemitone() * 0.35f;
+        const size_t notesBefore = f.project.getNotes().size();
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 2));
+        CHECK(f.project.getNotes().size() == notesBefore + 1);
+        // El primer clic del doble clic ya no deja otro corte en la frontera.
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 1));
+        CHECK(f.project.getNotes().size() == notesBefore + 1);
+        // Doble clic sobre el corte: une (y no afina).
+        f.roll.mouseDown(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseDoubleClick(event(f.roll, {xAt(50), yTop}, left, 2));
+        f.roll.mouseUp(event(f.roll, {xAt(50), yTop}, left, 2));
+        CHECK(f.project.getNotes().size() == notesBefore);
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
+        // Un solo paso de undo vuelve al corte.
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(f.project.getNotes().size() == notesBefore + 1);
+    }
+
     std::cout << "VariAudio inspector tests passed\n";
     return 0;
 }
