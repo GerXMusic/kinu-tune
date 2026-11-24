@@ -347,10 +347,10 @@ private:
   // D-285: red por si un cierre se pierde igual. Suelta la cadena, re-arma un
   // intento (uno por revision) y lo registra. Se sirve desde el timer.
   void rescueStalledRender();
-  // D-285/2: si la curva compuesta quedo desfasada de las notas (se ve la curva
-  // en otro sitio), se reconstruye la base desde las notas. Con tope de
-  // intentos: si no se arregla, se deja de tocar y se reporta.
-  void repairDesyncedCurve();
+  // D-285/3 (corregido en D-286): si la BASE quedo desfasada de las notas (se
+  // ve la curva en otro sitio), se reconstruye la base desde las notas al
+  // cargar. Solo al cargar, y una vez por carga. El contador cuenta esas
+  // reparaciones y se publica en el heartbeat (`curve_repair_attempts`).
   int curveRepairAttempts = 0;
   // D-266 (T6): un unico estado derivado para el render de la UI. Agrupa
   // editRenderScheduled, editRenderInFlight, mcpRenderPending, flushChainActive

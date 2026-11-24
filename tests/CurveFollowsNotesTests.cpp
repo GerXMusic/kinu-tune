@@ -29,6 +29,12 @@ constexpr int kFrames = 600;
 void prepareAudio(Project &project) {
   auto &audio = project.getAudioData();
   audio.sampleRate = SAMPLE_RATE;
+  // D-286: sin mel no hay `AudioData::getNumFrames()` (sale de su tamano), y
+  // `rebuildBaseFromNotes` se quedaba en 0 frames: limpiaba base/delta y este
+  // test medía sobre una curva vacía (0,0000 st por no haber frames, no por
+  // estar alineada).
+  audio.melSpectrogram.assign(static_cast<size_t>(kFrames),
+                             std::vector<float>(1, 0.0f));
   audio.f0.assign(static_cast<size_t>(kFrames), 261.6f);
   audio.basePitch.assign(static_cast<size_t>(kFrames), 60.0f);
   audio.deltaPitch.assign(static_cast<size_t>(kFrames), 0.0f);
@@ -105,6 +111,9 @@ void checkCurveFollows(Fixture &f, const char *label) {
 
 int main() {
   juce::ScopedJuceInitialiser_GUI gui;
+  // D-286: sin esto, un fallo que aborta pierde lo ya impreso al canalizar la
+  // salida y el test parece "no haber medido nada".
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
 
   {
     Fixture f;
@@ -179,6 +188,65 @@ int main() {
     f.roll.mouseDoubleClick(event(f.roll, {f.xAt(50), yTop}, left, 2));
     f.roll.mouseUp(event(f.roll, {f.xAt(50), yTop}, left, 2));
     checkCurveFollows(f, "unir (doble clic en el corte)");
+  }
+
+  // --- D-286: la vibracion de la fuente NO es un desfase --------------------
+  // Medido en vivo (sesion del usuario, 24-11): la curva compuesta se separaba
+  // 0,7489 st del centro de una nota sana y la base 0,0000 st en las 42 notas.
+  // Con la compuesta, el arreglo al cargar se disparaba en un proyecto sano
+  // (umbral 0,5 st), reconstruia la base sin cambiar nada y lo re-renderizaba.
+  {
+    Project project;
+    prepareAudio(project);
+    Note note = makeNote(200, 300, 60.0f);
+    std::vector<float> vibrato(100);
+    for (int i = 0; i < 100; ++i)
+      vibrato[static_cast<size_t>(i)] =
+          0.9f * std::sin(juce::MathConstants<float>::twoPi *
+                          static_cast<float>(i) / 200.0f); // pico +0,9 en i=50
+    note.setDeltaPitch(vibrato);
+    project.addNote(note);
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+
+    const float composedPeak =
+        freqToMidi(project.getAudioData().f0[250]) - 60.0f;
+    const float desync = project.maxCurveNotesDisagreement();
+    std::printf(
+        "D-286 vibracion: curva compuesta %.3f st en el centro, base vs notas "
+        "%.4f st\n",
+        composedPeak, desync);
+    CHECK(composedPeak > 0.8f); // la vibracion esta de verdad en la curva
+    CHECK(desync <= kTolerance); // y no se cuenta como desfase
+  }
+
+  // --- D-286: el caso que SI hay que arreglar (notas movidas, base vieja) ---
+  {
+    Fixture f;
+    for (auto &note : f.project.getNotes())
+      note.setMidiNote(note.getMidiNote() + 7.0f);
+    const float desynced = f.project.maxCurveNotesDisagreement();
+    std::printf("D-286 base vieja: %.3f st (esperado ~7)\n", desynced);
+    CHECK(desynced > 6.0f);
+    PitchCurveProcessor::rebuildBaseFromNotes(f.project);
+    const float repaired = f.project.maxCurveNotesDisagreement();
+    std::printf("D-286 tras reconstruir: %.4f st (lim %.1f)\n", repaired,
+                kTolerance);
+    CHECK(repaired <= kTolerance);
+  }
+
+  // --- D-286: una nota corta entre dos saltos no falsea la medida ----------
+  // La base es una escalera suavizada: en una nota corta pegada a un salto de
+  // 7 st el suavizado podria arrastrarla y parecer un desfase.
+  {
+    Project project;
+    prepareAudio(project);
+    project.addNote(makeNote(0, 100, 60.0f));
+    project.addNote(makeNote(100, 110, 67.0f));
+    project.addNote(makeNote(110, 210, 60.0f));
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    const float desync = project.maxCurveNotesDisagreement();
+    std::printf("D-286 nota corta (10 frames) entre saltos: %.4f st\n", desync);
+    CHECK(desync <= kTolerance);
   }
 
   std::printf("CurveFollowsNotesTests: en verde\n");

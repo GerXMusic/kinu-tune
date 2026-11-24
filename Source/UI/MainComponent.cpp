@@ -2004,9 +2004,9 @@ void MainComponent::pollMcpControl()
     instance->setProperty("last_retry_revision",
                           static_cast<juce::int64>(lastRetryRevision));
     instance->setProperty("retry_attempts", retryAttemptsForRevision);
-    // D-285/2: cuanto se desvia la curva compuesta del centro de cada nota
+    // D-285/2 y D-286: cuanto se desvia la BASE del centro de cada nota
     // (semitonos). Si no es ~0, la base quedo desfasada y se ve la curva en
-    // otro sitio que las notas.
+    // otro sitio que las notas. La vibracion del delta no cuenta.
     instance->setProperty("curve_vs_notes_st",
                           project ? project->maxCurveNotesDisagreement() : 0.0f);
     instance->setProperty("curve_repair_attempts", curveRepairAttempts);
@@ -5486,51 +5486,12 @@ void MainComponent::finishBackendRender(bool success)
   pianoRoll.repaint();
 }
 
-// D-285/2 (medicion): la curva se dibuja y se sintetiza desde base + delta, y
-// las notas se dibujan desde su centro. `curve_vs_notes_st` del heartbeat mide
-// cuanto se separan; se dejo SIN reparacion automatica a proposito: si la base
-// manda, reconstruirla desde las notas "arreglaria" el dibujo cambiando el
-// audio (y horneando una edicion que puede ser un accidente del raton). Lo que
-// corresponde es medir, decirlo y dejar que el usuario deshaga.
-void MainComponent::repairDesyncedCurve()
-{
-  auto *project = getProject();
-  if (project == nullptr || editorController == nullptr)
-    return;
-  if (renderState.renderPending() || project->hasDirtyNotes() ||
-      project->hasF0DirtyRange())
-    return;
-  if (curveRepairAttempts >= 3)
-    return;
-
-  const float disagreement = project->maxCurveNotesDisagreement();
-  if (disagreement <= 0.5f)
-    return;
-
-  ++curveRepairAttempts;
-  LOG("P1b: curva desfasada de las notas (" + juce::String(disagreement, 3) +
-      " st); reconstruyo la base desde las notas (intento " +
-      juce::String(curveRepairAttempts) + ")");
-  PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  pianoRoll.invalidateBasePitchCache();
-  pianoRoll.invalidateWaveformCache();
-  pianoRoll.repaint();
-  // La base manda: si cambio, el audio tiene que volver a renderizarse. Si las
-  // notas son neutrales no hay nada que marcar por nota, asi que se marca el
-  // rango F0 completo (una reparacion es rara y el audio tiene que coincidir
-  // con lo que se ve).
-  project->markEditedNotesDirty();
-  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange())
-  {
-    const int frames = static_cast<int>(project->getAudioData().f0.size());
-    if (frames > 0)
-      project->setF0DirtyRange(0, frames);
-  }
-  markRenderDirty();
-  if (isPluginMode() && onPitchEditFinished)
-    onPitchEditFinished();
-}
-
+// D-285/2, corregido en D-286: la curva se dibuja y se sintetiza desde base +
+// delta, y las notas se dibujan desde su centro. `curve_vs_notes_st` del
+// heartbeat mide cuanto se separa la BASE del centro de las notas; el delta
+// (vibracion, portamento, drift) no cuenta: es la fuente, no un desfase. La
+// reparacion es SOLO al cargar (restoreProjectSnapshot/restoreProjectJson), no
+// periodica: reparar en caliente cambiaria el audio sin que el usuario lo pida.
 void MainComponent::showSettings()
 {
   if (!settingsOverlay)
@@ -6313,7 +6274,8 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
         const float desync = project->maxCurveNotesDisagreement();
         if (desync > 0.5f)
         {
-          LOG("P1b: proyecto abierto con la curva desfasada (" +
+          ++curveRepairAttempts;
+          LOG("P1b: proyecto abierto con la base desfasada de las notas (" +
               juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
           project->markEditedNotesDirty();
@@ -6350,13 +6312,15 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
       project->setMacroParameters(macroParameters);
     // D-285/3: un archivo restaurado puede traer las notas ya transpuestas y la
     // base de antes (visto en vivo: notas +7 semitonos y la curva 7 por debajo).
-    // La nota es la verdad del proyecto: si la curva compuesta no esta en su
-    // centro, se reconstruye la base desde las notas. Una vez, al cargar.
+    // La nota es la verdad del proyecto: si la base no esta en su centro, se
+    // reconstruye desde las notas. Una vez, al cargar. D-286: se mide la BASE,
+    // no la curva compuesta (la vibracion del delta es legitima).
     {
       const float desync = project->maxCurveNotesDisagreement();
       if (desync > 0.5f)
       {
-        LOG("P1b: archivo restaurado con la curva desfasada (" +
+        ++curveRepairAttempts;
+        LOG("P1b: archivo restaurado con la base desfasada de las notas (" +
             juce::String(desync, 3) + " st); reconstruyo la base desde las notas");
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
         project->markEditedNotesDirty();

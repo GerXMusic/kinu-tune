@@ -514,6 +514,17 @@ float Project::maxCurveNotesDisagreement() const
     if (frames <= 0 || notes.empty())
         return 0.0f;
 
+    // D-286: la referencia es la BASE, no la curva compuesta. La base sale solo
+    // de los centros de las notas (BasePitchCurve), asi que la vibracion, el
+    // portamento o el drift que viven en el delta no cuentan: son parte de la
+    // fuente y no un desfase. Medido en vivo (sesion del usuario, 24-11): la
+    // curva compuesta se separaba hasta 0,7489 st del centro de una nota sana y
+    // la base quedaba a 0,0000 st en las 42 notas; con la compuesta, el arreglo
+    // al cargar se disparaba en un proyecto sano y lo re-renderizaba sin
+    // arreglar nada.
+    const bool haveBase =
+        audio.basePitch.size() == static_cast<size_t>(frames);
+
     float worst = 0.0f;
     for (const auto &note : notes)
     {
@@ -524,11 +535,20 @@ float Project::maxCurveNotesDisagreement() const
         if (end <= start)
             continue;
         const int middle = start + (end - start) / 2;
-        const float hz = audio.f0[static_cast<size_t>(middle)];
-        if (!(hz > 0.0f) || !std::isfinite(hz))
-            continue;
-        const float curveMidi = freqToMidi(hz);
-        worst = std::max(worst, std::abs(curveMidi - note.getAdjustedMidiNote()));
+
+        float referenceMidi = 0.0f;
+        if (haveBase)
+            referenceMidi = audio.basePitch[static_cast<size_t>(middle)];
+        if (!(referenceMidi > 0.0f) || !std::isfinite(referenceMidi))
+        {
+            // Sin base en ese frame: la compuesta es lo unico que hay.
+            const float hz = audio.f0[static_cast<size_t>(middle)];
+            if (!(hz > 0.0f) || !std::isfinite(hz))
+                continue;
+            referenceMidi = freqToMidi(hz);
+        }
+
+        worst = std::max(worst, std::abs(referenceMidi - note.getAdjustedMidiNote()));
     }
     return worst;
 }
