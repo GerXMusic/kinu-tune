@@ -486,6 +486,68 @@ void testEngineChangeRendersEveryBlock() {
 }
 } // namespace
 
+// D-290: un cierre que vuelve a pedir pase sin que nada avance no puede
+// re-lanzarse sin fin. Medido en vivo: con el Vocoder y «seguir global», Play
+// quedaba retenido para siempre (phase=Rendering, generation subiendo) y el
+// transporte solo arrancaba con un segundo Play. El test usa un backend que
+// cierra bien pero no limpia nada: la cadena tiene que soltarse en el tope y el
+// transporte volver a sonar.
+void testChainPassesAreBounded() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  struct StuckBackend {
+    std::function<void(bool)> finish;
+    std::function<void()> beforeFinish; // re-marca sucio, como un pase que no cubre
+    int requests = 0;
+    void request(const Project &) {
+      ++requests;
+      juce::MessageManager::callAsync([this]() {
+        if (beforeFinish) beforeFinish();
+        if (finish) finish(true);
+      });
+    }
+  } backend;
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+
+  auto &project = *controller.getProject();
+  // Peor caso: cada cierre re-marca la nota (la revision sube en cada pase, asi
+  // que el tope por revision no bastaria).
+  backend.beforeFinish = [&project]() {
+    project.getNotes()[0].markDirty();
+    project.getNotes()[0].markSynthDirty();
+  };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  std::vector<bool> transport;
+  mc.setOnRequestHostPlayState([&transport](bool play) { transport.push_back(play); });
+
+  project.getNotes()[0].markDirty();
+  project.getNotes()[0].markSynthDirty();
+  access.markRenderDirty();
+
+  const bool held = access.flushForHostPlay();
+  CHECK(held);
+  CHECK(access.flushChainActive());
+  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+  while (access.flushChainActive() &&
+         juce::Time::getMillisecondCounterHiRes() < deadline)
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+  const bool endsPlaying = !transport.empty() && transport.back();
+  std::printf("D-290 cadena atascada: peticiones %d (<= 32) | cadena %d "
+              "(esperado 0) | termina sonando %d (esperado 1)\n",
+              backend.requests, access.flushChainActive() ? 1 : 0,
+              endsPlaying ? 1 : 0);
+  CHECK(backend.requests <= 32);
+  CHECK(!access.flushChainActive());
+  CHECK(endsPlaying);
+}
+
 // D-287: el audio publicado no puede quedarse en una revision anterior a la del
 // modelo. Medido en vivo: pass=44 < dirty=47, nada agendado ni en vuelo, notas
 // limpias y el buffer aun con el motor anterior mientras el estado decia
@@ -714,6 +776,7 @@ int main() {
   testS4dCloseKeepsSecondEdit();
   testEngineChangeBlockedWhilePlaying();
   testEngineChangeRendersEveryBlock();
+  testChainPassesAreBounded();
   testStaleAudioIsCaughtUpOnce();
   testFailedCloseReleasesChainAndRecovers();
   testCloseWithoutSnapshotDecidesNothing();

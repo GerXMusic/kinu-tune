@@ -387,6 +387,18 @@ private:
   // aun del motor anterior y el estado diciendo `Published`).
   std::uint64_t publishedRevision = 0;
   std::uint64_t lastCatchUpRevision = 0;
+  // D-290: tope de pases por revision en una cadena. Un cierre que vuelve a
+  // pedir pase sin que nada haya avanzado no puede re-lanzarse sin fin: el Play
+  // se queda retenido y el editor parece colgado (medido en vivo: phase
+  // Rendering, generation subiendo, el transporte sin arrancar). Agotado el
+  // tope se suelta la cadena y el transporte suena con el ultimo publicado.
+  int chainPassesForRevision = 0;
+  std::uint64_t chainPassesRevision = 0;
+  static constexpr int kMaxChainPassesPerRevision = 8;
+  // Tope global de la cadena: aunque cada pase suba la revision (por ejemplo
+  // una edicion que se re-marca sola), la cadena no puede durar mas de esto.
+  int chainPassesTotal = 0;
+  static constexpr int kMaxChainPassesTotal = 32;
   // D-285: presupuesto de reintento tras un cierre fallido, por revision.
   std::uint64_t lastRetryRevision = 0;
   // D-285/2: cuantos reintentos lleva esta revision (para no girar sin fin) y

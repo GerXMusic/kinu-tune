@@ -947,7 +947,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     {
       LOG("engine: cambio global rechazado, el transporte esta sonando (D-288)");
       enginePanel.setBlockNotice(
-          "Para cambiar de motor, para la reproducción.");
+          "Para cambiar de motor, para la reproducciï¿½n.");
       parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
       return;
     }
@@ -2024,6 +2024,12 @@ void MainComponent::pollMcpControl()
     instance->setProperty("published_revision",
                           static_cast<juce::int64>(publishedRevision));
     instance->setProperty("audio_stale", publishedRevision < dirtyRevision);
+    // D-290: pases de la cadena para esta revision. Si llega al tope, el editor
+    // suelta la cadena en vez de re-lanzarse sin fin.
+    instance->setProperty("chain_passes",
+                          chainPassesRevision == dirtyRevision
+                              ? chainPassesForRevision
+                              : 0);
     instance->setProperty("last_retry_revision",
                           static_cast<juce::int64>(lastRetryRevision));
     instance->setProperty("retry_attempts", retryAttemptsForRevision);
@@ -4833,6 +4839,10 @@ void MainComponent::flushDirtyBlocks()
 
   renderState.deferredRenderPending = false;
   renderState.flushChainActive = true;
+  // D-290: cadena nueva, contadores a cero.
+  chainPassesTotal = 0;
+  chainPassesRevision = 0;
+  chainPassesForRevision = 0;
   resynthesizeIncremental();
 }
 
@@ -5024,7 +5034,7 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   {
     LOG("engine block: rechazado, el transporte esta sonando (D-288)");
     enginePanel.setBlockNotice(
-        "Para cambiar de motor, para la reproducción.");
+        "Para cambiar de motor, para la reproducciï¿½n.");
     return 0;
   }
   auto &notes = project->getNotes();
@@ -5518,10 +5528,36 @@ void MainComponent::finishBackendRender(bool success)
   // (D-227/D-254).
   if (success && stillDirty)
   {
-    if (!renderState.flushChainActive)
-      renderState.editRenderInFlight = true;
-    resynthesizeIncremental();
-    return;
+    // D-290: contabilidad por revision. Cada pase que no deja el proyecto
+    // limpio suma; al pasar del tope se deja de re-lanzar (suelta la cadena y
+    // el transporte vuelve a sonar con el ultimo publicado). Antes esto podia
+    // re-lanzarse indefinidamente y el Play no arrancaba nunca.
+    if (chainPassesRevision != dirtyRevision)
+    {
+      chainPassesRevision = dirtyRevision;
+      chainPassesForRevision = 0;
+    }
+    ++chainPassesForRevision;
+    ++chainPassesTotal;
+    if (chainPassesForRevision > kMaxChainPassesPerRevision ||
+        chainPassesTotal > kMaxChainPassesTotal)
+    {
+      LOG("P1b: rev " + juce::String(dirtyRevision) + " con " +
+          juce::String(chainPassesForRevision) + " pases (" +
+          juce::String(chainPassesTotal) +
+          " en la cadena) sin limpiar; se suelta la cadena (D-290)");
+      renderState.deferredRenderPending = true;
+      renderState.editRenderScheduled = false;
+      chainPassesTotal = 0;
+      // Cae al desmontaje de abajo en vez de re-lanzar.
+    }
+    else
+    {
+      if (!renderState.flushChainActive)
+        renderState.editRenderInFlight = true;
+      resynthesizeIncremental();
+      return;
+    }
   }
 
   if (!stillDirty)

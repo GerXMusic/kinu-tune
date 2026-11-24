@@ -53,8 +53,10 @@ void testFlushChainResumesTheSave() {
   // D-285: el ancla es el cierre del render del plugin, no la primera aparicion
   // de `flushChainActive = false` (que ahora esta tambien en el camino
   // standalone de un pase fallido).
+  // D-290: la ventana crece con el tope de pases de la cadena (el cierre ahora
+  // lleva la contabilidad D-290 antes del guardado diferido).
   const auto finish = windowAfter(
-      mainComponent, "void MainComponent::finishBackendRender", 5200);
+      mainComponent, "void MainComponent::finishBackendRender", 6200);
   CHECK(!finish.empty());
   CHECK(finish.find("saveProject(saveAsAfterFlush)") != std::string::npos);
   CHECK(mainComponent.find("resumeSaveAfterFlush = false") !=
