@@ -1,0 +1,56 @@
+# Checks an installer that was already built, on a clean Windows container.
+#
+# This is the post-hoc gate for a frozen artifact: it downloads the .exe from
+# the run that built it and runs tools/windows/check-installer.ps1 against
+# those exact bytes. It never rebuilds or changes the installer.
+name: Windows installer check (existing artifact)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run that holds the installer artifact"
+        required: true
+        default: "45539142951"
+      artifact:
+        description: "Artifact name"
+        required: true
+        default: "TuneX-Windows-x64-Setup"
+      expected_sha:
+        description: "Expected SHA-256 of the installed TuneX.vst3 (empty = do not compare)"
+        required: false
+        default: "CDD62D0D9F4712BA690F8629FD9C48F135C6965510B4E9EA9FBE725EDF418CCB"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout JUCE
+        run: git submodule update --init --depth 1 third_party/JUCE
+
+      - name: Download the installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path installer | Out-Null
+          gh run download "${{ inputs.run_id }}" --repo "$env:GITHUB_REPOSITORY" -n "${{ inputs.artifact }}" -D installer
+          Get-ChildItem installer -Recurse | Select-Object FullName, Length
+          $setup = Get-ChildItem installer -Recurse -Filter *.exe | Select-Object -First 1
+          if (-not $setup) { throw "the artifact does not hold an .exe" }
+          "SETUP=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "setup SHA-256: $((Get-FileHash $setup.FullName -Algorithm SHA256).Hash)"
+
+      - name: Check the installer on a clean Windows
+        shell: pwsh
+        run: ./tools/windows/check-installer.ps1 -Setup "$env:SETUP" -ExpectedSha "${{ inputs.expected_sha }}"
