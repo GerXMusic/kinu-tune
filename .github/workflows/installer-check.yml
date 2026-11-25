@@ -17,9 +17,9 @@ on:
         required: true
         default: "TuneX-Windows-x64-Setup"
       expected_sha:
-        description: "Expected SHA-256 of the installed TuneX.vst3 (empty = do not compare)"
+        description: "Expected SHA-256 of the installed TuneX.vst3 (empty = do not compare; 0.1.4 ships a separate build)"
         required: false
-        default: "CDD62D0D9F4712BA690F8629FD9C48F135C6965510B4E9EA9FBE725EDF418CCB"
+        default: ""
 
 permissions:
   actions: read
