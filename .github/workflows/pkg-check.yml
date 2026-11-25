@@ -39,7 +39,10 @@ jobs:
           find pkg -type f -maxdepth 3 -print
           pkgfile=$(find pkg -name '*.pkg' -type f | head -n1)
           [ -n "$pkgfile" ] || { echo "the artifact does not hold a .pkg" >&2; exit 1; }
+          version=$(basename "$pkgfile" | sed -n 's/^TuneX-\([0-9.]*\)-macOS-arm64\.pkg$/\1/p')
+          [ -n "$version" ] || { echo "cannot read the version from $pkgfile" >&2; exit 1; }
           echo "PKG=$pkgfile" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
           shasum -a 256 "$pkgfile"
 
       - name: Install it in the current user's home
@@ -59,8 +62,9 @@ jobs:
           done
           grep -q '<string>ARA</string>' "$au/Contents/Info.plist" || {
             echo "the AU does not declare the ARA label" >&2; exit 1; }
-          grep -Eq '"Version"[[:space:]]*:[[:space:]]*"0\.1\.4"' "$vst3/Contents/Resources/moduleinfo.json" || {
-            echo "moduleinfo is not 0.1.4" >&2; exit 1; }
+          version_re=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+          grep -Eq "\"Version\"[[:space:]]*:[[:space:]]*\"$version_re\"" "$vst3/Contents/Resources/moduleinfo.json" || {
+            echo "moduleinfo is not $VERSION" >&2; exit 1; }
           echo "installed files OK"
 
       - name: Record the signature status
