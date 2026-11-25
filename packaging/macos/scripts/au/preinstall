@@ -1,0 +1,29 @@
+#!/bin/bash
+# TuneX - Copyright (C) 2026 GerX
+# Part of TuneX, a modified version of PitchNet. Licensed under the GNU
+# Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
+#
+# D-300: same cleanup as the VST3 component, for TuneX.component. Installer
+# merges bundles, so a backup left inside the previous AU would survive.
+set -euo pipefail
+
+echo "TuneX preinstall: package=${1:-} target=${2:-} volume=${3:-} home=${HOME:-}"
+
+remove_bundle() {
+    local path="$1"
+    case "$path" in
+        */Library/Audio/Plug-Ins/Components/TuneX.component) ;;
+        *) return 0 ;;
+    esac
+    if [ -e "$path" ]; then
+        echo "TuneX preinstall: removing previous bundle: $path"
+        rm -rf "$path"
+    fi
+}
+
+target="${2:-}"
+home="${HOME:-}"
+
+remove_bundle "${target%/}/TuneX.component"
+remove_bundle "${target%/}/Library/Audio/Plug-Ins/Components/TuneX.component"
+remove_bundle "${home}/Library/Audio/Plug-Ins/Components/TuneX.component"

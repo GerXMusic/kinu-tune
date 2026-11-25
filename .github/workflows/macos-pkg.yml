@@ -2,11 +2,21 @@ name: macOS installer (pkg)
 
 # Fabrica el instalador .pkg que deja todo en su sitio: plugin VST3, Audio Unit,
 # modelos y textos de licencia. Se lanza a mano desde Actions.
+#
+# D-300 (0.1.6): el .pkg no se publica como artefacto final hasta que otro
+# runner limpio lo instala, comprueba que un bundle/backup anterior no sobrevive
+# y valida el VST3 instalado con pluginval strictness 5. El job "build" sube un
+# artefacto intermedio "-unverified"; el job "check" sube el definitivo solo si
+# todo pasa. Asi un .pkg que no instala no puede acabar en un release.
 on:
   workflow_dispatch:
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
-  macos-pkg:
+  build:
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -87,9 +97,135 @@ jobs:
           pkgutil --payload-files "$PKG" | head -40 || true
           du -h "$PKG"
 
-      - name: Upload the .pkg
+      # Intermedio, no distribuible: el job check solo sube el definitivo si el
+      # paquete instala y pluginval pasa. Se borra solo a los 3 dias.
+      - name: Upload the unverified .pkg
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-macOS-arm64-pkg-unverified
+          path: dist/TuneX-*-macOS-arm64.pkg
+          retention-days: 3
+          if-no-files-found: error
+
+  check:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Download the .pkg built by this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg
+          gh run download "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY" \
+            -n "TuneX-macOS-arm64-pkg-unverified" -D pkg
+          pkgfile=$(find pkg -name '*.pkg' -type f | head -n1)
+          [ -n "$pkgfile" ] || { echo "the artifact does not hold a .pkg" >&2; exit 1; }
+          version=$(basename "$pkgfile" | sed -n 's/^TuneX-\([0-9.]*\)-macOS-arm64\.pkg$/\1/p')
+          [ -n "$version" ] || { echo "cannot read the version from $pkgfile" >&2; exit 1; }
+          echo "PKG=$pkgfile" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          shasum -a 256 "$pkgfile"
+
+      # D-300: simula una instalacion anterior que dejo un backup dentro del
+      # bundle. El preinstall del .pkg debe borrar el bundle entero; Installer
+      # por si solo fusiona y dejaria el TuneX.old.vst3 dentro.
+      - name: Seed a previous install with stale files
+        run: |
+          set -euo pipefail
+          vst3="$HOME/Library/Audio/Plug-Ins/VST3/TuneX.vst3"
+          au="$HOME/Library/Audio/Plug-Ins/Components/TuneX.component"
+          mkdir -p "$vst3/Contents/MacOS" "$vst3/Contents/Resources"
+          mkdir -p "$au/Contents/MacOS" "$au/Contents/Resources"
+          printf 'old backup\n' > "$vst3/Contents/MacOS/TuneX.old.vst3"
+          printf 'stale\n' > "$vst3/Contents/Resources/STALE.txt"
+          printf 'old backup\n' > "$au/Contents/MacOS/TuneX.old.component"
+          printf 'stale\n' > "$au/Contents/Resources/STALE.txt"
+          echo "Seeded:"
+          find "$vst3" "$au" -type f -print
+
+      - name: Install it in the current user's home
+        run: |
+          set -euo pipefail
+          installer -pkg "$PKG" -target CurrentUserHomeDirectory -verbose
+          vst3="$HOME/Library/Audio/Plug-Ins/VST3/TuneX.vst3"
+          au="$HOME/Library/Audio/Plug-Ins/Components/TuneX.component"
+          app="$HOME/Library/Application Support/GerX/TuneX"
+          models="$app/models"
+          echo "VST3=$vst3" >> "$GITHUB_ENV"
+          echo "AU=$au" >> "$GITHUB_ENV"
+          for p in "$vst3" "$au" "$models/fcpe.onnx" "$models/cent_table.bin" \
+                   "$models/mel_filterbank.bin" "$models/pc_nsf_hifigan.onnx" "$models/GAME" \
+                   "$app/LICENSE" "$app/THIRD_PARTY_NOTICES.txt" "$app/licenses"; do
+            [ -e "$p" ] || { echo "missing after install: $p" >&2; exit 1; }
+          done
+          # D-300: ni el bundle sembrado ni el backup pueden sobrevivir.
+          for stale in "$vst3/Contents/MacOS/TuneX.old.vst3" \
+                       "$vst3/Contents/Resources/STALE.txt" \
+                       "$au/Contents/MacOS/TuneX.old.component" \
+                       "$au/Contents/Resources/STALE.txt"; do
+            [ ! -e "$stale" ] || { echo "stale file survived the install: $stale" >&2; exit 1; }
+          done
+          if find "$vst3" "$au" -type f \( -name '*.old.*' -o -name '*.bak' -o -name '~$*' \) | grep -q .; then
+            echo "backup files inside the installed bundles:" >&2
+            find "$vst3" "$au" -type f \( -name '*.old.*' -o -name '*.bak' -o -name '~$*' \) >&2
+            exit 1
+          fi
+          [ -x "$vst3/Contents/MacOS/TuneX" ] || { echo "the VST3 binary is missing" >&2; exit 1; }
+          [ -x "$au/Contents/MacOS/TuneX" ] || { echo "the AU binary is missing" >&2; exit 1; }
+          grep -q '<string>ARA</string>' "$au/Contents/Info.plist" || {
+            echo "the AU does not declare the ARA label" >&2; exit 1; }
+          version_re=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+          grep -Eq "\"Version\"[[:space:]]*:[[:space:]]*\"$version_re\"" "$vst3/Contents/Resources/moduleinfo.json" || {
+            echo "moduleinfo is not $VERSION" >&2; exit 1; }
+          echo "installed files OK; the previous bundle did not survive"
+
+      - name: Record the signature status
+        run: |
+          pkgutil --check-signature "$PKG" || true
+          codesign -dv --verbose=4 "$VST3" 2>&1 || true
+          codesign -dv --verbose=4 "$AU" 2>&1 || true
+
+      - name: Download pluginval 1.0.4
+        run: |
+          mkdir -p "$RUNNER_TEMP/pluginval"
+          curl -fsSL -o "$RUNNER_TEMP/pluginval/pluginval.zip" \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          ditto -x -k "$RUNNER_TEMP/pluginval/pluginval.zip" "$RUNNER_TEMP/pluginval"
+          mkdir -p "$RUNNER_TEMP/pluginval-logs"
+
+      - name: Validate the installed VST3 with pluginval (strictness 5)
+        env:
+          DYLD_PRINT_LIBRARIES: 1
+          DYLD_PRINT_RPATHS: 1
+        run: |
+          set -o pipefail
+          bin=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval -perm -u+x | head -n1)
+          [ -n "$bin" ] || { echo "pluginval not found" >&2; exit 1; }
+          "$bin" --help > help.txt 2>&1 || true
+          grep -q -- "--strictness-level" help.txt || {
+            echo "pluginval does not support --strictness-level" >&2; exit 1; }
+          args=(--strictness-level 5 --verbose --output-dir "$RUNNER_TEMP/pluginval-logs")
+          if grep -q -- "--skip-gui-tests" help.txt; then args+=(--skip-gui-tests); fi
+          if grep -q -- "--validate" help.txt; then args+=(--validate "$VST3"); else args+=("$VST3"); fi
+          echo "pluginval ${args[*]}"
+          "$bin" "${args[@]}"
+
+      # Solo despues de instalar y pasar pluginval. Este es el artefacto que
+      # puede acabar en un release.
+      - name: Upload the verified .pkg
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: TuneX-macOS-arm64-pkg
-          path: dist/TuneX-*-macOS-arm64.pkg
+          path: pkg/**/TuneX-*-macOS-arm64.pkg
+          retention-days: 7
           if-no-files-found: error
+
+      - name: Upload pluginval logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-check-pluginval-logs
+          path: ${{ runner.temp }}/pluginval-logs
+          if-no-files-found: warn

@@ -1,0 +1,37 @@
+TuneX - Windows x64 models / Modelos
+
+This zip contains only the AI models and the licence texts. Use it with the
+standalone TuneX VST3 zip; the .exe installer already includes the same models
+and does not need this file.
+
+Este zip solo lleva los modelos de IA y los textos de licencia. Se usa con el
+zip suelto del VST3 de TuneX; el instalador .exe ya incluye los mismos modelos
+y no necesita este archivo.
+
+1. Create the folder %APPDATA%\GerX\TuneX if it does not exist.
+   Crea la carpeta %APPDATA%\GerX\TuneX si no existe.
+
+2. Copy the "models" folder from this zip into that TuneX folder. The result
+   must be %APPDATA%\GerX\TuneX\models\fcpe.onnx, etc.
+   Copia la carpeta "models" de este zip dentro de esa carpeta TuneX. El
+   resultado debe ser %APPDATA%\GerX\TuneX\models\fcpe.onnx, etc.
+
+3. The plug-in also reads %PROGRAMDATA%\GerX\TuneX\models (the installer path)
+   if the per-user folder does not exist. If you already installed with the
+   .exe and want to use those models, you do not need this zip.
+   El plugin tambien lee %PROGRAMDATA%\GerX\TuneX\models (la ruta del
+   instalador) si no existe la carpeta del usuario. Si ya instalaste con el
+   .exe y quieres usar esos modelos, no necesitas este zip.
+
+4. Restart the DAW and rescan plug-ins.
+   Reinicia el DAW y vuelve a escanear plugins.
+
+Licences / Licencias: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses\
+The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0
+(OpenVPI). The project is free and open source; the vocoder weights cannot be
+sold or used as part of a paid product or service.
+Los archivos de los modelos GAME y PC-NSF-HiFiGAN estan bajo CC BY-NC-SA 4.0
+(OpenVPI). El proyecto es libre y de codigo abierto; los pesos del vocoder no
+se pueden vender ni usar como parte de un producto o servicio de pago.
+
+Source code / Codigo fuente: https://github.com/GerXMusic/tunex

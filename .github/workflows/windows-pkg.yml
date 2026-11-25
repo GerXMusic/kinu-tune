@@ -96,6 +96,26 @@ jobs:
           Write-Host "VST3 SHA-256: $sha"
           "zip: {0:N1} MB" -f ((Get-Item 'dist/TuneX.vst3.zip').Length / 1MB)
 
+      # Optional fourth artifact (D-301): the standalone VST3 zip does not carry
+      # models, so a user who does not run the .exe needs them. This zip is
+      # independent of the installer: TuneX.iss still reads dist/release/models
+      # and the .exe keeps including them.
+      - name: Zip the models for the standalone VST3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = 'dist/models-stage'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item 'dist/release/models' (Join-Path $stage 'models') -Recurse -Force
+          Copy-Item 'dist/release/LICENSE','dist/release/THIRD_PARTY_NOTICES.txt','dist/release/MODIFICATIONS.md' $stage -Force
+          Copy-Item 'dist/release/licenses' (Join-Path $stage 'licenses') -Recurse -Force
+          Copy-Item 'packaging/INSTALL-Windows-models.txt' $stage -Force
+          $zip = "dist/TuneX-$env:VERSION-Windows-x64-models.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+          "models: {0:N1} MB" -f ((Get-Item $zip).Length / 1MB)
+          "models SHA-256: $((Get-FileHash $zip -Algorithm SHA256).Hash)"
+
       - name: Start Docker
         shell: pwsh
         run: |
@@ -159,5 +179,13 @@ jobs:
         with:
           name: TuneX-vst3-Windows-x64
           path: dist/TuneX.vst3.zip
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the models zip
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-models-Windows-x64
+          path: dist/TuneX-*-Windows-x64-models.zip
           retention-days: 7
           if-no-files-found: error

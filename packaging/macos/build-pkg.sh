@@ -60,12 +60,28 @@ component() {
         plutil -replace "$i.BundleIsVersionChecked" -bool NO "$work/$name.plist"
         i=$((i + 1))
     done
-    pkgbuild --root "$work/root-$name" \
-        --component-plist "$work/$name.plist" \
-        --identifier "com.gerx.tunex.$name" \
-        --version "$version" \
-        --install-location "$location" \
-        "$work/built-$name.pkg" >/dev/null
+    # D-300: a bundle installed by an older version can hold a backup such as
+    # TuneX.old.vst3. Installer merges payloads, so remove the previous bundle
+    # before writing the new one. Only the plug-in components get a preinstall;
+    # the models folder is intentionally not emptied (users may add models).
+    local scripts_dir="$here/scripts/$name"
+    if [ -d "$scripts_dir" ]; then
+        chmod +x "$scripts_dir/preinstall"
+        pkgbuild --root "$work/root-$name" \
+            --component-plist "$work/$name.plist" \
+            --identifier "com.gerx.tunex.$name" \
+            --version "$version" \
+            --install-location "$location" \
+            --scripts "$scripts_dir" \
+            "$work/built-$name.pkg" >/dev/null
+    else
+        pkgbuild --root "$work/root-$name" \
+            --component-plist "$work/$name.plist" \
+            --identifier "com.gerx.tunex.$name" \
+            --version "$version" \
+            --install-location "$location" \
+            "$work/built-$name.pkg" >/dev/null
+    fi
     strip_xattrs "$name"
 }
 

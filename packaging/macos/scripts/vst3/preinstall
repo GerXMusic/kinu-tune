@@ -1,0 +1,35 @@
+#!/bin/bash
+# TuneX - Copyright (C) 2026 GerX
+# Part of TuneX, a modified version of PitchNet. Licensed under the GNU
+# Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
+#
+# D-300: Installer merges a new bundle with an existing one, so a backup such
+# as TuneX.old.vst3 left inside TuneX.vst3 would survive an upgrade. Remove the
+# whole previous bundle before the payload is written. The path is checked
+# against the exact plug-in locations: this script never removes a generic
+# directory.
+set -euo pipefail
+
+echo "TuneX preinstall: package=${1:-} target=${2:-} volume=${3:-} home=${HOME:-}"
+
+remove_bundle() {
+    local path="$1"
+    case "$path" in
+        */Library/Audio/Plug-Ins/VST3/TuneX.vst3) ;;
+        *) return 0 ;;
+    esac
+    if [ -e "$path" ]; then
+        echo "TuneX preinstall: removing previous bundle: $path"
+        rm -rf "$path"
+    fi
+}
+
+target="${2:-}"
+home="${HOME:-}"
+
+# Installer passes the component's installation target in $2. Depending on the
+# domain it can be the plug-in folder itself or the user's home; try both, and
+# the home environment as a last resort.
+remove_bundle "${target%/}/TuneX.vst3"
+remove_bundle "${target%/}/Library/Audio/Plug-Ins/VST3/TuneX.vst3"
+remove_bundle "${home}/Library/Audio/Plug-Ins/VST3/TuneX.vst3"
