@@ -3,11 +3,11 @@ name: macOS installer (pkg)
 # Fabrica el instalador .pkg que deja todo en su sitio: plugin VST3, Audio Unit,
 # modelos y textos de licencia. Se lanza a mano desde Actions.
 #
-# D-300 (0.1.6): el .pkg no se publica como artefacto final hasta que otro
-# runner limpio lo instala, comprueba que un bundle/backup anterior no sobrevive
-# y valida el VST3 instalado con pluginval strictness 5. El job "build" sube un
-# artefacto intermedio "-unverified"; el job "check" sube el definitivo solo si
-# todo pasa. Asi un .pkg que no instala no puede acabar en un release.
+# D-300 (0.1.6): el .pkg no se sube como artefacto final hasta que el mismo
+# runner efimero lo instala en el home, comprueba que un bundle/backup anterior
+# no sobrevive y valida el VST3 instalado con pluginval strictness 5. El runner
+# es limpio para el plugin (no hay TuneX instalado), aunque tenga las
+# herramientas de build; el .pkg no se sube si el check falla.
 on:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-and-check:
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -96,37 +96,6 @@ jobs:
         run: |
           pkgutil --payload-files "$PKG" | head -40 || true
           du -h "$PKG"
-
-      # Intermedio, no distribuible: el job check solo sube el definitivo si el
-      # paquete instala y pluginval pasa. Se borra solo a los 3 dias.
-      - name: Upload the unverified .pkg
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: TuneX-macOS-arm64-pkg-unverified
-          path: dist/TuneX-*-macOS-arm64.pkg
-          retention-days: 3
-          if-no-files-found: error
-
-  check:
-    needs: build
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - name: Download the .pkg built by this run
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p pkg
-          gh run download "${{ github.run_id }}" --repo "$GITHUB_REPOSITORY" \
-            -n "TuneX-macOS-arm64-pkg-unverified" -D pkg
-          pkgfile=$(find pkg -name '*.pkg' -type f | head -n1)
-          [ -n "$pkgfile" ] || { echo "the artifact does not hold a .pkg" >&2; exit 1; }
-          version=$(basename "$pkgfile" | sed -n 's/^TuneX-\([0-9.]*\)-macOS-arm64\.pkg$/\1/p')
-          [ -n "$version" ] || { echo "cannot read the version from $pkgfile" >&2; exit 1; }
-          echo "PKG=$pkgfile" >> "$GITHUB_ENV"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          shasum -a 256 "$pkgfile"
 
       # D-300: simula una instalacion anterior que dejo un backup dentro del
       # bundle. El preinstall del .pkg debe borrar el bundle entero; Installer
@@ -220,7 +189,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: TuneX-macOS-arm64-pkg
-          path: pkg/**/TuneX-*-macOS-arm64.pkg
+          path: dist/TuneX-*-macOS-arm64.pkg
           retention-days: 7
           if-no-files-found: error
 
