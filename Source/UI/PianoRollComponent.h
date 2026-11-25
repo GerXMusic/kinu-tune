@@ -131,6 +131,11 @@ public:
   // (menu de nota, seleccion). Undoable y con re-render por bloque.
   bool setMutedForNotes(const std::vector<Note *> &notes, bool muted);
 
+  // M5 v2 (D-299): elimina la seleccion. La nota queda como lapida silenciosa
+  // (deleted + rest), undoable y con re-render por bloque. Devuelve false si
+  // no hay proyecto ni notas que eliminar.
+  bool deleteSelection();
+
   // D-267 (T7): reset de una nota por indice, por el mismo camino que el boton
   // y el menu (ResetNoteEditsAction: pitch, formante, amplitud, tiempo, motor y
   // mute, con undo y re-render). Devuelve false si el indice no es valido, la

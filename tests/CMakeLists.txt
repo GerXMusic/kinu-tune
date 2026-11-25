@@ -42,6 +42,7 @@ set(PITCHNET_TEST_SOURCES
     TimingQuantizeTests.cpp
     TimingAudioTests.cpp
     NoteMuteTests.cpp
+    NoteDeleteTests.cpp
     NoteResetTests.cpp
     # D-258: motor por bloque; D-260: bypass con el original; T7: predicado.
     BlockEngineTests.cpp

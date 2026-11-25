@@ -921,6 +921,7 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
     obj->setProperty("muted", note.isMuted());
+    obj->setProperty("deleted", note.isDeleted());
     obj->setProperty("sourceAmplitude", note.getSourceAmplitude());
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
@@ -1003,6 +1004,12 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
+    // D-299: additive key (like "muted" in D-245). A deleted note is also a
+    // rest, so an older reader hides it instead of resurrecting it as a pitch
+    // note if it ignores the key.
+    note.setDeleted(json.getProperty("deleted", false));
+    if (note.isDeleted())
+        note.setRest(true);
 
     // Per-note engine (M2 fase 1, D-125). Absent in every project written
     // before the field existed: that loads as Inherit, exactly the previous

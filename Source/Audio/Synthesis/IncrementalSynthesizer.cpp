@@ -20,6 +20,76 @@ constexpr int kAdjacentFrameTolerance = 1;
 constexpr int kTimingClearFadeSamples = 128;
 
 /**
+ * D-299: apaga de verdad los tramos de las notas eliminadas.
+ *
+ * Se llama al final del pase, despues del commit, del reset neutral y del
+ * exact restore. Es deliberadamente el ultimo paso: cualquiera de esos caminos
+ * puede copiar el original sobre el tramo de una lapida, y el silencio de una
+ * nota eliminada tiene que ganar siempre. Se aplica a todos los canales y con
+ * un fade corto en los bordes para no cortar en seco.
+ */
+void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
+                             const Project &project, int startFrame,
+                             int endFrame, int startSample, int samplesToWrite,
+                             int hopSize) {
+  std::vector<std::pair<int, int>> spans;
+  for (const auto &note : project.getNotes()) {
+    if (!note.isDeleted())
+      continue;
+    const int first = std::max(startFrame, note.getStartFrame());
+    const int last = std::min(endFrame, note.getEndFrame());
+    if (last > first)
+      spans.emplace_back(first, last);
+  }
+  if (spans.empty())
+    return;
+
+  std::sort(spans.begin(), spans.end());
+  std::vector<std::pair<int, int>> merged;
+  for (const auto &span : spans) {
+    if (!merged.empty() && span.first <= merged.back().second)
+      merged.back().second = std::max(merged.back().second, span.second);
+    else
+      merged.push_back(span);
+  }
+
+  const int totalSamples = waveform.getNumSamples();
+  if (totalSamples <= 0)
+    return;
+  const int fadeLimit = std::max(1, hopSize / 2);
+  for (const auto &span : merged) {
+    const int first =
+        std::max(0, (span.first - startFrame) * hopSize);
+    const int last =
+        std::min(samplesToWrite, (span.second - startFrame) * hopSize);
+    if (last <= first)
+      continue;
+    const int absFirst = std::clamp(startSample + first, 0, totalSamples);
+    const int absLast = std::clamp(startSample + last, 0, totalSamples);
+    const int count = absLast - absFirst;
+    if (count <= 0)
+      continue;
+    const int fade = std::min(fadeLimit, std::max(1, count / 4));
+
+    for (int channel = 0; channel < waveform.getNumChannels(); ++channel) {
+      float *destination = waveform.getWritePointer(channel, absFirst);
+      for (int i = 0; i < count; ++i) {
+        float gain = 0.0f;
+        if (i < fade) {
+          const float t = static_cast<float>(i) / static_cast<float>(fade);
+          gain = 1.0f - (t * t * (3.0f - 2.0f * t));
+        } else if (i >= count - fade) {
+          const float t = static_cast<float>(count - 1 - i) /
+                          static_cast<float>(fade);
+          gain = 1.0f - (t * t * (3.0f - 2.0f * t));
+        }
+        destination[i] *= gain;
+      }
+    }
+  }
+}
+
+/**
  * Multi-block render (M2 paso 2, D-125 + D-129).
  *
  * Renders one engine block at a time and concatenates the results. Only used
@@ -956,7 +1026,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   if (useOverride) {
     bool coversDirtyNote = false;
     for (const auto &note : project->getNotes()) {
-      if (note.isRest() || !note.isDirty())
+      if ((note.isRest() && !note.isDeleted()) || !note.isDirty())
         continue;
       if (note.getEndFrame() > renderRangeOverrideStart &&
           note.getStartFrame() < renderRangeOverrideEnd) {
@@ -1071,7 +1141,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     // el tramo de cada nota sucia: el bloque decide el motor, la nota decide
     // donde se escribe.
     for (const auto &note : project->getNotes()) {
-      if (note.isRest() || !note.isDirty())
+      if ((note.isRest() && !note.isDeleted()) || !note.isDirty())
         continue;
       if (note.getEndFrame() <= note.getStartFrame())
         continue;
@@ -1134,7 +1204,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
     int dirtyNoteCount = 0;
     for (const auto &note : project->getNotes())
-      if (!note.isRest() && note.isDirty())
+      if ((!note.isRest() || note.isDeleted()) && note.isDirty())
         ++dirtyNoteCount;
 
     juce::String commitText;
@@ -1188,7 +1258,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     const auto &allNotes = project->getNotes();
     for (size_t i = 0; i < allNotes.size(); ++i) {
       const auto &note = allNotes[i];
-      if (note.isRest() || !note.isDirty())
+      if ((note.isRest() && !note.isDeleted()) || !note.isDirty())
         continue;
       LOG(juce::String("  dirtyNote[") + juce::String(static_cast<int>(i)) +
           "] cur=[" + juce::String(note.getStartFrame()) + "," +
@@ -1232,10 +1302,21 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       blendMask[static_cast<size_t>(sample)] = 1.0f;
   }
 
-  // Early exit: if blend mask is all-zero, nothing to synthesize
+  // Early exit: if blend mask is all-zero, nothing to synthesize. D-299: una
+  // lapida en el rango tiene que llegar al commit aunque su tramo sea sordo,
+  // porque el silencio se aplica al final del pase.
   bool hasVoiced = std::any_of(blendMask.begin(), blendMask.end(),
                                [](float v) { return v > 0.0f; });
-  if (!hasVoiced) {
+  bool hasDeletedInRange = false;
+  for (const auto &note : project->getNotes()) {
+    if (!note.isDeleted())
+      continue;
+    if (note.getEndFrame() > startFrame && note.getStartFrame() < endFrame) {
+      hasDeletedInRange = true;
+      break;
+    }
+  }
+  if (!hasVoiced && !hasDeletedInRange) {
     project->clearDirtyForPass(passDirtyNotes, f0DirtyStart, f0DirtyEnd,
                                passF0Revision);
     if (onComplete)
@@ -2301,6 +2382,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               }
             }
           }
+
+          // D-299: el silencio de una nota eliminada se aplica al final, cuando
+          // ya no queda ningun camino (commit, reset neutral, exact restore,
+          // parches de timing) que pueda escribir encima.
+          silenceDeletedNoteSpans(audioData.waveform, *capturedProject,
+                                  capturedStartFrame, capturedEndFrame,
+                                  startSample, samplesToWrite, hopSize);
 
           // Persist only semantic render state. Previously this loop stored a
           // copy of the rendered samples on every note; the composite waveform

@@ -401,7 +401,7 @@
   "command.paste_notes": "Pegar",
   "command.paste_notes.desp": "Todav?a no implementado",
   "command.delete_notes": "Eliminar",
-  "command.delete_notes.desp": "Todav?a no implementado",
+  "command.delete_notes.desp": "Elimina las notas seleccionadas",
   "command.mute_notes": "Silenciar notas",
   "command.mute_notes.desp": "Silencia las notas seleccionadas",
   "command.unmute_notes": "Reactivar notas",

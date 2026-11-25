@@ -179,6 +179,13 @@ public:
     bool isMuted() const { return muted; }
     void setMuted(bool m) { muted = m; }
 
+    // M5 v2 / D-299: nota eliminada. Queda como lapida interna (deleted + rest)
+    // para que su bloque D-129 se re-renderice y el silencio sobreviva a
+    // guardar/reabrir; la UI la oculta por la misma via que un rest. El render
+    // aplica el silencio al final del pase, no por ganancia.
+    bool isDeleted() const { return deleted; }
+    void setDeleted(bool d) { deleted = d; }
+
     // RMS of pristine source audio; gain edits are applied separately.
     float getSourceAmplitude() const { return sourceAmplitude; }
     void setSourceAmplitude(float rms) { sourceAmplitude = rms; }
@@ -347,6 +354,7 @@ private:
     float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
     bool muted = false;    // M5 v1: nota silenciada (no toca volumeDb)
+    bool deleted = false;  // M5 v2: lapida silenciosa (D-299)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
     std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)

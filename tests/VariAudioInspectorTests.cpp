@@ -806,6 +806,37 @@ int main()
         CHECK(f.project.getNotes().size() == notesBefore + 1);
     }
 
+    // --- D-299: el comando Eliminar deja lapidas, no toca el vector ---------
+    {
+        Fixture f;
+        f.note(0).setSelected(true);
+        f.note(1).setSelected(true);
+        const size_t notesBefore = f.project.getNotes().size();
+        CHECK(f.roll.deleteSelection());
+        CHECK(f.project.getNotes().size() == notesBefore);
+        CHECK(f.note(0).isDeleted());
+        CHECK(f.note(0).isRest());
+        CHECK(!f.note(0).isSelected());
+        CHECK(f.note(1).isDeleted());
+        CHECK(!f.note(2).isDeleted());
+        f.project.selectAllNotes(/*includeRests=*/true);
+        CHECK(!f.note(0).isSelected());
+        CHECK(!f.note(1).isSelected());
+        CHECK(f.note(2).isSelected());
+        CHECK(f.history.canUndo());
+        CHECK(f.history.getUndoName() == "Delete Notes");
+        CHECK(f.history.undo());
+        CHECK(!f.note(0).isDeleted());
+        CHECK(!f.note(0).isRest());
+        CHECK(f.note(0).isSelected());
+        CHECK(!f.note(1).isDeleted());
+        CHECK(f.note(1).isSelected());
+        CHECK(f.history.canRedo());
+        CHECK(f.history.redo());
+        CHECK(f.note(0).isDeleted());
+        CHECK(!f.note(0).isSelected());
+    }
+
     std::cout << "VariAudio inspector tests passed\n";
     return 0;
 }

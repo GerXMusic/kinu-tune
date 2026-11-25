@@ -19,6 +19,7 @@
 #include "../Utils/TimingQuantize.h"
 #include "../Undo/TimingAction.h"
 #include "../Undo/NoteMuteAction.h"
+#include "../Undo/NoteDeleteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -4076,6 +4077,56 @@ bool PianoRollComponent::setMutedForNotes(const std::vector<Note *> &notes,
   if (undoManager)
     undoManager->addAction(
         std::make_unique<NoteMuteAction>(*project, std::move(entries)));
+  if (onPitchEditFinished)
+    onPitchEditFinished();
+  repaint();
+  return true;
+}
+
+bool PianoRollComponent::deleteSelection()
+{
+  if (project == nullptr)
+    return false;
+
+  auto selected = getSelectedNotes();
+  if (selected.empty())
+    return false;
+
+  std::vector<NoteDeleteAction::Entry> entries;
+  entries.reserve(selected.size());
+  int dirtyStart = -1;
+  int dirtyEnd = -1;
+  for (auto *note : selected)
+  {
+    if (note == nullptr || note->isRest() || note->isDeleted())
+      continue;
+    entries.push_back({note, note->isDeleted(), note->isRest(),
+                       note->isSelected(), /*afterDeleted=*/true,
+                       /*afterRest=*/true, /*afterSelected=*/false});
+    note->setDeleted(true);
+    note->setRest(true);
+    note->setSelected(false);
+    note->markDirty();
+    note->markSynthDirty();
+    dirtyStart = dirtyStart < 0 ? note->getStartFrame()
+                               : std::min(dirtyStart, note->getStartFrame());
+    dirtyEnd = dirtyEnd < 0 ? note->getEndFrame()
+                            : std::max(dirtyEnd, note->getEndFrame());
+  }
+  if (entries.empty())
+    return false;
+
+  if (dirtyEnd > dirtyStart)
+  {
+    const int frameCount = project->getAudioData().getNumFrames();
+    project->setF0DirtyRange(std::max(0, dirtyStart - 24),
+                             std::min(frameCount, dirtyEnd + 24));
+  }
+  project->setModified(true);
+
+  if (undoManager)
+    undoManager->addAction(
+        std::make_unique<NoteDeleteAction>(*project, std::move(entries)));
   if (onPitchEditFinished)
     onPitchEditFinished();
   repaint();

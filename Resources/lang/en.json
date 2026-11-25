@@ -405,7 +405,7 @@
   "command.paste_notes": "Paste",
   "command.paste_notes.desp": "Not implemented yet",
   "command.delete_notes": "Delete",
-  "command.delete_notes.desp": "Not implemented yet",
+  "command.delete_notes.desp": "Delete the selected notes",
   "command.mute_notes": "Mute Notes",
   "command.mute_notes.desp": "Mute the selected notes",
   "command.unmute_notes": "Unmute Notes",

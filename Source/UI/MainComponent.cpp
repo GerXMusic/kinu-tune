@@ -7102,7 +7102,9 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
   case CommandIDs::deleteNotes:
     result.setInfo(TR("command.delete_notes"), TR("command.delete_notes.desp"),
                    TR("menu.edit"), 0);
-    result.setActive(false);
+    result.addDefaultKeypress(juce::KeyPress::deleteKey, 0);
+    result.setActive(project != nullptr &&
+                     !pianoRoll.getSelectedNotes().empty());
     break;
 
   case CommandIDs::muteNotes:
@@ -7292,7 +7294,6 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
   case CommandIDs::cutNotes:
   case CommandIDs::copyNotes:
   case CommandIDs::pasteNotes:
-  case CommandIDs::deleteNotes:
     return true; // visible but inactive; the command manager never calls them
 
   case CommandIDs::correctPitch:
@@ -7301,6 +7302,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
 
   case CommandIDs::quantizeTime:
     showQuantizeTimeMacroMenu(&toolbar);
+    return true;
+
+  case CommandIDs::deleteNotes:
+    pianoRoll.deleteSelection();
     return true;
 
   case CommandIDs::muteNotes:

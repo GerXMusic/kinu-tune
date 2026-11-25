@@ -444,7 +444,9 @@ commitRangesForNotes(const std::vector<Note> &notes,
     std::vector<size_t> sortedNotes;
     sortedNotes.reserve(notes.size());
     for (size_t i = 0; i < notes.size(); ++i)
-        if (!notes[i].isRest())
+        // D-299: la lapida eliminada sigue siendo un ancla de commit, aunque
+        // sea un rest; el silencio se aplica al final del pase.
+        if (!notes[i].isRest() || notes[i].isDeleted())
             sortedNotes.push_back(i);
     std::stable_sort(sortedNotes.begin(), sortedNotes.end(),
                      [&](size_t a, size_t b) {
@@ -520,7 +522,7 @@ commitRangesForNotes(const std::vector<Note> &notes,
     if (hasDirtyNoteAnchors) {
         for (size_t index = 0; index < notes.size(); ++index) {
             const auto &note = notes[index];
-            if (note.isRest() || !note.isDirty())
+            if ((note.isRest() && !note.isDeleted()) || !note.isDirty())
                 continue;
             if (note.getEndFrame() <= renderStartFrame ||
                 note.getStartFrame() >= renderEndFrame)

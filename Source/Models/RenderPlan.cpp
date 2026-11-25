@@ -41,7 +41,9 @@ Plan build(const Project &project, SynthesisEngineType globalEngine,
     for (int index = 0; index < static_cast<int>(notes.size()); ++index)
     {
         const auto &note = notes[static_cast<size_t>(index)];
-        if (note.isRest() || !note.isDirty())
+        // D-299: la lapida eliminada es un rest, pero tiene que entrar en el
+        // plan para que exista un pase que aplique su silencio.
+        if ((note.isRest() && !note.isDeleted()) || !note.isDirty())
             continue;
 
         bool sameBlock = current.notes.empty();

@@ -119,6 +119,10 @@ void Project::selectAllNotes(bool includeRests)
 {
     for (auto &note : notes)
     {
+        // D-299: una nota eliminada es una lapida interna; no se selecciona ni
+        // con includeRests.
+        if (note.isDeleted())
+            continue;
         if (!includeRests && note.isRest())
             continue;
         note.setSelected(true);
@@ -189,6 +193,9 @@ bool Project::shouldResetNeutralNoteToOriginal(const Note &note) const
 
 bool Project::noteHasAudioRelevantEdit(const Note &note)
 {
+    // D-299: la lapida es una edicion audible (silencio) aunque sea un rest.
+    if (note.isDeleted())
+        return true;
     if (note.isRest())
         return false;
     if (note.isMuted())
@@ -300,7 +307,9 @@ int Project::markEditedNotesDirty()
     for (int i = 0; i < static_cast<int>(notes.size()); ++i)
     {
         auto &note = notes[static_cast<size_t>(i)];
-        if (note.isRest())
+        // D-299: la lapida se marca sucia para que su bloque se re-renderice y
+        // el silencio se aplique; un rest normal se sigue saltando.
+        if (note.isRest() && !note.isDeleted())
             continue;
         if (!wholeProjectEdited && !noteHasAudioRelevantEdit(note))
             continue;
