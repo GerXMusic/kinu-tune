@@ -109,7 +109,10 @@ jobs:
 
   check:
     needs: build
-    runs-on: macos-15
+    # D-284: el pool macos-15 se queda sin runner y cancela el check a los 15
+    # min. El pkg es arm64 y la instalación/prueba es la misma en macOS 14; se
+    # usa el pool de macos-14 solo para verificar, no para construir.
+    runs-on: macos-14
     timeout-minutes: 120
     steps:
       - name: Download the .pkg built by this run
