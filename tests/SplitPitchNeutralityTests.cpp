@@ -1,4 +1,4 @@
-// D-285 (2.3): cortar no debe afinar.
+// D-285 (2.3) / D-303: cortar no debe afinar.
 //
 // Criterio escrito ANTES de medir:
 //
@@ -14,6 +14,12 @@
 //
 //   Control: la misma medida sin cortar debe dar exactamente 0. Si el
 //   instrumento no da 0 en el control, la medida no vale.
+//
+// D-303 anade dos medidas mas (el audio sigue igual, lo visible se recentra):
+//   - mitad.getMidiNote() == media local de su tramo (0,02 st)
+//   - mitad.getMidiNote() + mitad.getRenderCenterOffset() == centro original
+//   - al unir: merged.getMidiNote() == media de la union (0,02 st)
+//   - renderCenterOffset sobrevive a toJson/fromJson
 #include "../Source/Models/Project.h"
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/UI/PianoRoll/NoteSplitter.h"
@@ -214,7 +220,7 @@ void testSplitIsPitchNeutral() {
                           (left.getOriginalMidiNote() +
                            left.getOriginalDeltaPitch()[static_cast<size_t>(i)])));
   std::printf(
-      "2.3 corte: nota %.3f -> mitades %.3f / %.3f (el corte no recentra) | "
+      "2.3 corte: nota %.3f -> mitades visibles %.3f / %.3f (D-303) | "
       "fuente %.4f conservada\n",
       firstMidi, left.getMidiNote(), right.getMidiNote(), firstSource);
   std::printf("2.3 corte: afinacion compuesta cuerpo max %.4f c (lim 0,5) en "

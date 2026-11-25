@@ -278,6 +278,16 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         lastVisible = std::min(endFrame, startFrame + static_cast<int>(
             std::ceil((right - visualStartFrame) / visualLength * sourceLength)) + 1);
       }
+      if (firstVisible >= lastVisible)
+      {
+        // D-304: the note has no drawable frame inside the viewport (it is
+        // still within the cull padding). Do not bridge the polyline across
+        // it: a straight line would run over the skipped note.
+        strokeCurrentPath();
+        hasPreviousNote = false;
+        previousFinalMidi = -1.0f;
+        continue;
+      }
       for (int i = firstVisible; i < lastVisible; ++i)
       {
         float finalMidi = 0.0f;
