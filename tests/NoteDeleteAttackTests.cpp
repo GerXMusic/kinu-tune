@@ -16,7 +16,6 @@
 //   D) primera nota del proyecto con consonante delante: left = 0 (clampado al
 //      inicio del pase, que no llega al frame 0).
 
-#include "../Source/Audio/Synthesis/EngineBlocks.h"
 #include "../Source/Audio/Synthesis/IncrementalSynthesizer.h"
 #include "../Source/Models/Project.h"
 #include "../Source/Utils/Constants.h"
@@ -377,29 +376,34 @@ void testWobblingFloorMergesRuns() {
 }
 
 // ---------------------------------------------------------------------------
-// F) el umbral cae DENTRO del vaiven del suelo: alternancia de 1 frame por
-//    debajo y 1 frame por encima del umbral. Cada trozo bajo dura 10,7 ms, por
-//    debajo del minimo de 20 ms: si se descartan antes de fusionar, el ultimo
-//    tramo valido empieza en 198 y el soplo queda audible.
+// F) el umbral cae por debajo del suelo y hay un parpadeo de 3 ms (menos de un
+//    frame) pegado al onset. Sin mediana temporal el parpadeo mueve el borde y
+//    la cola de la nota anterior queda audible; con la mediana de 25 ms no.
 // ---------------------------------------------------------------------------
-void testThresholdInsideWobble() {
+void testShortBurstBeforeOnset() {
   constexpr int kTotal = 320;
-  std::vector<Segment> segments = {{50, 150, 57.0f, 1.0f, false}}; // nota A
-  for (int f = 151; f < 198; f += 2)                            // picos -26 dBFS
-    segments.push_back({f, f + 1, 0.0f, 0.0869f, true});
-  segments.push_back({150, 200, 0.0f, 0.0548f, true});          // suelo -30 dBFS
-  segments.push_back({200, 300, 59.0f, 1.0f, false});           // nota B
-  const std::vector<NoteSpec> notes = {{50, 150, 57.0f}, {200, 300, 59.0f}};
+  const std::vector<Segment> segments = {
+      {50, 140, 57.0f, 1.0f, false},    // nota A
+      {140, 160, 0.0f, 0.0388f, true},  // cola a -33 dBFS hasta el onset
+      {160, 300, 59.0f, 1.0f, false},   // nota B (se elimina)
+  };
+  const std::vector<NoteSpec> notes = {{50, 140, 57.0f}, {160, 300, 59.0f}};
 
   Project project = makeProject(kTotal, segments, notes);
-
-  // El helper, con el mismo umbral que calcula el motor (cuerpo - 15 dB),
-  // tiene que devolver un solo tramo que empieza en el inicio del suelo.
-  const auto direct = engineBlocks::findLastSilenceRun(
-      project.getAudioData().originalWaveform, kSampleRate, frameSample(150),
-      frameSample(200), -27.9f);
-  CHECK(direct.has_value());
-  CHECK(direct->startSample <= frameSample(151));
+  // Parpadeo de 3 ms a -22 dBFS en 150,5 frames, en muestras: es el caso real
+  // (frames 737,9-738,2 de la nota 5).
+  auto &audio = project.getAudioData();
+  const int burstStart = static_cast<int>(150.5 * kHop);
+  const int burstEnd = burstStart + static_cast<int>(0.003 * kSampleRate);
+  for (auto *buffer : {&audio.originalWaveform, &audio.waveform}) {
+    unsigned int rng = 424242u;
+    for (int i = burstStart; i < burstEnd; ++i) {
+      rng = rng * 1664525u + 1013904223u;
+      const float noise = 0.1376f * (static_cast<float>((rng >> 8) & 0xFFFFu) /
+                                         32768.0f - 1.0f);
+      buffer->setSample(0, i, buffer->getSample(0, i) + noise);
+    }
+  }
 
   CHECK(renderAndWait(project, kTotal, "F control", /*clearAllDirty=*/true));
   const juce::AudioBuffer<float> control = project.getAudioData().waveform;
@@ -408,16 +412,130 @@ void testThresholdInsideWobble() {
   CHECK(renderAndWait(project, kTotal, "F delete", /*clearAllDirty=*/false));
   const auto &waveform = project.getAudioData().waveform;
 
-  const float floorAfter = rmsDb(waveform, frameSample(152), frameSample(188));
-  const float noteAfter = rmsDb(waveform, frameSample(201), frameSample(299));
+  const float tailAfter = rmsDb(waveform, frameSample(142), frameSample(150));
+  const float noteAfter = rmsDb(waveform, frameSample(162), frameSample(299));
   const float previousTailDiff =
-      maxDiff(control, waveform, frameSample(150) - kTwentyMs,
-              frameSample(150));
-  std::printf("F: soplo %.1f dBFS, nota %.1f dBFS, diff cola %.9f\n",
-              floorAfter, noteAfter, previousTailDiff);
-  CHECK(floorAfter <= -120.0f);
+      maxDiff(control, waveform, frameSample(140) - kTwentyMs,
+              frameSample(140));
+  std::printf("F: cola %.1f dBFS, nota %.1f dBFS, diff cola %.9f\n", tailAfter,
+              noteAfter, previousTailDiff);
+  CHECK(tailAfter <= -120.0f);
   CHECK(noteAfter <= -120.0f);
   CHECK(previousTailDiff == 0.0f);
+}
+
+// ---------------------------------------------------------------------------
+// G) legato continuo: la nota anterior no tiene ninguna caida de energia. No
+//    hay evidencia para mover el borde, asi que no se extiende.
+// ---------------------------------------------------------------------------
+void testLegatoDoesNotExtend() {
+  constexpr int kTotal = 320;
+  const std::vector<Segment> segments = {
+      {50, 200, 57.0f, 1.0f, false},   // nota A, continua hasta el onset
+      {200, 300, 59.0f, 1.0f, false},  // nota B (se elimina)
+  };
+  const std::vector<NoteSpec> notes = {{50, 200, 57.0f}, {200, 300, 59.0f}};
+
+  Project project = makeProject(kTotal, segments, notes);
+  CHECK(renderAndWait(project, kTotal, "G control", /*clearAllDirty=*/true));
+  const juce::AudioBuffer<float> control = project.getAudioData().waveform;
+
+  markDeleted(project, 1, kTotal);
+  CHECK(renderAndWait(project, kTotal, "G delete", /*clearAllDirty=*/false));
+  const auto &waveform = project.getAudioData().waveform;
+
+  const float previousDiff =
+      maxDiff(control, waveform, frameSample(60), frameSample(199));
+  const float previousLevel = rmsDb(waveform, frameSample(60), frameSample(199));
+  const float noteAfter = rmsDb(waveform, frameSample(202), frameSample(299));
+  std::printf("G: diff nota anterior %.9f, nivel %.1f dBFS, nota %.1f dBFS\n",
+              previousDiff, previousLevel, noteAfter);
+  CHECK(previousDiff <= 1.0e-5f); // sin extension: no se toca
+  CHECK(previousLevel > -20.0f);
+  CHECK(noteAfter <= -120.0f);
+}
+
+// ---------------------------------------------------------------------------
+// H) nota eliminada con retime (src != start): el ataque esta en coordenadas de
+//    fuente y el hueco audible en las de destino. No se mezclan: no se extiende
+//    y queda [start, end) como en 0.1.6.
+// ---------------------------------------------------------------------------
+void testRetimedDoesNotExtend() {
+  constexpr int kTotal = 420;
+  const std::vector<Segment> segments = {
+      {50, 150, 57.0f, 1.0f, false},   // nota A
+      {153, 161, 0.0f, 0.18f, true},   // consonante de la nota eliminada
+      {161, 300, 59.0f, 1.0f, false},  // nota B (se elimina, retimeda)
+      {310, 400, 64.0f, 1.0f, false},  // nota C
+  };
+  const std::vector<NoteSpec> notes = {{50, 150, 57.0f},
+                                       {161, 300, 59.0f},
+                                       {310, 400, 64.0f}};
+
+  Project project = makeProject(kTotal, segments, notes);
+  project.getNotes()[1].setSrcStartFrame(165);
+  project.getNotes()[1].setSrcEndFrame(304);
+  CHECK(renderAndWait(project, kTotal, "H control", /*clearAllDirty=*/true));
+  const juce::AudioBuffer<float> control = project.getAudioData().waveform;
+  const float consonantBefore =
+      rmsDb(control, frameSample(153), frameSample(161));
+
+  markDeleted(project, 1, kTotal);
+  std::printf("H: dst %d..%d src %d..%d\n", project.getNotes()[1].getStartFrame(),
+              project.getNotes()[1].getEndFrame(),
+              project.getNotes()[1].getSrcStartFrame(),
+              project.getNotes()[1].getSrcEndFrame());
+  CHECK(renderAndWait(project, kTotal, "H delete", /*clearAllDirty=*/false));
+  const auto &waveform = project.getAudioData().waveform;
+
+  const float consonantAfter = rmsDb(waveform, frameSample(153),
+                                     frameSample(161));
+  const float noteAfter = rmsDb(waveform, frameSample(162), frameSample(299));
+  std::printf("H: consonante %.1f dBFS (antes %.1f), nota %.1f dBFS\n",
+              consonantAfter, consonantBefore, noteAfter);
+  // No se toca por el borrado: sigue a nivel de fuente (el render del bloque
+  // con retime ya la cambia algo, por eso se compara con 3 dB de margen).
+  CHECK(consonantAfter > -30.0f);
+  CHECK(std::abs(consonantAfter - consonantBefore) <= 3.0f);
+  CHECK(noteAfter <= -120.0f);
+}
+
+// ---------------------------------------------------------------------------
+// I) el ataque de la nota SIGUIENTE empieza dentro del ultimo tramo de la
+//    eliminada, despues de un silencio: el silencio termina donde empieza el
+//    ataque, que queda intacto.
+// ---------------------------------------------------------------------------
+void testNextAttackInsideDeletedSpan() {
+  constexpr int kTotal = 400;
+  const std::vector<Segment> segments = {
+      {0, 184, 57.0f, 1.0f, false},    // cuerpo de la nota eliminada (100..200)
+      {184, 192, 0.0f, 0.0f, true},    // silencio antes del ataque siguiente
+      {192, 200, 0.0f, 0.18f, true},   // ataque de la nota siguiente (dentro)
+      {200, 300, 59.0f, 1.0f, false},  // nota siguiente
+  };
+  const std::vector<NoteSpec> notes = {{100, 200, 57.0f}, {200, 300, 59.0f}};
+
+  Project project = makeProject(kTotal, segments, notes);
+  CHECK(renderAndWait(project, kTotal, "I control", /*clearAllDirty=*/true));
+  const juce::AudioBuffer<float> control = project.getAudioData().waveform;
+  const float attackBefore =
+      rmsDb(control, frameSample(192), frameSample(200));
+  CHECK(attackBefore > -30.0f);
+
+  markDeleted(project, 0, kTotal);
+  CHECK(renderAndWait(project, kTotal, "I delete", /*clearAllDirty=*/false));
+  const auto &waveform = project.getAudioData().waveform;
+
+  const float attackDiff =
+      maxDiff(control, waveform, frameSample(192), frameSample(200));
+  const float attackAfter = rmsDb(waveform, frameSample(192), frameSample(200));
+  const float bodyAfter = rmsDb(waveform, frameSample(120), frameSample(180));
+  std::printf("I: ataque %.1f dBFS (antes %.1f), diff %.9f, cuerpo %.1f "
+              "dBFS\n",
+              attackAfter, attackBefore, attackDiff, bodyAfter);
+  CHECK(attackDiff <= 1.0e-5f);
+  CHECK(attackAfter > -30.0f);
+  CHECK(bodyAfter <= -120.0f);
 }
 
 } // namespace
@@ -430,8 +548,11 @@ int main() {
   testNoSilenceStartsAtPrevEnd();
   testFirstNoteStartsAtZero();
   testWobblingFloorMergesRuns();
-  testThresholdInsideWobble();
+  testShortBurstBeforeOnset();
+  testLegatoDoesNotExtend();
+  testRetimedDoesNotExtend();
+  testNextAttackInsideDeletedSpan();
 
-  std::printf("NoteDeleteAttackTests: borde izquierdo por energia OK\n");
+  std::printf("NoteDeleteAttackTests: bordes por energia OK\n");
   return 0;
 }

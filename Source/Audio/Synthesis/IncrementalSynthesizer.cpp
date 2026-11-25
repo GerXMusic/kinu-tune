@@ -28,11 +28,17 @@ constexpr int kTimingClearFadeSamples = 128;
  * nota eliminada tiene que ganar siempre. Se aplica a todos los canales y con
  * un fade corto en los bordes para no cortar en seco.
  *
- * D-302: el borde IZQUIERDO no es [start, ...) sino el que decide la energia.
- * El ataque de la nota eliminada (la consonante) vive fuera de su [start, end),
- * casi siempre dentro del tramo de la nota anterior, porque la expansion por
- * VAD no lo alcanzo. Se busca el ultimo tramo de silencio con el criterio de
- * D-129 y se apaga desde ahi; ver el comentario del bucle.
+ * D-302: los dos bordes los decide la energia sobre el waveform original en
+ * coordenadas de destino.
+ *   - Izquierdo: el ataque de la nota eliminada (la consonante) vive fuera de
+ *     su [start, end), casi siempre dentro del tramo de la nota anterior,
+ *     porque la expansion por VAD no lo alcanzo.
+ *   - Derecho: el ataque de la nota SIGUIENTE puede empezar antes de su start,
+ *     es decir, dentro del ultimo tramo de la eliminada.
+ * Se trabaja con un perfil de nivel de 5 ms / 1 ms (criterio de D-129) pasado
+ * por una mediana temporal de ~25 ms: un parpadeo de pocos ms por encima del
+ * umbral no mueve el borde, y el suelo de estas tomas (a -45 dBFS) se mide de
+ * verdad. Todo se calcula en muestras.
  */
 
 /// D-302: "esto ya no es la nota" es 15 dB por debajo de su nivel de cuerpo.
@@ -40,16 +46,28 @@ constexpr int kTimingClearFadeSamples = 128;
 /// asi que un umbral absoluto (-55 dBFS de D-129) nunca lo detecta.
 constexpr float kAttackBodyDropDb = 15.0f;
 
+/// D-302: mediana temporal del perfil. Mata parpadeos de hasta ~12 ms (el
+/// perfil de 5 ms oscila +/-2 dB sobre el umbral) sin borrar una consonante,
+/// que en estas tomas dura 50-150 ms.
+constexpr double kBoundaryMedianMs = 25.0;
+
+/// D-302: cuanto puede adelantarse el ataque de la nota siguiente a su start.
+/// Es la cabeza maxima de la expansion por VAD (14 frames) mas un margen.
+constexpr int kNextAttackLookFrames = 16;
+
 /**
- * D-302: nivel de cuerpo de una nota en dBFS: la mediana de las ventanas de
- * 5 ms sobre su tramo del waveform original, en coordenadas de destino. La
- * mediana ignora la cola y el ataque, que en estas tomas ocupan media nota.
+ * Perfil de nivel en dBFS con la ventana y el hop de D-129 (5 ms / 1 ms),
+ * muestreado sobre @p source entre dos muestras absolutas. Devuelve un valor
+ * por frame de hop; el hop usado sale por @p hopOut.
  */
-float bodyLevelDbfs(const juce::AudioBuffer<float> &source, int sampleRate,
-                    int fromSample, int toSample) {
+std::vector<float> levelProfileDbfs(const juce::AudioBuffer<float> &source,
+                                    int sampleRate, int fromSample,
+                                    int toSample, int &hopOut) {
+  std::vector<float> levels;
+  hopOut = 1;
   if (source.getNumChannels() <= 0 || sampleRate <= 0 ||
       source.getNumSamples() <= 0)
-    return engineBlocks::kSilenceFloorDbfs;
+    return levels;
   const int totalSamples = source.getNumSamples();
   fromSample = std::clamp(fromSample, 0, totalSamples);
   toSample = std::clamp(toSample, fromSample, totalSamples);
@@ -59,13 +77,13 @@ float bodyLevelDbfs(const juce::AudioBuffer<float> &source, int sampleRate,
   const int hop =
       std::max(1, static_cast<int>(std::lround(
                       sampleRate * engineBlocks::kSilenceHopMs / 1000.0)));
+  hopOut = hop;
   if (toSample - fromSample < window)
-    return engineBlocks::kSilenceFloorDbfs;
+    return levels;
 
   const float *data = source.getReadPointer(0);
   const double floorLinear =
       std::pow(10.0, engineBlocks::kSilenceFloorDbfs / 20.0);
-  std::vector<float> levels;
   for (int start = fromSample; start + window <= toSample; start += hop) {
     double energy = 0.0;
     for (int i = 0; i < window; ++i)
@@ -75,11 +93,130 @@ float bodyLevelDbfs(const juce::AudioBuffer<float> &source, int sampleRate,
     levels.push_back(
         static_cast<float>(20.0 * std::log10(std::max(rms, floorLinear))));
   }
+  return levels;
+}
+
+/// Mediana movil de @p kernel muestras; en los extremos usa la ventana que
+/// existe (no rellena).
+std::vector<float> medianFiltered(const std::vector<float> &profile,
+                                  int kernel) {
+  if (kernel <= 1 || profile.empty())
+    return profile;
+  std::vector<float> out(profile.size());
+  const int half = kernel / 2;
+  std::vector<float> window;
+  for (int i = 0; i < static_cast<int>(profile.size()); ++i) {
+    const int first = std::max(0, i - half);
+    const int last =
+        std::min(static_cast<int>(profile.size()) - 1, i + half);
+    window.assign(profile.begin() + first, profile.begin() + last + 1);
+    auto middle = window.begin() + static_cast<std::ptrdiff_t>(window.size() / 2);
+    std::nth_element(window.begin(), middle, window.end());
+    out[static_cast<size_t>(i)] = *middle;
+  }
+  return out;
+}
+
+/**
+ * D-302: nivel de cuerpo de una nota en dBFS: la mediana de las ventanas de
+ * 5 ms sobre su tramo. La mediana ignora la cola y el ataque, que en estas
+ * tomas ocupan media nota.
+ */
+float bodyLevelDbfs(const juce::AudioBuffer<float> &source, int sampleRate,
+                    int fromSample, int toSample) {
+  int hop = 1;
+  auto levels = levelProfileDbfs(source, sampleRate, fromSample, toSample, hop);
   if (levels.empty())
     return engineBlocks::kSilenceFloorDbfs;
   auto middle = levels.begin() + static_cast<std::ptrdiff_t>(levels.size() / 2);
   std::nth_element(levels.begin(), middle, levels.end());
   return *middle;
+}
+
+/// D-302: borde IZQUIERDO. Devuelve la muestra (absoluta, en el buffer de
+/// medida) donde empieza el silencio. @p fallbackSample si no hay evidencia.
+int attackLeftBoundary(const juce::AudioBuffer<float> &source, int sampleRate,
+                       int searchFrom, int noteStart, float thresholdDb,
+                       int fadeSamples, int guardSamples, int floorSample,
+                       int fallbackSample) {
+  int hop = 1;
+  auto profile = levelProfileDbfs(source, sampleRate, searchFrom, noteStart, hop);
+  if (profile.empty())
+    return fallbackSample;
+  const int kernel = std::max(
+      1, static_cast<int>(std::lround(kBoundaryMedianMs /
+                                      engineBlocks::kSilenceHopMs)));
+  profile = medianFiltered(profile, kernel);
+  const int minQuietFrames = std::max(
+      1, static_cast<int>(std::ceil(engineBlocks::kSilenceMinMs /
+                                    engineBlocks::kSilenceHopMs)));
+
+  int lastLoud = -1;
+  for (int i = 0; i < static_cast<int>(profile.size()); ++i)
+    if (profile[i] >= thresholdDb)
+      lastLoud = i;
+  if (lastLoud < 0)
+    return fallbackSample; // todo el rango esta por debajo: no se extiende
+
+  const int quietAfter = static_cast<int>(profile.size()) - 1 - lastLoud;
+  int boundary = 0;
+  if (quietAfter >= minQuietFrames) {
+    // La nota de referencia ya dejo de sonar antes del onset: se apaga desde
+    // la caida y el fade cae sobre el suelo.
+    boundary = searchFrom + (lastLoud + 1) * hop;
+  } else {
+    // La region sonora llega al onset: es el ataque de la nota eliminada. Se
+    // apaga desde su inicio, con el fade sobre el silencio anterior.
+    int loudStart = lastLoud;
+    while (loudStart > 0 && profile[static_cast<size_t>(loudStart - 1)] >= thresholdDb)
+      --loudStart;
+    if (loudStart == 0)
+      return fallbackSample; // legato continuo: no hay caida medible
+    boundary = searchFrom + loudStart * hop - fadeSamples - guardSamples;
+  }
+  return std::clamp(boundary, floorSample, noteStart);
+}
+
+/// D-302: borde DERECHO. Si el ataque de la nota siguiente empieza dentro del
+/// ultimo tramo de la eliminada (una region sonora que llega al final del
+/// tramo y esta precedida de silencio), el silencio termina donde empieza ese
+/// ataque. Si no hay evidencia, el tramo acaba en @p noteEnd.
+int nextAttackRightBoundary(const juce::AudioBuffer<float> &source,
+                            int sampleRate, int noteStart, int noteEnd,
+                            float bodyDb, int hopSize) {
+  const int lookFrom =
+      std::max(noteStart, noteEnd - kNextAttackLookFrames * hopSize);
+  int hop = 1;
+  auto profile = levelProfileDbfs(source, sampleRate, lookFrom, noteEnd, hop);
+  if (profile.empty())
+    return noteEnd;
+  const int kernel = std::max(
+      1, static_cast<int>(std::lround(kBoundaryMedianMs /
+                                      engineBlocks::kSilenceHopMs)));
+  profile = medianFiltered(profile, kernel);
+  const int minQuietFrames = std::max(
+      1, static_cast<int>(std::ceil(engineBlocks::kSilenceMinMs /
+                                    engineBlocks::kSilenceHopMs)));
+  const float thresholdDb =
+      std::max(engineBlocks::kSilenceThresholdDbfs, bodyDb - kAttackBodyDropDb);
+
+  int lastLoud = -1;
+  for (int i = 0; i < static_cast<int>(profile.size()); ++i)
+    if (profile[i] >= thresholdDb)
+      lastLoud = i;
+  if (lastLoud < 0)
+    return noteEnd; // el tramo ya acaba en silencio
+
+  const int quietAfter = static_cast<int>(profile.size()) - 1 - lastLoud;
+  if (quietAfter >= minQuietFrames)
+    return noteEnd; // la nota murio antes del final: nada que conservar
+
+  int loudStart = lastLoud;
+  while (loudStart > 0 && profile[static_cast<size_t>(loudStart - 1)] >= thresholdDb)
+    --loudStart;
+  if (loudStart < minQuietFrames)
+    return noteEnd; // no hay silencio antes: es la cola de la eliminada
+  return lookFrom + loudStart * hop;
 }
 
 void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
@@ -91,9 +228,6 @@ void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
   // fade 5,8 ms; redondear a frame deja la consonante a medias.
   const int fadeSamples = std::max(1, hopSize / 2);
   const int guardSamples = std::max(1, fadeSamples / 2);
-  const int onsetToleranceSamples =
-      std::max(1, static_cast<int>(std::lround(
-                      sampleRate * engineBlocks::kSilenceWindowMs / 1000.0)));
 
   std::vector<std::pair<int, int>> spans; // relativos al bloque, en muestras
   for (size_t index = 0; index < notes.size(); ++index) {
@@ -127,30 +261,40 @@ void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
             ? prevEnd
             : (previous ? previous->getStartFrame() * hopSize : 0);
     const Note &reference = previous ? *previous : note;
-    const float bodyDb =
-        bodyLevelDbfs(silenceSource, sampleRate,
-                      reference.getStartFrame() * hopSize,
-                      reference.getEndFrame() * hopSize);
-    const float thresholdDb = std::max(engineBlocks::kSilenceThresholdDbfs,
-                                       bodyDb - kAttackBodyDropDb);
 
-    int left = std::min(prevEnd, noteStart);
-    if (const auto run = engineBlocks::findLastSilenceRun(
-            silenceSource, sampleRate, searchFrom, noteStart, thresholdDb)) {
-      if (run->endSample + onsetToleranceSamples >= noteStart) {
-        // El tramo bajo llega al onset: no hay consonante aparte, ese tramo ES
-        // el ataque (una respiracion, un soplo) y se apaga tambien.
-        left = std::max(searchFrom, run->startSample);
-      } else {
-        // Hay audio entre el silencio y el onset: esa es la consonante. El
-        // fade de 256 muestras cae sobre el final del silencio.
-        left = std::max(searchFrom,
-                        run->endSample - fadeSamples - guardSamples);
-      }
+    // D-302: con retime el ataque vive en coordenadas de FUENTE y el hueco
+    // audible en coordenadas de DESTINO. Mezclarlas mide otro audio, asi que
+    // no se extiende: queda [start, end) como en 0.1.6.
+    const bool retimed =
+        note.getSrcStartFrame() != note.getStartFrame() ||
+        note.getSrcEndFrame() != note.getEndFrame() ||
+        (previous &&
+         (previous->getSrcStartFrame() != previous->getStartFrame() ||
+          previous->getSrcEndFrame() != previous->getEndFrame()));
+
+    int left = noteStart;
+    int right = noteEnd;
+    if (!retimed) {
+      // Sin evidencia se apaga el hueco entero hasta la nota anterior (D-299);
+      // es lo que fija el caso C. Con retime, no: queda [start, end).
+      left = std::min(prevEnd, noteStart);
+      const float bodyDb =
+          bodyLevelDbfs(silenceSource, sampleRate,
+                        reference.getStartFrame() * hopSize,
+                        reference.getEndFrame() * hopSize);
+      const float thresholdDb = std::max(engineBlocks::kSilenceThresholdDbfs,
+                                         bodyDb - kAttackBodyDropDb);
+      left = attackLeftBoundary(silenceSource, sampleRate, searchFrom, noteStart,
+                                thresholdDb, fadeSamples, guardSamples,
+                                searchFrom, left);
+      const float deletedBodyDb =
+          bodyLevelDbfs(silenceSource, sampleRate, noteStart, noteEnd);
+      right = nextAttackRightBoundary(silenceSource, sampleRate, noteStart,
+                                      noteEnd, deletedBodyDb, hopSize);
     }
 
     const int first = std::max(0, left - startSample);
-    const int last = std::min(samplesToWrite, noteEnd - startSample);
+    const int last = std::min(samplesToWrite, right - startSample);
     if (last > first)
       spans.emplace_back(first, last);
   }

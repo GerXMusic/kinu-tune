@@ -66,25 +66,6 @@ findSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
                int fromSample, int toSample);
 
 /**
- * D-302: LAST run of silence in [fromSample, toSample). Same window (5 ms),
- * hop (1 ms) and minimum length (20 ms) as findSilenceRun, but it returns the
- * run closest to the end of the range: the one next to a note's onset, which
- * is what deleting a note needs. findSilenceRun keeps answering the D-129
- * question (longest run) and is not affected.
- *
- * The threshold is a parameter because the attack of a deleted note is
- * measured against the take's own body level and not only against the
- * absolute D-129 value; the default keeps the D-129 reading. The minimum
- * length is asked of the whole reported run: runs closer to each other than
- * the minimum are merged first, and a few milliseconds of wobble over the
- * threshold do not end a real silence.
- */
-std::optional<SilenceRun>
-findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
-                   int fromSample, int toSample,
-                   float thresholdDbfs = kSilenceThresholdDbfs);
-
-/**
  * Whether @p note is allowed to use an engine different from the one its
  * predecessor @p previous ends up with: true only when the gap between them
  * holds a usable silence (D-129). This is the predicate the UI uses to refuse
