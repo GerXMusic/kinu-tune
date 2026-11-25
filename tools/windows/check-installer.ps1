@@ -139,7 +139,7 @@ $image = "mcr.microsoft.com/windows/server:$tag"
 Write-Host "::group::Pull $image"
 docker pull $image | Out-Host
 Write-Host "::endgroup::"
-$dockerArgs = @('run', '--rm', '--isolation=process', '-v', "${stage}:C:\tunex", $image,
+$dockerArgs = @('--rm', '--isolation=process', '-v', "${stage}:C:\tunex", $image,
                 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\tunex\in-container.ps1')
 if ($ExpectedSha) { $dockerArgs += @('-ExpectedSha', $ExpectedSha) }
 docker run @dockerArgs | Out-Host
