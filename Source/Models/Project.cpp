@@ -90,6 +90,10 @@ std::vector<Note *> Project::getSelectedNotes()
     std::vector<Note *> result;
     for (auto &note : notes)
     {
+        // D-299: una lapida cargada de un proyecto viejo puede conservar el
+        // flag selected; no debe entrar en la seleccion de la UI.
+        if (note.isDeleted())
+            continue;
         if (note.isSelected())
             result.push_back(&note);
     }

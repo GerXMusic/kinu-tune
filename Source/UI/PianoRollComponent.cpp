@@ -4763,6 +4763,8 @@ std::vector<Note *> PianoRollComponent::getSelectedNotes() const
   std::vector<Note *> selected;
   for (auto &note : project->getNotes())
   {
+    if (note.isDeleted())
+      continue;
     if (note.isSelected())
       selected.push_back(&note);
   }
