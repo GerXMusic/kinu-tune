@@ -81,6 +81,8 @@ public:
     std::function<void()> onPitchCenterMacro;
     // M5 v1 (D-245): silenciar o reactivar las notas seleccionadas.
     std::function<void()> onMuteNotesMacro;
+    // M5 v2 (D-299): eliminar las notas seleccionadas (deja silencio).
+    std::function<void()> onDeleteNotesMacro;
     // Smart-control glue, moved from the note overlay to the inspector.
     std::function<bool(bool)> canGlueTarget;
     std::function<void(bool)> onGlueNoteMacro;

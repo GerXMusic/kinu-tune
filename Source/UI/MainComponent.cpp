@@ -822,6 +822,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // M5 v1 (D-245): silenciar/reactivar la seleccion (o la nota del menu).
   variAudioInspector.onMuteNotesMacro = [this]
   { pianoRoll.muteSelection(); };
+  // M5 v2 (D-299): eliminar deja silencio en el tramo de la nota.
+  variAudioInspector.onDeleteNotesMacro = [this]
+  { pianoRoll.deleteSelection(); };
   variAudioInspector.canGlueTarget = [this](bool next)
   { return pianoRoll.canGlueTarget(next); };
   variAudioInspector.onGlueNoteMacro = [this](bool next)

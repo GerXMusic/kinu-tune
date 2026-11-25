@@ -363,13 +363,22 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(*b);
     }
 
-    // M5 v1 (D-245): silenciar/reactivar ya funciona; eliminar nota no.
+    // M5 v1 (D-245): silenciar/reactivar ya funciona.
     muteButton.setEnabled(true);
     muteButton.setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
     muteButton.onClick = [this]
     {
         if (onMuteNotesMacro)
             onMuteNotesMacro();
+    };
+
+    // M5 v2 (D-299): eliminar la seleccion. Se habilita en refreshFromProject
+    // solo cuando hay algun segmento objetivo.
+    deleteButton.setColour(juce::TextButton::textColourOffId, APP_COLOR_TEXT_PRIMARY);
+    deleteButton.onClick = [this]
+    {
+        if (onDeleteNotesMacro)
+            onDeleteNotesMacro();
     };
 
     // Smart-control glue, now an inspector action instead of a square on the
@@ -625,6 +634,8 @@ void VariAudioInspector::refreshFromProject()
                             ? TR("inspector.target_selected").replace("{n}", juce::String(count))
                             : TR("inspector.target_all").replace("{n}", juce::String(count)),
                         juce::dontSendNotification);
+    // D-299: eliminar necesita al menos un segmento objetivo.
+    deleteButton.setEnabled(count > 0);
 
     if (editingRow)
         return; // never fight the user's drag

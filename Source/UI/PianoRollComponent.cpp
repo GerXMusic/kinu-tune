@@ -2351,9 +2351,15 @@ void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint, Note* no
             selected.assign(1, clickedNote);
           safeThis->setMutedForNotes(selected, action == 4);
         }
+        else if (action == 6)
+        {
+          // D-299: igual que silenciar, la accion recae sobre la seleccion; si
+          // la nota pulsada no estaba en ella, pasa a ser la seleccion.
+          ensureClickedNoteSelected();
+          safeThis->deleteSelection();
+        }
         else if (action == 10)
           safeThis->showResetMenu(*clickedNote, screenPoint);
-        // action 6 (Delete) is inactive until note deletion is implemented.
       });
 }
 void PianoRollComponent::applyCanvasMenuChoice(int choice)

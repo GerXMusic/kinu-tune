@@ -131,8 +131,8 @@ public:
         }
 
         // Top card, Melodyne's order: the three macros first, then the note
-        // commands and the history. Leveling and Delete are visible but
-        // inactive because their engines are not implemented yet.
+        // commands and the history. Leveling stays visible but inactive
+        // because its engine is not implemented yet.
         static const char* keys[] = {
             "macro.correct_pitch", "macro.quantize_time", "macro.leveling",
             "menu.mute_note", "menu.unmute_note", "menu.delete_note",
@@ -161,7 +161,7 @@ public:
         menuButtons[2]->setEnabled(false);
         menuButtons[3]->setEnabled(state.hasNote && !state.noteMuted);
         menuButtons[4]->setEnabled(state.hasNote && state.noteMuted);
-        menuButtons[5]->setEnabled(false);
+        menuButtons[5]->setEnabled(state.hasNote);
         menuButtons[6]->setEnabled(true);
         menuButtons[7]->setEnabled(state.canUndo);
         menuButtons[8]->setEnabled(state.canRedo);

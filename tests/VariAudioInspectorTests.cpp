@@ -837,6 +837,49 @@ int main()
         CHECK(!f.note(0).isSelected());
     }
 
+    // --- D-299 (UI): el boton Eliminar del inspector ejecuta el comando -----
+    // Regresion de 0.1.6: el motor y el comando existian, pero el boton del
+    // inspector seguia deshabilitado y sin onClick, asi que no se podia usar.
+    {
+        Fixture f;
+        VariAudioInspector inspector;
+        inspector.getCurrentProject = [&f] { return &f.project; };
+        inspector.getTargetCount = [&f]
+        {
+            const auto targets = f.roll.getInspectorTargets();
+            const bool selection = !targets.empty() && targets.front()->isSelected();
+            return std::pair<int, bool>{static_cast<int>(targets.size()), selection};
+        };
+        int deleteRequests = 0;
+        inspector.onDeleteNotesMacro = [&f, &deleteRequests]
+        {
+            ++deleteRequests;
+            f.roll.deleteSelection();
+        };
+        inspector.refresh();
+
+        juce::TextButton* deleteButton = nullptr;
+        juce::TextButton* muteButton = nullptr;
+        for (auto* button : findChildren<juce::TextButton>(inspector))
+        {
+            if (button->getButtonText() == TR("inspector.delete_note"))
+                deleteButton = button;
+            else if (button->getButtonText() == TR("inspector.mute_note"))
+                muteButton = button;
+        }
+        CHECK(deleteButton != nullptr);
+        CHECK(muteButton != nullptr && muteButton->isEnabled());
+        CHECK(deleteButton != nullptr && deleteButton->isEnabled());
+        f.note(0).setSelected(true);
+        inspector.refresh();
+        CHECK(deleteButton->isEnabled());
+        CHECK(deleteButton->onClick != nullptr);
+        deleteButton->onClick();
+        CHECK(deleteRequests == 1);
+        CHECK(f.note(0).isDeleted());
+        CHECK(f.history.getUndoName() == "Delete Notes");
+    }
+
     std::cout << "VariAudio inspector tests passed\n";
     return 0;
 }
