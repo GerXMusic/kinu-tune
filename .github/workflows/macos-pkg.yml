@@ -17,9 +17,7 @@ permissions:
 
 jobs:
   build:
-    # D-284: macos-15 no está dando runner (cancela a los 15 min). macos-14 es
-    # arm64 igual que el destino y compila/verifica el mismo .pkg.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - name: Checkout the source with submodules
@@ -111,10 +109,7 @@ jobs:
 
   check:
     needs: build
-    # D-284: el pool macos-15 se queda sin runner y cancela el check a los 15
-    # min. El pkg es arm64 y la instalación/prueba es la misma en macOS 14; se
-    # usa el pool de macos-14 solo para verificar, no para construir.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - name: Download the .pkg built by this run
