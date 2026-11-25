@@ -299,7 +299,7 @@ estela de VariAudio, sin relación con Steinberg.
 TuneX is an open-source (AGPLv3) monophonic vocal pitch editor with
 VariAudio-style controls, shipped as a VST3 / ARA 2 plug-in. It is a fork of
 PitchNet 0.7.2 by Session Loops, itself derived from HachiTune, previously forked
-by Keinoaza (TuneX 0.1.0–0.1.3) and now maintained under the **GerX** vendor
+by Keinoaza (TuneX 0.1.0–0.1.4) and now maintained under the **GerX** vendor
 identity. Existing sessions keep working: the plug-in codes are unchanged.
 
 Requirements: macOS 13+ on Apple silicon, or Windows 10/11 x64, and an ARA 2 host
