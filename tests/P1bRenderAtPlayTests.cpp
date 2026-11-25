@@ -158,6 +158,12 @@ void testSourceWiring() {
   CHECK(playBody.find("flushDirtyBlocks()") != std::string::npos);
   CHECK(playBody.find("flushDirtyBlocks()") < playBody.find("play();"));
 
+  // D-292: la instantánea del cierre se casa por índice, así que un split/merge
+  // durante el render la invalida: el cierre tiene que detectar el cambio de
+  // estructura y no limpiar nada (la cadena siguiente reconstruye el plan).
+  CHECK(mainComponent.find("flushSnapshotNoteCount") != std::string::npos);
+  CHECK(mainComponent.find("structureChanged") != std::string::npos);
+
   // History: 100 steps, without renders of previous states.
   const std::string undoManager =
       readFile(std::string(P1B_SOURCE_DIR) + "/Undo/PitchUndoManager.h");

@@ -57,7 +57,7 @@ void testStopFlushStartOrder() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
   const std::string body = windowAfter(
-      mainComponent, "MainComponent::flushDirtyBlocksForHostPlay", 2400);
+      mainComponent, "MainComponent::flushDirtyBlocksForHostPlay", 3200);
   CHECK(!body.empty());
   const auto stop = body.find("onRequestHostPlayState(false)");
   const auto flush = body.find("flushDirtyBlocks()");
@@ -95,8 +95,10 @@ void testNoBackendFlushMuteInAudioProcessor() {
 void testFinishBackendRenderAlwaysUnmountsChain() {
   const std::string mainComponent =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
+  // D-292: la ventana crece con la guarda estructural (flushSnapshotNoteCount)
+  // y la contabilidad D-290 del cierre; el invariante es el mismo.
   const std::string body =
-      windowAfter(mainComponent, "MainComponent::finishBackendRender", 6000);
+      windowAfter(mainComponent, "MainComponent::finishBackendRender", 9000);
   CHECK(!body.empty());
   // El desmontaje de la cadena no puede vivir dentro de `if (success ...)`.
   CHECK(body.find("if (success && flushSnapshotValid)") == std::string::npos);

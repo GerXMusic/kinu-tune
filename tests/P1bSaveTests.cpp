@@ -55,8 +55,10 @@ void testFlushChainResumesTheSave() {
   // standalone de un pase fallido).
   // D-290: la ventana crece con el tope de pases de la cadena (el cierre ahora
   // lleva la contabilidad D-290 antes del guardado diferido).
+  // D-292: la ventana crece con la guarda estructural del cierre; el guardado
+  // diferido sigue después del desmontaje de la cadena.
   const auto finish = windowAfter(
-      mainComponent, "void MainComponent::finishBackendRender", 6200);
+      mainComponent, "void MainComponent::finishBackendRender", 9000);
   CHECK(!finish.empty());
   CHECK(finish.find("saveProject(saveAsAfterFlush)") != std::string::npos);
   CHECK(mainComponent.find("resumeSaveAfterFlush = false") !=
