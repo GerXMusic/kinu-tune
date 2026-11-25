@@ -74,9 +74,10 @@ findSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
  *
  * The threshold is a parameter because the attack of a deleted note is
  * measured against the take's own body level and not only against the
- * absolute D-129 value; the default keeps the D-129 reading. Two runs of
- * silence separated by less than the minimum length are reported as one: a
- * few milliseconds of wobble over the threshold do not end a real silence.
+ * absolute D-129 value; the default keeps the D-129 reading. The minimum
+ * length is asked of the whole reported run: runs closer to each other than
+ * the minimum are merged first, and a few milliseconds of wobble over the
+ * threshold do not end a real silence.
  */
 std::optional<SilenceRun>
 findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,

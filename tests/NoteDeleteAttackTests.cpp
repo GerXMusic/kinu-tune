@@ -16,6 +16,7 @@
 //   D) primera nota del proyecto con consonante delante: left = 0 (clampado al
 //      inicio del pase, que no llega al frame 0).
 
+#include "../Source/Audio/Synthesis/EngineBlocks.h"
 #include "../Source/Audio/Synthesis/IncrementalSynthesizer.h"
 #include "../Source/Models/Project.h"
 #include "../Source/Utils/Constants.h"
@@ -375,6 +376,50 @@ void testWobblingFloorMergesRuns() {
   CHECK(previousTailDiff == 0.0f);
 }
 
+// ---------------------------------------------------------------------------
+// F) el umbral cae DENTRO del vaiven del suelo: alternancia de 1 frame por
+//    debajo y 1 frame por encima del umbral. Cada trozo bajo dura 10,7 ms, por
+//    debajo del minimo de 20 ms: si se descartan antes de fusionar, el ultimo
+//    tramo valido empieza en 198 y el soplo queda audible.
+// ---------------------------------------------------------------------------
+void testThresholdInsideWobble() {
+  constexpr int kTotal = 320;
+  std::vector<Segment> segments = {{50, 150, 57.0f, 1.0f, false}}; // nota A
+  for (int f = 151; f < 198; f += 2)                            // picos -26 dBFS
+    segments.push_back({f, f + 1, 0.0f, 0.0869f, true});
+  segments.push_back({150, 200, 0.0f, 0.0548f, true});          // suelo -30 dBFS
+  segments.push_back({200, 300, 59.0f, 1.0f, false});           // nota B
+  const std::vector<NoteSpec> notes = {{50, 150, 57.0f}, {200, 300, 59.0f}};
+
+  Project project = makeProject(kTotal, segments, notes);
+
+  // El helper, con el mismo umbral que calcula el motor (cuerpo - 15 dB),
+  // tiene que devolver un solo tramo que empieza en el inicio del suelo.
+  const auto direct = engineBlocks::findLastSilenceRun(
+      project.getAudioData().originalWaveform, kSampleRate, frameSample(150),
+      frameSample(200), -27.9f);
+  CHECK(direct.has_value());
+  CHECK(direct->startSample <= frameSample(151));
+
+  CHECK(renderAndWait(project, kTotal, "F control", /*clearAllDirty=*/true));
+  const juce::AudioBuffer<float> control = project.getAudioData().waveform;
+
+  markDeleted(project, 1, kTotal);
+  CHECK(renderAndWait(project, kTotal, "F delete", /*clearAllDirty=*/false));
+  const auto &waveform = project.getAudioData().waveform;
+
+  const float floorAfter = rmsDb(waveform, frameSample(152), frameSample(188));
+  const float noteAfter = rmsDb(waveform, frameSample(201), frameSample(299));
+  const float previousTailDiff =
+      maxDiff(control, waveform, frameSample(150) - kTwentyMs,
+              frameSample(150));
+  std::printf("F: soplo %.1f dBFS, nota %.1f dBFS, diff cola %.9f\n",
+              floorAfter, noteAfter, previousTailDiff);
+  CHECK(floorAfter <= -120.0f);
+  CHECK(noteAfter <= -120.0f);
+  CHECK(previousTailDiff == 0.0f);
+}
+
 } // namespace
 
 int main() {
@@ -385,6 +430,7 @@ int main() {
   testNoSilenceStartsAtPrevEnd();
   testFirstNoteStartsAtZero();
   testWobblingFloorMergesRuns();
+  testThresholdInsideWobble();
 
   std::printf("NoteDeleteAttackTests: borde izquierdo por energia OK\n");
   return 0;

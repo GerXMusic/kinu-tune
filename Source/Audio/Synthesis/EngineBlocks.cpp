@@ -109,8 +109,6 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
                                       sampleRate * kSilenceWindowMs / 1000.0)));
     const int hop = std::max(1, static_cast<int>(std::lround(
                                    sampleRate * kSilenceHopMs / 1000.0)));
-    const int minFrames = std::max(
-        1, static_cast<int>(std::ceil(kSilenceMinMs / kSilenceHopMs)));
 
     if (toSample - fromSample < window)
         return std::nullopt;
@@ -132,11 +130,12 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
     };
 
     std::optional<SilenceRun> last;
-    // D-302: un parpadeo de pocos ms por encima del umbral no corta un
-    // silencio real. El perfil de 5 ms oscila +/-2 dB en las tomas medidas
-    // (suelo de ruido a -45 dBFS, umbral en -40), asi que dos tramos bajos
-    // separados por menos del minimo de 20 ms se funden en uno. Sin esto, el
-    // ultimo tramo empieza tarde y deja audible la cola del soplo.
+    // D-302: primero se recogen TODOS los tramos bajos y despues se fusionan
+    // los que estan a menos del minimo (20 ms); el minimo se exige al tramo ya
+    // fusionado. Si se descartaran los trozos cortos antes de fusionar, un
+    // umbral que caiga dentro del vaiven del suelo (perfil de 5 ms, +/-2 dB)
+    // partiria el silencio en piezas de 3-15 ms y el ultimo tramo empezaria
+    // tarde, dejando audible la cola del soplo.
     const int minGapSamples = std::max(
         1, static_cast<int>(std::lround(sampleRate * kSilenceMinMs / 1000.0)));
     int frame = 0;
@@ -148,8 +147,6 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
         const int runStart = frame;
         while (frame < numFrames && frameIsSilent(frame))
             ++frame;
-        if (frame - runStart < minFrames)
-            continue;
 
         SilenceRun candidate;
         candidate.startSample = fromSample + runStart * hop;
@@ -159,7 +156,9 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
         else
             last = candidate;
     }
-    return last;
+    if (last && last->getNumSamples() >= minGapSamples)
+        return last;
+    return std::nullopt;
 }
 
 bool canChangeEngineAfter(const Note &previous, const Note &note,
