@@ -725,6 +725,51 @@ void testRenderedMergeKeepsNewerEdit() {
   CHECK(live.getNotes()[3].isDirty());
   CHECK(live.getNotes()[3].getDirtyRevision() == before);
 }
+// D-292: un split/merge durante el render cambia la lista de notas; la
+// instantánea por índice ya no vale. El cierre no limpia nada, no adelanta la
+// revisión publicada y pide una cadena nueva con el plan reconstruido.
+void testStructureChangeDiscardsSnapshot() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeProject(NoteEngine::Psola);
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  int requests = 0;
+  mc.setOnRequestBackendRender([&requests](const Project &) { ++requests; });
+
+  auto &project = *controller.getProject();
+  project.getNotes()[0].markDirty();
+  project.getNotes()[0].markSynthDirty();
+  project.markNoteEditDirtyRange(kN0a, kN0b);
+  access.markRenderDirty();
+  access.bypassDebounce();
+  access.serviceEditRender();
+  CHECK(requests == 1);
+  CHECK(access.editRenderInFlight());
+
+  const auto revisionBefore = project.getNotes()[0].getDirtyRevision();
+
+  // Split simulado: una nota nueva entra en la lista mientras el render corre.
+  Note extra = project.getNotes()[0];
+  extra.markDirty();
+  project.addNote(extra);
+
+  mc.finishBackendRender(true);
+
+  std::printf("D-292 split en render: nota0 dirty %d (1) | rev %llu (sin cambio) "
+              "| publicada %llu (0) | peticiones %d (>=2)\n",
+              project.getNotes()[0].isDirty() ? 1 : 0,
+              static_cast<unsigned long long>(
+                  project.getNotes()[0].getDirtyRevision()),
+              static_cast<unsigned long long>(access.publishedRevision()),
+              requests);
+  CHECK(project.getNotes()[0].isDirty());
+  CHECK(project.getNotes()[0].getDirtyRevision() == revisionBefore);
+  CHECK(access.publishedRevision() == 0);
+  CHECK(requests >= 2);
+}
 } // namespace
 
 // D-290: un cierre que vuelve a pedir pase sin que nada avance no puede
@@ -1062,6 +1107,7 @@ int main() {
   testEngineChangeRendersEveryBlock();
   testRenderPlanSurvivesEngineChangePlayAndNudge();
   testRenderedMergeKeepsNewerEdit();
+  testStructureChangeDiscardsSnapshot();
   testChainPassesAreBounded();
   testStaleOverrideStillCommits();
   testStaleAudioIsCaughtUpOnce();

@@ -4536,6 +4536,9 @@ void MainComponent::resynthesizeIncremental()
     flushF0SnapshotStart = f0Range.first;
     flushF0SnapshotEnd = f0Range.second;
     flushF0SnapshotRevision = project->getF0DirtyRevision();
+    // D-292: identidad estructural. La instantanea se casa por indice; si un
+    // split/merge cambia la lista antes del cierre, se descarta entera.
+    flushSnapshotNoteCount = static_cast<int>(notes.size());
     flushSnapshotValid = true;
     onRequestBackendRender(*project);
     return;
@@ -5513,27 +5516,39 @@ void MainComponent::finishBackendRender(bool success)
   // `deferred_pending` para siempre (medido en vivo: phase=Dirty, nada en vuelo,
   // play que se paraba a los 100 ms).
   const bool hadSnapshot = flushSnapshotValid;
+  // D-292: si la lista de notas cambio (split/merge), los indices de la
+  // instantanea ya no identifican las mismas notas. No se limpia nada, no se
+  // da la revision por publicada y el cierre pide una cadena nueva con un plan
+  // reconstruido desde la estructura actual.
+  const bool structureChanged =
+      hadSnapshot && projectNow != nullptr &&
+      static_cast<int>(projectNow->getNotes().size()) !=
+          flushSnapshotNoteCount;
   if (flushSnapshotValid)
   {
     // D-254: se limpia solo lo que este pase renderizo, por revision. Lo que
     // llego despues conserva su dirty (D-227 no borra la edicion nueva) y se
     // pide su propio pase aqui abajo. Un pase fallido no limpia nada.
-    if (success && projectNow != nullptr)
+    if (success && projectNow != nullptr && !structureChanged)
       projectNow->clearDirtyForPass(flushDirtyNoteSnapshot, flushF0SnapshotStart,
                                     flushF0SnapshotEnd, flushF0SnapshotRevision);
+    if (structureChanged)
+      LOG("D-292: la lista de notas cambio durante el render; se descarta la "
+          "instantanea y se reconstruye el plan");
     flushDirtyNoteSnapshot.clear();
     flushSnapshotValid = false;
   }
 
   const bool stillDirty =
       hadSnapshot && projectNow != nullptr &&
-      (projectNow->hasDirtyNotes() || projectNow->hasF0DirtyRange());
+      (structureChanged || projectNow->hasDirtyNotes() ||
+       projectNow->hasF0DirtyRange());
 
   // D-287: este pase commiteo lo que su instantanea cubria; a partir de aqui el
   // audio publicado representa esa revision. Si llego mas trabajo durante el
   // pase, `dirtyRevision` ya la supera y el catch-up (o el re-render de abajo)
   // se encarga. Un cierre sin instantanea no dice nada y no toca la marca.
-  if (success && hadSnapshot)
+  if (success && hadSnapshot && !structureChanged)
     publishedRevision = committedRevision;
 
   LOG("P1b: finishBackendRender rev=" + juce::String(dirtyRevision) +

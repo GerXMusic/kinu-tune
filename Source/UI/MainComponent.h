@@ -413,6 +413,11 @@ private:
   // conserva su dirty y pide su propio pase. Sustituye el barrido global
   // (clearAllDirty), que borraba tambien lo que el render no habia visto.
   std::vector<std::pair<int, std::uint64_t>> flushDirtyNoteSnapshot;
+  // D-292: cuantas notas habia al capturar la instantanea. Si la estructura
+  // cambio (split/merge) antes del cierre, el indice ya no identifica la misma
+  // nota y la instantanea se descarta: el trabajo queda sucio y se reconstruye
+  // el plan en la cadena siguiente.
+  int flushSnapshotNoteCount = 0;
   int flushF0SnapshotStart = -1;
   int flushF0SnapshotEnd = -1;
   std::uint64_t flushF0SnapshotRevision = 0;
