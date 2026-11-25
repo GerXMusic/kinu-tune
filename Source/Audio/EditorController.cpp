@@ -605,7 +605,7 @@ void EditorController::resynthesizeIncrementalAsync(
   // y es inmutable mientras la cadena vive. Ni el Project ni un cursor guardado
   // deciden el bloque siguiente: lo decide esta copia.
   auto plan = std::make_shared<renderPlan::Plan>(
-      renderPlan::build(project));
+      renderPlan::build(project, getSynthesisEngineType()));
   if (plan->empty())
   {
     if (onComplete)
@@ -697,7 +697,9 @@ void EditorController::runIncrementalPass(
 
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
-  synth->setSynthesisEngine(getSynthesisEngineType());
+  // D-296: el motor global es parte de la instantánea. Este pase usa el del
+  // plan aunque la preferencia compartida haya cambiado con la cadena en vuelo.
+  synth->setSynthesisEngine(plan ? plan->globalEngine : getSynthesisEngineType());
   pendingRerun.store(false);
 
   if (onProgress)

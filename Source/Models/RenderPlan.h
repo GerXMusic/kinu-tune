@@ -3,6 +3,7 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #pragma once
 
+#include "../Audio/SynthesisEngineType.h"
 #include "Project.h"
 
 #include <cstdint>
@@ -44,6 +45,10 @@ struct Plan
     // Revision of the editor model this plan was built from. Informative: the
     // clearing decisions compare each note's own dirtyRevision, not this.
     std::uint64_t revision = 0;
+    // D-296: the global engine is part of the snapshot. Every pass of this
+    // chain renders with this value, even if the shared preference changes
+    // while the chain is in flight.
+    SynthesisEngineType globalEngine = SynthesisEngineType::Psola;
     std::vector<Block> blocks;
     // F0 range/revision captured with the plan. A plan with no blocks but a
     // valid F0 range still performs one pass (a curve-only edit).
@@ -55,6 +60,7 @@ struct Plan
 };
 
 /** Snapshot of the project's dirty state. Deterministic: same state, same plan. */
-Plan build(const Project &project, std::uint64_t revision = 0);
+Plan build(const Project &project, SynthesisEngineType globalEngine,
+           std::uint64_t revision = 0);
 
 } // namespace renderPlan

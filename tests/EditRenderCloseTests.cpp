@@ -698,6 +698,98 @@ void testRenderPlanSurvivesEngineChangePlayAndNudge() {
   runPlanCase(/*blockEngineChange*/ true);
 }
 
+// D-296: el motor global tambien forma parte de la instantanea. Si la
+// preferencia compartida cambia con la primera cadena en vuelo, los bloques
+// restantes no pueden salir con el motor nuevo. Se mide contra el render
+// completo del motor que tenia el plan (PSOLA) y contra el nuevo (Pitchcore);
+// la cadena siguiente ya usa el nuevo y converge.
+void testGlobalEngineFrozenInPlan() {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false);
+  *controller.getProject() = makeThreeBlockProject();
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  auto sharedEngine = std::make_shared<SynthesisEnginePreference>();
+  sharedEngine->value.store(SynthesisEngineType::Psola);
+  controller.shareSynthesisEngine(sharedEngine);
+
+  PlanBackend backend;
+  backend.live = controller.getProject();
+  backend.controller->shareSynthesisEngine(sharedEngine);
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  auto &project = *controller.getProject();
+  project.setSynthesisEngine(SynthesisEngineType::Psola);
+  controller.setSynthesisEngineType(SynthesisEngineType::Psola);
+  project = fullRender(project, SynthesisEngineType::Psola, "D-296 baseline");
+
+  // Cadena 1: el plan se construye con PSOLA. La preferencia cambia justo
+  // despues de arrancar; el plan ya existe y no puede leer el valor nuevo.
+  project.markEditedNotesDirty();
+  access.markRenderDirty();
+  access.bypassDebounce();
+  access.serviceEditRender();
+  const bool inFlight = access.editRenderInFlight();
+  sharedEngine->value.store(SynthesisEngineType::Pitchcore);
+  controller.setSynthesisEngineType(SynthesisEngineType::Pitchcore);
+  pumpUntilSettled(access, project, 60.0);
+
+  CHECK(inFlight);
+  CHECK(!project.hasDirtyNotes());
+  CHECK(!project.hasF0DirtyRange());
+  CHECK(access.publishedRevision() == access.dirtyRevision());
+
+  Project psolaRef = project;
+  psolaRef = fullRender(psolaRef, SynthesisEngineType::Psola, "D-296 ref PSOLA");
+  Project pitchcoreRef = project;
+  pitchcoreRef =
+      fullRender(pitchcoreRef, SynthesisEngineType::Pitchcore, "D-296 ref Pitchcore");
+
+  const auto &rendered = project.getAudioData().waveform;
+  const float p1 = maxAbsDiff(rendered, psolaRef.getAudioData().waveform, 45, 195);
+  const float p2 = maxAbsDiff(rendered, psolaRef.getAudioData().waveform, 245, 315);
+  const float p3 = maxAbsDiff(rendered, psolaRef.getAudioData().waveform, 365, 435);
+  const float q1 =
+      maxAbsDiff(rendered, pitchcoreRef.getAudioData().waveform, 45, 195);
+  const float q2 =
+      maxAbsDiff(rendered, pitchcoreRef.getAudioData().waveform, 245, 315);
+  const float q3 =
+      maxAbsDiff(rendered, pitchcoreRef.getAudioData().waveform, 365, 435);
+  std::printf("D-296 cadena 1: vs PSOLA %.8f %.8f %.8f (lim 1e-7) | "
+              "vs Pitchcore %.6f %.6f %.6f (>1e-3)\n",
+              p1, p2, p3, q1, q2, q3);
+  CHECK(p1 <= 1.0e-7f);
+  CHECK(p2 <= 1.0e-7f);
+  CHECK(p3 <= 1.0e-7f);
+  CHECK(q1 > 1.0e-3f);
+  CHECK(q2 > 1.0e-3f);
+  CHECK(q3 > 1.0e-3f);
+
+  // Cadena 2: ya con la preferencia en Pitchcore, converge al render completo
+  // de Pitchcore. El transitorio no se queda pegado.
+  project.markEditedNotesDirty();
+  access.markRenderDirty();
+  access.bypassDebounce();
+  access.serviceEditRender();
+  pumpUntilSettled(access, project, 60.0);
+  CHECK(!project.hasDirtyNotes());
+  const float r1 = maxAbsDiff(project.getAudioData().waveform,
+                              pitchcoreRef.getAudioData().waveform, 45, 195);
+  const float r2 = maxAbsDiff(project.getAudioData().waveform,
+                              pitchcoreRef.getAudioData().waveform, 245, 315);
+  const float r3 = maxAbsDiff(project.getAudioData().waveform,
+                              pitchcoreRef.getAudioData().waveform, 365, 435);
+  std::printf("D-296 cadena 2: vs Pitchcore %.8f %.8f %.8f (lim 1e-7)\n", r1,
+              r2, r3);
+  CHECK(r1 <= 1.0e-7f);
+  CHECK(r2 <= 1.0e-7f);
+  CHECK(r3 <= 1.0e-7f);
+}
+
 // D-292: la fusión del resultado del backend no puede borrar una nota cuya
 // dirtyRevision avanzó después de la copia. Solo se aplica lo que el render de
 // la copia limpió y con la misma revisión.
@@ -1112,6 +1204,7 @@ int main() {
   testEngineChangeBlockedWhilePlaying();
   testEngineChangeRendersEveryBlock();
   testRenderPlanSurvivesEngineChangePlayAndNudge();
+  testGlobalEngineFrozenInPlan();
   testRenderedMergeKeepsNewerEdit();
   testStructureChangeDiscardsSnapshot();
   testChainPassesAreBounded();

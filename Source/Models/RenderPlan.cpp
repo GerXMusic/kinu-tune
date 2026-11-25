@@ -10,10 +10,12 @@
 
 namespace renderPlan {
 
-Plan build(const Project &project, std::uint64_t revision)
+Plan build(const Project &project, SynthesisEngineType globalEngine,
+           std::uint64_t revision)
 {
     Plan plan;
     plan.revision = revision;
+    plan.globalEngine = globalEngine;
 
     const auto &notes = project.getNotes();
     const auto &audio = project.getAudioData();
