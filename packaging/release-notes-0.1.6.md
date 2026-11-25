@@ -110,9 +110,8 @@ certificados en el proyecto; la firma queda fuera del alcance por ahora.
   y `pluginval` strictness 5 dio **SUCCESS**. `pkgutil` → `no signature`; bundles `adhoc`.
 - **SHA-256.** En `SHA256SUMS.txt`: `.exe` `1088C9B4…`, zip VST3 `865FC426…`, modelos
   `15E3242F…`, `.pkg` `6D7843AE…`. El VST3 del `.exe` y del zip es `DECB3510…`.
-- **macOS unit tests.** El run `macos.yml` se canceló sin runner (D-284); el `.pkg` compiló
-  el plugin y pasó `pluginval` strictness 5. Si se quiere el mismo nivel que 0.1.5,
-  reintentar `macos.yml` antes de publicar.
+- **macOS unit tests.** Run `45612118073` **verde**; el `.pkg` compiló el plugin y pasó
+  `pluginval` strictness 5.
 
 ## Licencias
 
