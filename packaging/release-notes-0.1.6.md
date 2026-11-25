@@ -100,11 +100,13 @@ certificados en el proyecto; la firma queda fuera del alcance por ahora.
   `DECB3510…` (10.490.880 B), `check-vst3.ps1` pasó (pluginval strictness 5 exit 0 y
   máquina limpia) y `check-installer.ps1 -ExpectedSha` instaló el `.exe` en un contenedor
   limpio, cargó el plugin, desinstaló y encontró **el mismo SHA**. El `.exe` y el zip
-  suelto llevan el mismo VST3.
+  suelto llevan el mismo VST3. CI del código (`45596396776`): 3 shards de
+  `windows-tests` + `windows-vst3-check` verdes.
 - **macOS arm64.** Run `45588294186`: build verde; `.pkg` `1AD005776A3EC20E3B8A6ECDEC5DBE6C7F5F6EB6FFA8EA1158C76196522F7619`
   (174.723.023 B). Check de instalación + preinstall + `pluginval` pendiente de runner
-  (D-284); el `.pkg` no se usa hasta que ese check pase.
-- **SHA-256.** En `SHA256SUMS.txt`.
+  (D-284); el workflow vigente lo hace en el mismo job (`1bad85e`), pero el pool canceló
+  todos los intentos. El `.pkg` no se usa hasta que ese check pase.
+- **SHA-256.** En `SHA256SUMS.txt`; macOS pendiente del check.
 
 ## Licencias
 
