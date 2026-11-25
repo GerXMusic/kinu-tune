@@ -336,6 +336,45 @@ void testFirstNoteStartsAtZero() {
   CHECK(noteAfter <= -120.0f);
 }
 
+// ---------------------------------------------------------------------------
+// E) el caso de la toma real (nota 5, frames 746-784): un suelo de soplo a
+//    -33 dBFS que llega hasta el onset, con parpadeos de 10 ms a -25 dBFS cada
+//    15 frames. Sin fusionar los tramos bajos, el ultimo empieza tras el ultimo
+//    parpadeo y deja audible la cola del soplo.
+// ---------------------------------------------------------------------------
+void testWobblingFloorMergesRuns() {
+  constexpr int kTotal = 320;
+  const std::vector<Segment> segments = {
+      {50, 150, 57.0f, 1.0f, false},    // nota A
+      {155, 156, 0.0f, 0.0974f, true},  // parpadeo -25 dBFS
+      {170, 171, 0.0f, 0.0974f, true},
+      {185, 186, 0.0f, 0.0974f, true},
+      {190, 191, 0.0f, 0.0974f, true},
+      {150, 200, 0.0f, 0.0388f, true},  // soplo -33 dBFS hasta el onset
+      {200, 300, 59.0f, 1.0f, false},   // nota B (se elimina)
+  };
+  const std::vector<NoteSpec> notes = {{50, 150, 57.0f}, {200, 300, 59.0f}};
+
+  Project project = makeProject(kTotal, segments, notes);
+  CHECK(renderAndWait(project, kTotal, "E control", /*clearAllDirty=*/true));
+  const juce::AudioBuffer<float> control = project.getAudioData().waveform;
+
+  markDeleted(project, 1, kTotal);
+  CHECK(renderAndWait(project, kTotal, "E delete", /*clearAllDirty=*/false));
+  const auto &waveform = project.getAudioData().waveform;
+
+  const float floorAfter = rmsDb(waveform, frameSample(152), frameSample(188));
+  const float noteAfter = rmsDb(waveform, frameSample(201), frameSample(299));
+  const float previousTailDiff =
+      maxDiff(control, waveform, frameSample(150) - kTwentyMs,
+              frameSample(150));
+  std::printf("E: soplo %.1f dBFS, nota %.1f dBFS, diff cola %.9f\n",
+              floorAfter, noteAfter, previousTailDiff);
+  CHECK(floorAfter <= -120.0f);
+  CHECK(noteAfter <= -120.0f);
+  CHECK(previousTailDiff == 0.0f);
+}
+
 } // namespace
 
 int main() {
@@ -345,6 +384,7 @@ int main() {
   testLongGapKeepsSilence();
   testNoSilenceStartsAtPrevEnd();
   testFirstNoteStartsAtZero();
+  testWobblingFloorMergesRuns();
 
   std::printf("NoteDeleteAttackTests: borde izquierdo por energia OK\n");
   return 0;

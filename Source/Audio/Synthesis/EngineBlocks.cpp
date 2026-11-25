@@ -132,6 +132,13 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
     };
 
     std::optional<SilenceRun> last;
+    // D-302: un parpadeo de pocos ms por encima del umbral no corta un
+    // silencio real. El perfil de 5 ms oscila +/-2 dB en las tomas medidas
+    // (suelo de ruido a -45 dBFS, umbral en -40), asi que dos tramos bajos
+    // separados por menos del minimo de 20 ms se funden en uno. Sin esto, el
+    // ultimo tramo empieza tarde y deja audible la cola del soplo.
+    const int minGapSamples = std::max(
+        1, static_cast<int>(std::lround(sampleRate * kSilenceMinMs / 1000.0)));
     int frame = 0;
     while (frame < numFrames) {
         if (!frameIsSilent(frame)) {
@@ -147,7 +154,10 @@ findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
         SilenceRun candidate;
         candidate.startSample = fromSample + runStart * hop;
         candidate.endSample = fromSample + (frame - 1) * hop + window;
-        last = candidate;
+        if (last && candidate.startSample - last->endSample < minGapSamples)
+            last->endSample = candidate.endSample;
+        else
+            last = candidate;
     }
     return last;
 }
