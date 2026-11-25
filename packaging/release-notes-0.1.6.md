@@ -101,8 +101,9 @@ certificados en el proyecto; la firma queda fuera del alcance por ahora.
   máquina limpia) y `check-installer.ps1 -ExpectedSha` instaló el `.exe` en un contenedor
   limpio, cargó el plugin, desinstaló y encontró **el mismo SHA**. El `.exe` y el zip
   suelto llevan el mismo VST3.
-- **macOS arm64.** Run `45588294186`: build verde; check de instalación + preinstall +
-  `pluginval` pendiente de runner (D-284). El `.pkg` no se usa hasta que ese check pase.
+- **macOS arm64.** Run `45588294186`: build verde; `.pkg` `1AD005776A3EC20E3B8A6ECDEC5DBE6C7F5F6EB6FFA8EA1158C76196522F7619`
+  (174.723.023 B). Check de instalación + preinstall + `pluginval` pendiente de runner
+  (D-284); el `.pkg` no se usa hasta que ese check pase.
 - **SHA-256.** En `SHA256SUMS.txt`.
 
 ## Licencias
