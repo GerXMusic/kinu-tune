@@ -38,6 +38,22 @@ jobs:
       - name: Checkout JUCE
         run: git submodule update --init --depth 1 third_party/JUCE
 
+      - name: Start Docker
+        shell: pwsh
+        run: |
+          $svc = Get-Service docker -ErrorAction SilentlyContinue
+          if (-not $svc) {
+            Get-Service | Where-Object { $_.Name -match 'docker' } | Format-Table -AutoSize
+            throw "no docker service on this runner"
+          }
+          if ($svc.Status -ne 'Running') { Start-Service docker }
+          for ($i = 0; $i -lt 60; $i++) {
+            docker info *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 2
+          }
+          docker info
+
       - name: Download the installer artifact
         shell: pwsh
         env:
