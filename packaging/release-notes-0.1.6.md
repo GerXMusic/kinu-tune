@@ -31,8 +31,8 @@ instalación de macOS y añade un zip de modelos para el VST3 suelto.
 | Windows x64 | `TuneX-0.1.6-Windows-x64-VST3.zip` | solo el VST3; **no** incluye modelos |
 | Windows x64 | `TuneX-0.1.6-Windows-x64-models.zip` | modelos, licencias y `INSTALL-Windows-models.txt`; para el VST3 suelto |
 
-El VST3 del `.exe` y el del zip son el mismo archivo (SHA pendiente de la construcción
-final).
+El VST3 del `.exe` y el del zip son el mismo archivo:
+`DECB35109631559F42D94EE536D54487ED02A27A6D88DAA99B42A7D373759081`.
 
 ## Instalación
 
@@ -96,15 +96,13 @@ certificados en el proyecto; la firma queda fuera del alcance por ahora.
 
 ## Verificación de esta publicación
 
-Pendiente de rellenar con los runs definitivos de 0.1.6:
-
-- **Windows x64.** Run `—`: VST3 DirectML, `check-vst3.ps1`, `check-installer.ps1
-  -ExpectedSha`, instalación limpia, modelos, licencias, un solo `.vst3`, sin backups (se
-  siembra `TuneX.old.vst3`), carga y desinstalación. SHA del VST3 instalado: `—`.
-- **macOS arm64.** Run `—`: build + check en `macos-pkg.yml`, instalación en el home de un
-  runner limpio, VST3/AU/modelos/licencias, etiqueta ARA, `moduleinfo` 0.1.6,
-  `pluginval` strictness 5 **SUCCESS**, y el bundle/backup sembrado no sobrevive. `pkgutil
-  --check-signature` → `no signature`.
+- **Windows x64.** Run `45585611209` **verde**: el VST3 DirectML del zip es
+  `DECB3510…` (10.490.880 B), `check-vst3.ps1` pasó (pluginval strictness 5 exit 0 y
+  máquina limpia) y `check-installer.ps1 -ExpectedSha` instaló el `.exe` en un contenedor
+  limpio, cargó el plugin, desinstaló y encontró **el mismo SHA**. El `.exe` y el zip
+  suelto llevan el mismo VST3.
+- **macOS arm64.** Run `45588294186`: build verde; check de instalación + preinstall +
+  `pluginval` pendiente de runner (D-284). El `.pkg` no se usa hasta que ese check pase.
 - **SHA-256.** En `SHA256SUMS.txt`.
 
 ## Licencias
