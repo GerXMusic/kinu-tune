@@ -20,24 +20,137 @@ constexpr int kAdjacentFrameTolerance = 1;
 constexpr int kTimingClearFadeSamples = 128;
 
 /**
- * D-299: apaga de verdad los tramos de las notas eliminadas.
+ * D-299 + D-302: apaga de verdad los tramos de las notas eliminadas.
  *
  * Se llama al final del pase, despues del commit, del reset neutral y del
  * exact restore. Es deliberadamente el ultimo paso: cualquiera de esos caminos
  * puede copiar el original sobre el tramo de una lapida, y el silencio de una
  * nota eliminada tiene que ganar siempre. Se aplica a todos los canales y con
  * un fade corto en los bordes para no cortar en seco.
+ *
+ * D-302: el borde IZQUIERDO no es [start, ...) sino el que decide la energia.
+ * El ataque de la nota eliminada (la consonante) vive fuera de su [start, end),
+ * casi siempre dentro del tramo de la nota anterior, porque la expansion por
+ * VAD no lo alcanzo. Se busca el ultimo tramo de silencio con el criterio de
+ * D-129 y se apaga desde ahi; ver el comentario del bucle.
  */
+
+/// D-302: "esto ya no es la nota" es 15 dB por debajo de su nivel de cuerpo.
+/// En las tomas medidas el suelo de ruido esta 20-25 dB por debajo del cuerpo,
+/// asi que un umbral absoluto (-55 dBFS de D-129) nunca lo detecta.
+constexpr float kAttackBodyDropDb = 15.0f;
+
+/**
+ * D-302: nivel de cuerpo de una nota en dBFS: la mediana de las ventanas de
+ * 5 ms sobre su tramo del waveform original, en coordenadas de destino. La
+ * mediana ignora la cola y el ataque, que en estas tomas ocupan media nota.
+ */
+float bodyLevelDbfs(const juce::AudioBuffer<float> &source, int sampleRate,
+                    int fromSample, int toSample) {
+  if (source.getNumChannels() <= 0 || sampleRate <= 0 ||
+      source.getNumSamples() <= 0)
+    return engineBlocks::kSilenceFloorDbfs;
+  const int totalSamples = source.getNumSamples();
+  fromSample = std::clamp(fromSample, 0, totalSamples);
+  toSample = std::clamp(toSample, fromSample, totalSamples);
+  const int window =
+      std::max(1, static_cast<int>(std::lround(
+                      sampleRate * engineBlocks::kSilenceWindowMs / 1000.0)));
+  const int hop =
+      std::max(1, static_cast<int>(std::lround(
+                      sampleRate * engineBlocks::kSilenceHopMs / 1000.0)));
+  if (toSample - fromSample < window)
+    return engineBlocks::kSilenceFloorDbfs;
+
+  const float *data = source.getReadPointer(0);
+  const double floorLinear =
+      std::pow(10.0, engineBlocks::kSilenceFloorDbfs / 20.0);
+  std::vector<float> levels;
+  for (int start = fromSample; start + window <= toSample; start += hop) {
+    double energy = 0.0;
+    for (int i = 0; i < window; ++i)
+      energy += static_cast<double>(data[start + i]) *
+                static_cast<double>(data[start + i]);
+    const double rms = std::sqrt(energy / window);
+    levels.push_back(
+        static_cast<float>(20.0 * std::log10(std::max(rms, floorLinear))));
+  }
+  if (levels.empty())
+    return engineBlocks::kSilenceFloorDbfs;
+  auto middle = levels.begin() + static_cast<std::ptrdiff_t>(levels.size() / 2);
+  std::nth_element(levels.begin(), middle, levels.end());
+  return *middle;
+}
+
 void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
-                             const Project &project, int startFrame,
-                             int endFrame, int startSample, int samplesToWrite,
-                             int hopSize) {
-  std::vector<std::pair<int, int>> spans;
-  for (const auto &note : project.getNotes()) {
+                             const juce::AudioBuffer<float> &silenceSource,
+                             const Project &project, int startSample,
+                             int samplesToWrite, int hopSize, int sampleRate) {
+  const auto &notes = project.getNotes();
+  // D-302: todo el calculo va en MUESTRAS. El HOP son 11,6 ms a 44,1 kHz y el
+  // fade 5,8 ms; redondear a frame deja la consonante a medias.
+  const int fadeSamples = std::max(1, hopSize / 2);
+  const int guardSamples = std::max(1, fadeSamples / 2);
+  const int onsetToleranceSamples =
+      std::max(1, static_cast<int>(std::lround(
+                      sampleRate * engineBlocks::kSilenceWindowMs / 1000.0)));
+
+  std::vector<std::pair<int, int>> spans; // relativos al bloque, en muestras
+  for (size_t index = 0; index < notes.size(); ++index) {
+    const Note &note = notes[index];
     if (!note.isDeleted())
       continue;
-    const int first = std::max(startFrame, note.getStartFrame());
-    const int last = std::min(endFrame, note.getEndFrame());
+
+    const int noteStart = note.getStartFrame() * hopSize;
+    const int noteEnd = note.getEndFrame() * hopSize;
+
+    // Nota anterior: la que termina mas tarde sin pasarse del inicio.
+    const Note *previous = nullptr;
+    for (size_t other = 0; other < notes.size(); ++other) {
+      if (other == index)
+        continue;
+      const Note &candidate = notes[other];
+      if (candidate.getEndFrame() > note.getStartFrame())
+        continue;
+      if (previous == nullptr ||
+          candidate.getEndFrame() > previous->getEndFrame())
+        previous = &candidate;
+    }
+    const int prevEnd = previous ? previous->getEndFrame() * hopSize : 0;
+
+    // Con notas contiguas (prevEnd == noteStart: lo normal, porque la
+    // expansion por VAD las pega) el ataque de la nota eliminada cae dentro de
+    // la nota anterior y la busqueda entra en su tramo. Sin nota anterior el
+    // suelo es 0, que deja la primera nota del proyecto en left = 0.
+    const int searchFrom =
+        prevEnd < noteStart
+            ? prevEnd
+            : (previous ? previous->getStartFrame() * hopSize : 0);
+    const Note &reference = previous ? *previous : note;
+    const float bodyDb =
+        bodyLevelDbfs(silenceSource, sampleRate,
+                      reference.getStartFrame() * hopSize,
+                      reference.getEndFrame() * hopSize);
+    const float thresholdDb = std::max(engineBlocks::kSilenceThresholdDbfs,
+                                       bodyDb - kAttackBodyDropDb);
+
+    int left = std::min(prevEnd, noteStart);
+    if (const auto run = engineBlocks::findLastSilenceRun(
+            silenceSource, sampleRate, searchFrom, noteStart, thresholdDb)) {
+      if (run->endSample + onsetToleranceSamples >= noteStart) {
+        // El tramo bajo llega al onset: no hay consonante aparte, ese tramo ES
+        // el ataque (una respiracion, un soplo) y se apaga tambien.
+        left = std::max(searchFrom, run->startSample);
+      } else {
+        // Hay audio entre el silencio y el onset: esa es la consonante. El
+        // fade de 256 muestras cae sobre el final del silencio.
+        left = std::max(searchFrom,
+                        run->endSample - fadeSamples - guardSamples);
+      }
+    }
+
+    const int first = std::max(0, left - startSample);
+    const int last = std::min(samplesToWrite, noteEnd - startSample);
     if (last > first)
       spans.emplace_back(first, last);
   }
@@ -56,16 +169,10 @@ void silenceDeletedNoteSpans(juce::AudioBuffer<float> &waveform,
   const int totalSamples = waveform.getNumSamples();
   if (totalSamples <= 0)
     return;
-  const int fadeLimit = std::max(1, hopSize / 2);
+  const int fadeLimit = fadeSamples;
   for (const auto &span : merged) {
-    const int first =
-        std::max(0, (span.first - startFrame) * hopSize);
-    const int last =
-        std::min(samplesToWrite, (span.second - startFrame) * hopSize);
-    if (last <= first)
-      continue;
-    const int absFirst = std::clamp(startSample + first, 0, totalSamples);
-    const int absLast = std::clamp(startSample + last, 0, totalSamples);
+    const int absFirst = std::clamp(startSample + span.first, 0, totalSamples);
+    const int absLast = std::clamp(startSample + span.second, 0, totalSamples);
     const int count = absLast - absFirst;
     if (count <= 0)
       continue;
@@ -2385,10 +2492,16 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           // D-299: el silencio de una nota eliminada se aplica al final, cuando
           // ya no queda ningun camino (commit, reset neutral, exact restore,
-          // parches de timing) que pueda escribir encima.
-          silenceDeletedNoteSpans(audioData.waveform, *capturedProject,
-                                  capturedStartFrame, capturedEndFrame,
-                                  startSample, samplesToWrite, hopSize);
+          // parches de timing) que pueda escribir encima. D-302: se mide sobre
+          // el waveform original en coordenadas de destino para decidir el
+          // borde izquierdo por energia.
+          const auto &silenceSource =
+              audioData.originalWaveform.getNumSamples() > 0
+                  ? audioData.originalWaveform
+                  : audioData.waveform;
+          silenceDeletedNoteSpans(audioData.waveform, silenceSource,
+                                  *capturedProject, startSample, samplesToWrite,
+                                  hopSize, audioData.sampleRate);
 
           // Persist only semantic render state. Previously this loop stored a
           // copy of the rendered samples on every note; the composite waveform

@@ -86,6 +86,72 @@ findSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
     return best;
 }
 
+std::optional<SilenceRun>
+findLastSilenceRun(const juce::AudioBuffer<float> &source, int sampleRate,
+                   int fromSample, int toSample, float thresholdDbfs) {
+    // D-302. Mismo criterio de ventana que findSilenceRun (5 ms, hop 1 ms,
+    // minimo 20 ms) y misma lectura de canal 0, pero se queda con el ULTIMO
+    // tramo valido en vez del mas largo: el que esta pegado al onset. No se
+    // factoriza con findSilenceRun a proposito: RenderPlan depende de que esa
+    // funcion siga devolviendo el tramo mas largo (D-129) y este parche no
+    // toca esa respuesta.
+    if (source.getNumChannels() <= 0 || sampleRate <= 0 ||
+        source.getNumSamples() <= 0)
+        return std::nullopt;
+
+    const int totalSamples = source.getNumSamples();
+    fromSample = std::clamp(fromSample, 0, totalSamples);
+    toSample = std::clamp(toSample, fromSample, totalSamples);
+    if (toSample - fromSample <= 0)
+        return std::nullopt;
+
+    const int window = std::max(1, static_cast<int>(std::lround(
+                                      sampleRate * kSilenceWindowMs / 1000.0)));
+    const int hop = std::max(1, static_cast<int>(std::lround(
+                                   sampleRate * kSilenceHopMs / 1000.0)));
+    const int minFrames = std::max(
+        1, static_cast<int>(std::ceil(kSilenceMinMs / kSilenceHopMs)));
+
+    if (toSample - fromSample < window)
+        return std::nullopt;
+
+    const float *data = source.getReadPointer(0);
+    const float floorLinear = std::pow(10.0f, kSilenceFloorDbfs / 20.0f);
+    const int numFrames = 1 + (toSample - fromSample - window) / hop;
+
+    auto frameIsSilent = [&](int frame) {
+        const int start = fromSample + frame * hop;
+        double energy = 0.0;
+        for (int i = 0; i < window; ++i)
+            energy += static_cast<double>(data[start + i]) *
+                      static_cast<double>(data[start + i]);
+        const double rms = std::sqrt(energy / window);
+        const double db = 20.0 * std::log10(std::max(
+                               rms, static_cast<double>(floorLinear)));
+        return db < static_cast<double>(thresholdDbfs);
+    };
+
+    std::optional<SilenceRun> last;
+    int frame = 0;
+    while (frame < numFrames) {
+        if (!frameIsSilent(frame)) {
+            ++frame;
+            continue;
+        }
+        const int runStart = frame;
+        while (frame < numFrames && frameIsSilent(frame))
+            ++frame;
+        if (frame - runStart < minFrames)
+            continue;
+
+        SilenceRun candidate;
+        candidate.startSample = fromSample + runStart * hop;
+        candidate.endSample = fromSample + (frame - 1) * hop + window;
+        last = candidate;
+    }
+    return last;
+}
+
 bool canChangeEngineAfter(const Note &previous, const Note &note,
                           const juce::AudioBuffer<float> &source,
                           int sampleRate, int hopSize) {

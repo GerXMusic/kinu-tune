@@ -43,6 +43,8 @@ set(PITCHNET_TEST_SOURCES
     TimingAudioTests.cpp
     NoteMuteTests.cpp
     NoteDeleteTests.cpp
+    # D-302: borde izquierdo del silencio por energia (ataque/consonante).
+    NoteDeleteAttackTests.cpp
     NoteResetTests.cpp
     # D-258: motor por bloque; D-260: bypass con el original; T7: predicado.
     BlockEngineTests.cpp
