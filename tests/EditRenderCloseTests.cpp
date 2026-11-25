@@ -613,6 +613,12 @@ void runPlanCase(bool blockEngineChange) {
   access.serviceEditRender();
   const bool renderWasInFlight = access.editRenderInFlight();
 
+  // El Play de la barra (toolbar -> flushDirtyBlocks) tampoco puede reiniciar la
+  // cadena que ya está en vuelo.
+  access.flushDirtyBlocks();
+  CHECK(backend.requests == 1);
+  CHECK(!access.flushChainActive());
+
   // Play en mitad del render: D-292 exige que no cancele la cadena. El
   // transporte arranca con el audio publicado; el render sigue.
   const bool held = access.flushForHostPlay();

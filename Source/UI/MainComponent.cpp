@@ -4835,6 +4835,15 @@ void MainComponent::pushSweepState()
 // the transport; the cursor does not advance until the last block is done.
 void MainComponent::flushDirtyBlocks()
 {
+  // D-292: una cadena de edición/cambio de motor en vuelo manda. El Play no la
+  // cancela ni arranca otra: suena el último audio publicado y el cierre de esa
+  // cadena pide el pase que falte. Antes, este camino (toolbar/UI) llamaba a
+  // resynthesizeIncremental y el backend cancelaba el pase en curso.
+  if (renderState.editRenderInFlight || renderState.mcpRenderPending)
+  {
+    LOG("D-292: flush pedido con un render en vuelo; no se reinicia la cadena");
+    return;
+  }
   if (!renderState.deferredRenderPending || renderState.flushChainActive)
     return;
 
