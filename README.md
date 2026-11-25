@@ -66,12 +66,12 @@ principal es sacar armonías rápido duplicando una pista de voz.
 
 ## Descargar
 
-La versión publicada es **0.1.4**:
+La versión publicada es **0.1.5**:
 [github.com/GerXMusic/tunex/releases/latest](https://github.com/GerXMusic/tunex/releases/latest).
 
-- **Windows x64:** `TuneX-0.1.4-Windows-x64-Setup.exe` (VST3 DirectML, modelos y VC++).
-- **macOS arm64:** `TuneX-0.1.4-macOS-arm64.pkg` (VST3, AU y modelos).
-- **Solo el plugin (Windows):** `TuneX-0.1.4-Windows-x64-VST3.zip`; **no** lleva modelos.
+- **Windows x64:** `TuneX-0.1.5-Windows-x64-Setup.exe` (VST3 DirectML, modelos y VC++).
+- **macOS arm64:** `TuneX-0.1.5-macOS-arm64.pkg` (VST3, AU y modelos).
+- **Solo el plugin (Windows):** `TuneX-0.1.5-Windows-x64-VST3.zip`; **no** lleva modelos.
 
 Los instaladores **no están firmados ni notarizados**: Windows SmartScreen y macOS Gatekeeper
 avisarán. Los SHA-256 están en `SHA256SUMS.txt` del release.
