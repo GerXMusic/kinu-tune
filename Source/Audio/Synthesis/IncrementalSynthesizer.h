@@ -25,6 +25,12 @@
  */
 class IncrementalSynthesizer {
 public:
+  // D-291: pases que tuvieron que commitear el tramo de cada nota sucia porque
+  // el commit por bloque salia vacio (override obsoleto). Instrumento de
+  // medida: si sube, el recorrido D-197 esta pidiendo un rango que ya no cubre
+  // ninguna nota.
+  static int getFallbackCommitCount();
+  static void resetFallbackCommitCount();
   using ProgressCallback = std::function<void(const juce::String &message)>;
   using CompleteCallback = std::function<void(bool success)>;
 

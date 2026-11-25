@@ -14,6 +14,8 @@
 #include <limits>
 
 namespace {
+// D-291: instrumento de medida (ver IncrementalSynthesizer::getFallbackCommitCount).
+std::atomic<int> gFallbackCommits{0};
 constexpr int kAdjacentFrameTolerance = 1;
 constexpr int kTimingClearFadeSamples = 128;
 
@@ -647,8 +649,7 @@ IncrementalSynthesizer::IncrementalSynthesizer() = default;
 
 IncrementalSynthesizer::~IncrementalSynthesizer() { cancel(); }
 
-void IncrementalSynthesizer::cancel() {
-  if (cancelFlag)
+void IncrementalSynthesizer::cancel() {  if (cancelFlag)
     cancelFlag->store(true);
 }
 
@@ -851,6 +852,14 @@ std::vector<float> IncrementalSynthesizer::buildPitchRatioCurve(
   return ratio;
 }
 
+int IncrementalSynthesizer::getFallbackCommitCount() {
+  return gFallbackCommits.load(std::memory_order_relaxed);
+}
+
+void IncrementalSynthesizer::resetFallbackCommitCount() {
+  gFallbackCommits.store(0, std::memory_order_relaxed);
+}
+
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
 #if PITCHNET_LOGGING_ENABLED
@@ -924,7 +933,29 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
-  if (hasRenderRangeOverride) {
+  // D-291: un override que ya no cubre ninguna nota sucia es basura de un gesto
+  // anterior. Aplicarlo dejaba el commit vacio (o escribia fuera de lo
+  // renderizado), el pase se contaba como fallo y el audio se quedaba viejo:
+  // medido en vivo, phase=Dirty con retry_attempts=3 y cada Play reintentando.
+  // Se descarta y el pase cubre lo que de verdad esta sucio.
+  bool useOverride = hasRenderRangeOverride;
+  if (useOverride) {
+    bool coversDirtyNote = false;
+    for (const auto &note : project->getNotes()) {
+      if (note.isRest() || !note.isDirty())
+        continue;
+      if (note.getEndFrame() > renderRangeOverrideStart &&
+          note.getStartFrame() < renderRangeOverrideEnd) {
+        coversDirtyNote = true;
+        break;
+      }
+    }
+    if (!coversDirtyNote) {
+      ++gFallbackCommits; // cuenta overrides descartados (D-291)
+      useOverride = false;
+    }
+  }
+  if (useOverride) {
     // D-197: this pass covers one edited block. All notes stay dirty; the
     // override narrows which block this pass renders.
     dirtyStart = renderRangeOverrideStart;
@@ -967,7 +998,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // limpia lo que su BLOQUE cubre: la ventana de render lleva padding mas alla
   // del bloque (contexto), asi que el filtro va sobre el rango del bloque, no
   // sobre la ventana.
-  if (hasRenderRangeOverride) {
+  if (useOverride) {
     const auto &allNotes = project->getNotes();
     passDirtyNotes.erase(
         std::remove_if(passDirtyNotes.begin(), passDirtyNotes.end(),
@@ -1008,11 +1039,37 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // smallest span the engine's phase depends on, and its edges are silences.
   // In the D-197 walk the pass's unit is the override, not the whole context:
   // committing a context block nobody edited would break D-125 b.
-  const int selectionStart = hasRenderRangeOverride ? rawDirtyStart : startFrame;
-  const int selectionEnd = hasRenderRangeOverride ? rawDirtyEnd : endFrame;
+  const int selectionStart = useOverride ? rawDirtyStart : startFrame;
+  const int selectionEnd = useOverride ? rawDirtyEnd : endFrame;
   auto commitFrameRanges = commitRangesForDirtyNotes(
       *project, enginePlan, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
       selectionStart, selectionEnd);
+  if (commitFrameRanges.empty()) {
+    // D-291: un pase con notas sucias no puede no tener nada que commitear. Con
+    // un override de bloque obsoleto (rango de un gesto anterior que ya no
+    // cubre ninguna nota sucia) el commit salia vacio, el pase se contaba como
+    // fallo y el audio se quedaba viejo: 3 reintentos agotados y cada Play
+    // reintentando (medido en vivo: phase=Dirty, retry_attempts=3,
+    // published_revision por detras, dirty_notes=1). Antes de fallar se commitea
+    // el tramo de cada nota sucia: el bloque decide el motor, la nota decide
+    // donde se escribe.
+    for (const auto &note : project->getNotes()) {
+      if (note.isRest() || !note.isDirty())
+        continue;
+      if (note.getEndFrame() <= note.getStartFrame())
+        continue;
+      ++gFallbackCommits;
+      const bool duplicate = std::any_of(
+          commitFrameRanges.begin(), commitFrameRanges.end(),
+          [&](const CommitFrameRange &range) {
+            return range.start == note.getStartFrame() &&
+                   range.end == note.getEndFrame();
+          });
+      if (!duplicate)
+        commitFrameRanges.push_back(
+            {note.getStartFrame(), note.getEndFrame()});
+    }
+  }
   if (commitFrameRanges.empty()) {
     if (onComplete)
       onComplete(false);

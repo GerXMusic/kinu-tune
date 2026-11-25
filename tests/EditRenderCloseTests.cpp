@@ -548,7 +548,50 @@ void testChainPassesAreBounded() {
   CHECK(endsPlaying);
 }
 
-// D-287: el audio publicado no puede quedarse en una revision anterior a la del
+// D-291: un pase con notas sucias no puede fallar porque el override del
+// recorrido apunte a un rango que ya no cubre ninguna nota (override obsoleto).
+// Antes: commit vacio -> onComplete(false) -> 3 reintentos agotados y el audio
+// viejo; cada Play reintentaba. Ahora se commitea el tramo de cada nota sucia.
+void testStaleOverrideStillCommits() {
+  Project project = makeProject(NoteEngine::Psola);
+  for (auto &note : project.getNotes()) {
+    note.setPitchOffset(2.0f);
+  }
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+  for (auto &note : project.getNotes()) {
+    note.markDirty();
+    note.markSynthDirty();
+  }
+  project.markNoteEditDirtyRange(kN0a, kN3b);
+  const auto before = project.getAudioData().waveform;
+
+  IncrementalSynthesizer::resetFallbackCommitCount();
+  IncrementalSynthesizer synth;
+  synth.setProject(&project);
+  synth.setSynthesisEngine(SynthesisEngineType::Psola);
+  synth.setRenderRangeOverride(500, 520); // no cubre ninguna nota sucia
+
+  std::atomic<bool> done{false};
+  std::atomic<bool> ok{false};
+  synth.synthesizeRegion(nullptr, [&](bool success) {
+    ok.store(success);
+    done.store(true);
+  });
+  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
+  while (!done.load() &&
+         juce::Time::getMillisecondCounterHiRes() < deadline)
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+  CHECK(done.load());
+  const float diff = maxAbsDiff(project.getAudioData().waveform, before, 55, 145);
+  std::printf("D-291 override obsoleto: exito %d | fallback %d | bloque 1 vs "
+              "antes %.6f (lim > 1e-3)\n",
+              ok.load() ? 1 : 0,
+              IncrementalSynthesizer::getFallbackCommitCount(), diff);
+  CHECK(ok.load());
+  CHECK(IncrementalSynthesizer::getFallbackCommitCount() > 0);
+  CHECK(diff > 1.0e-3f);
+}
+
 // modelo. Medido en vivo: pass=44 < dirty=47, nada agendado ni en vuelo, notas
 // limpias y el buffer aun con el motor anterior mientras el estado decia
 // `Published`/`quiescent`. El test simula ese estado exacto y exige:
@@ -777,6 +820,7 @@ int main() {
   testEngineChangeBlockedWhilePlaying();
   testEngineChangeRendersEveryBlock();
   testChainPassesAreBounded();
+  testStaleOverrideStillCommits();
   testStaleAudioIsCaughtUpOnce();
   testFailedCloseReleasesChainAndRecovers();
   testCloseWithoutSnapshotDecidesNothing();

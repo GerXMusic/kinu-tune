@@ -2030,6 +2030,11 @@ void MainComponent::pollMcpControl()
                           chainPassesRevision == dirtyRevision
                               ? chainPassesForRevision
                               : 0);
+    // D-291: pases que tuvieron que escribirse por nota porque el commit por
+    // bloque salia vacio (override obsoleto). Si sube, el recorrido D-197 pide
+    // un rango que ya no cubre ninguna nota sucia.
+    instance->setProperty("fallback_commits",
+                          IncrementalSynthesizer::getFallbackCommitCount());
     instance->setProperty("last_retry_revision",
                           static_cast<juce::int64>(lastRetryRevision));
     instance->setProperty("retry_attempts", retryAttemptsForRevision);
