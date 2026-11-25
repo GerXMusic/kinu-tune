@@ -2,6 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
+#include "../../Models/RenderPlan.h"
 #include "../SynthesisEngineType.h"
 #include "../Vocoder.h"
 #include "PsolaSynthesizer.h"
@@ -42,8 +43,19 @@ public:
   void setSynthesisEngine(SynthesisEngineType type) { synthesisEngine = type; }
   SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
 
-  // D-197: render only this window (a silence-bounded edited block). The
-  // project keeps all its dirty notes; the window only narrows the commit.
+  // D-197/D-292: un pase renderiza UN bloque del plan inmutable de la cadena.
+  // El rango y las notas (con su dirtyRevision) vienen del plan, no del
+  // Project; el cierre limpia solo esas notas por revisión.
+  void setRenderPlanBlock(const renderPlan::Block &block)
+  {
+    planBlock = block;
+    hasPlanBlock = true;
+  }
+  void clearRenderPlanBlock() { hasPlanBlock = false; }
+
+  // Obsoleto (D-292): red del recorrido anterior, se conserva para el test de
+  // D-291 y para llamadores sueltos. El camino de producción no lo usa: la
+  // cadena de EditorController pasa siempre un bloque del plan.
   void setRenderRangeOverride(int startFrame, int endFrame)
   {
     renderRangeOverrideStart = startFrame;
@@ -95,6 +107,10 @@ private:
   bool hasRenderRangeOverride = false;
   int renderRangeOverrideStart = 0;
   int renderRangeOverrideEnd = 0;
+
+  // D-292: bloque del plan inmutable de la cadena en curso.
+  bool hasPlanBlock = false;
+  renderPlan::Block planBlock;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IncrementalSynthesizer)
 };

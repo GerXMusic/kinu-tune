@@ -907,7 +907,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!hasRenderRangeOverride && !project->hasDirtyNotes() &&
+  if (!hasPlanBlock && !hasRenderRangeOverride && !project->hasDirtyNotes() &&
       !project->hasF0DirtyRange()) {
     // D-285: sin trabajo no hay fallo; antes este no-op se contaba como render
     // fallido y cerraba la cadena con `false`.
@@ -916,20 +916,33 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
+  // D-292: el bloque del plan es la verdad del pase. Manda sobre el rango
+  // sucio del Project (que en el backend ya puede estar limpio para los otros
+  // bloques de la cadena) y sobre el override obsoleto D-291.
+  const bool usePlanBlock =
+      hasPlanBlock && planBlock.endFrame > planBlock.startFrame;
   auto [dirtyStart, dirtyEnd] = project->getDirtyFrameRange();
-  const bool hasDirtyNoteAnchors = project->hasDirtyNotes();
+  bool hasDirtyNoteAnchors = project->hasDirtyNotes();
   const auto [f0DirtyStart, f0DirtyEnd] = project->getF0DirtyRange();
   // D-251 (S4): identidad por edición. Solo se limpia lo que este pase
   // renderizó; una edición que llega mientras el render está en vuelo no está
   // en esta lista y conserva su dirty para el pase siguiente.
   std::vector<std::pair<int, std::uint64_t>> passDirtyNotes;
   const std::uint64_t passF0Revision = project->getF0DirtyRevision();
-  for (int index = 0; index < static_cast<int>(project->getNotes().size());
-       ++index)
-  {
-    const auto &note = project->getNotes()[static_cast<size_t>(index)];
-    if (note.isDirty())
-      passDirtyNotes.emplace_back(index, note.getDirtyRevision());
+  if (usePlanBlock) {
+    dirtyStart = planBlock.startFrame;
+    dirtyEnd = planBlock.endFrame;
+    hasDirtyNoteAnchors = !planBlock.notes.empty();
+    for (const auto &ref : planBlock.notes)
+      passDirtyNotes.emplace_back(ref.index, ref.dirtyRevision);
+  } else {
+    for (int index = 0; index < static_cast<int>(project->getNotes().size());
+         ++index)
+    {
+      const auto &note = project->getNotes()[static_cast<size_t>(index)];
+      if (note.isDirty())
+        passDirtyNotes.emplace_back(index, note.getDirtyRevision());
+    }
   }
   auto editedClusters = selectConnectedEditedNotes(
       *project, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd);
@@ -937,8 +950,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // anterior. Aplicarlo dejaba el commit vacio (o escribia fuera de lo
   // renderizado), el pase se contaba como fallo y el audio se quedaba viejo:
   // medido en vivo, phase=Dirty con retry_attempts=3 y cada Play reintentando.
-  // Se descarta y el pase cubre lo que de verdad esta sucio.
-  bool useOverride = hasRenderRangeOverride;
+  // Se descarta y el pase cubre lo que de verdad esta sucio. Con plan (D-292)
+  // este camino ya no se usa en producción: es red.
+  bool useOverride = !usePlanBlock && hasRenderRangeOverride;
   if (useOverride) {
     bool coversDirtyNote = false;
     for (const auto &note : project->getNotes()) {
@@ -960,7 +974,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     // override narrows which block this pass renders.
     dirtyStart = renderRangeOverrideStart;
     dirtyEnd = renderRangeOverrideEnd;
-  } else {
+  } else if (!usePlanBlock) {
     if (editedClusters.startFrame >= 0)
       dirtyStart = std::min(dirtyStart, editedClusters.startFrame);
     if (editedClusters.endFrame >= 0)
@@ -998,7 +1012,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // limpia lo que su BLOQUE cubre: la ventana de render lleva padding mas alla
   // del bloque (contexto), asi que el filtro va sobre el rango del bloque, no
   // sobre la ventana.
-  if (useOverride) {
+  if (useOverride && !usePlanBlock) {
     const auto &allNotes = project->getNotes();
     passDirtyNotes.erase(
         std::remove_if(passDirtyNotes.begin(), passDirtyNotes.end(),
@@ -1038,9 +1052,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // D-239: the output is committed by block, not by note. The block is the
   // smallest span the engine's phase depends on, and its edges are silences.
   // In the D-197 walk the pass's unit is the override, not the whole context:
-  // committing a context block nobody edited would break D-125 b.
-  const int selectionStart = useOverride ? rawDirtyStart : startFrame;
-  const int selectionEnd = useOverride ? rawDirtyEnd : endFrame;
+  // committing a context block nobody edited would break D-125 b. D-292: with
+  // a plan block, the selection is exactly that block (same rule, no cursor).
+  const int selectionStart =
+      (useOverride || usePlanBlock) ? rawDirtyStart : startFrame;
+  const int selectionEnd =
+      (useOverride || usePlanBlock) ? rawDirtyEnd : endFrame;
   auto commitFrameRanges = commitRangesForDirtyNotes(
       *project, enginePlan, hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
       selectionStart, selectionEnd);
@@ -1133,6 +1150,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         synthesisEngineTypeToString(synthesisEngine) +
         "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
         "  dirtyNotes=" + juce::String(dirtyNoteCount) +
+        "  planBlock=" + (usePlanBlock ? "yes" : "no") +
         "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
         juce::String(f0DirtyEnd) + ")");
     LOG(juce::String("  dirty=[") + juce::String(rawDirtyStart) + "," +

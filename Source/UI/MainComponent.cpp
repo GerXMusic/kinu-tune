@@ -4860,6 +4860,19 @@ bool MainComponent::flushDirtyBlocksForHostPlay()
   if (project == nullptr || editorController == nullptr)
     return false;
 
+  // D-292: Play no cancela una cadena en vuelo. Antes, pulsar Play con un render
+  // de edicion/cambio de motor a medias paraba el transporte y pedia otro pase:
+  // el backend cancelaba el que estaba y el trabajo se mezclaba con el plan
+  // viejo. Ahora el transporte arranca con el ultimo audio publicado y el
+  // render sigue en segundo plano; su cierre limpia y, si quedo trabajo, pide
+  // su propia cadena.
+  if (renderState.editRenderInFlight || renderState.mcpRenderPending)
+  {
+    LOG("D-292: Play con render en vuelo; suena el audio publicado y el render "
+        "termina en su cadena");
+    return false;
+  }
+
   const bool hasDirtyBlocks =
       project->hasDirtyNotes() || project->hasF0DirtyRange();
   // Sin bloques en la cola ni rango F0 sucio no hay flush que hacer.

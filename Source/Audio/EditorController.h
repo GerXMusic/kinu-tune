@@ -111,6 +111,15 @@ public:
       const std::function<void()> &onNotesChanged);
 
 private:
+  // D-292: one pass of a chain over an immutable plan. `plan` is built once at
+  // the start of the chain and never rebuilt while it runs; `blockIndex` is the
+  // controller's local walk (nothing is stored in the Project).
+  void runIncrementalPass(
+      Project &project,
+      const std::function<void(const juce::String &)> &onProgress,
+      const std::function<void(bool)> &onComplete,
+      std::atomic<bool> &pendingRerun, bool isPluginMode,
+      std::shared_ptr<const renderPlan::Plan> plan, int blockIndex);
   GPUProvider getProviderFromDevice(const juce::String &device) const;
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;

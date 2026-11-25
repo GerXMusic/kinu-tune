@@ -311,8 +311,10 @@ public:
     // Returns the number of notes marked; nothing is marked when it is 0.
     int markEditedNotesDirty();
 
-    // D-197: independent walk over the last markEditedNotesDirty() selection,
-    // grouped into blocks separated by D-129 silence. Dirty flags are untouched.
+    // OBSOLETO desde D-292 (no gobierna el render): el recorrido por bloques
+    // vive ahora en renderPlan::Plan, inmutable por cadena. Se conserva porque
+    // markEditedNotesDirty sigue construyendo el plan por compatibilidad y
+    // porque el test de D-289 lo inspecciona; el backend ya no lo lee.
     bool hasEditedBlockPlan() const;
     bool nextEditedBlockRange(int &startFrame, int &endFrame);
 
@@ -421,7 +423,8 @@ private:
     // D-253: revisión del rango F0 para el cierre por pase.
     std::uint64_t f0DirtyRevision = 0;
 
-    // D-197 edited-note block walk (padded frame spans, not note flags).
+    // D-197 (OBSOLETO desde D-292): plan padded del ultimo markEditedNotesDirty.
+    // El render ya no lo consume: usa renderPlan::Plan, inmutable por cadena.
     std::vector<std::pair<int, int>> editedBlockRanges;
     int editedBlockCursor = -1;
 

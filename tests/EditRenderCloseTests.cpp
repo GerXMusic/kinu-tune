@@ -14,6 +14,7 @@
 // en la peticion, se renderiza la copia y al terminar se devuelve el audio a la
 // copia viva del editor antes de llamar a finishBackendRender.
 #include "../Source/Audio/EditorController.h"
+#include "../Source/Audio/Synthesis/EngineBlocks.h"
 #include "../Source/Audio/Synthesis/IncrementalSynthesizer.h"
 #include "../Source/Models/Project.h"
 #include "../Source/UI/MainComponent.h"
@@ -159,7 +160,12 @@ struct MainComponentTestAccess {
 
   void serviceEditRender() { mc.serviceEditRender(); }
   void markRenderDirty() { mc.markRenderDirty(); }
+  void rerenderEditedNotes() { mc.rerenderEditedNotes(); }
   void flushDirtyBlocks() { mc.flushDirtyBlocks(); }
+  int chainPasses() const {
+    return mc.chainPassesRevision == mc.dirtyRevision ? mc.chainPassesForRevision
+                                                      : 0;
+  }
   void bypassDebounce() {
     mc.editRenderRequestedAtMs = juce::Time::getMillisecondCounterHiRes() - 1000.0;
   }
@@ -483,6 +489,241 @@ void testEngineChangeRendersEveryBlock() {
   CHECK(d1 > 1.0e-3f);
   CHECK(d2 > 1.0e-3f);
   CHECK(d3 > 1.0e-3f);
+}
+} // namespace
+
+// D-292: plan inmutable por revisión. Caso exacto del fallo en vivo: cambio de
+// motor (global o de bloque) -> render en vuelo -> Play -> nudge de una nota de
+// otro bloque. El Play NO puede cancelar la cadena, el nudge NO puede retargetear
+// el plan que ya corre, y el cierre NO puede borrar la edición nueva. Se mide
+// audio contra el render completo del estado final y contra el original.
+namespace {
+struct PlanBackend {
+  std::unique_ptr<EditorController> controller =
+      std::make_unique<EditorController>(false);
+  std::function<void(bool)> finish;
+  Project *live = nullptr;
+  std::atomic<bool> pendingRerun{false};
+  int requests = 0;
+
+  void request(const Project &source) {
+    ++requests;
+    auto *backendProject = controller->getProject();
+    if (backendProject == nullptr) {
+      controller->setProject(std::make_unique<Project>(source));
+      backendProject = controller->getProject();
+    } else {
+      // Mismo camino que requestPluginProjectRender: el backend renderiza una
+      // copia inmutable del proyecto del editor.
+      *backendProject = source;
+    }
+    controller->resynthesizeIncrementalAsync(
+        *backendProject, nullptr,
+        [this](bool ok) {
+          if (ok && live != nullptr)
+            live->getAudioData().waveform.makeCopyOf(
+                controller->getProject()->getAudioData().waveform);
+          if (finish)
+            finish(ok);
+        },
+        pendingRerun, /*isPluginMode*/ true);
+  }
+};
+
+void nudgeNoteMidi(Project &project, int index, float newMidi) {
+  auto &notes = project.getNotes();
+  auto &note = notes[static_cast<size_t>(index)];
+  const float fromMidi = note.getMidiNote();
+  const float sourceBefore = note.getLastNonMacroMidiNote();
+  NotePitch::applyEdit(note, project, sourceBefore, fromMidi, newMidi);
+  note.setPitchOffset(0.0f);
+  note.markDirty();
+  note.markSynthDirty();
+  project.markNoteEditDirtyRange(note.getStartFrame(), note.getEndFrame());
+  PitchCurveProcessor::rebuildBaseFromNotes(project);
+}
+
+void pumpUntilSettled(MainComponentTestAccess &access, Project &project,
+                      double timeoutSeconds) {
+  const double deadline =
+      juce::Time::getMillisecondCounterHiRes() + timeoutSeconds * 1000.0;
+  while (juce::Time::getMillisecondCounterHiRes() < deadline) {
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+    const bool quiescent = !access.editRenderInFlight() &&
+                           !access.flushChainActive() &&
+                           !access.deferredRenderPending() &&
+                           !project.hasDirtyNotes() &&
+                           !project.hasF0DirtyRange();
+    if (quiescent)
+      break;
+  }
+}
+
+void runPlanCase(bool blockEngineChange) {
+  EditorController controller(false);
+  PitchUndoManager history(100);
+  MainComponent mc(false); // plugin: sin dispositivo de audio
+  *controller.getProject() = makeThreeBlockProject();
+  MainComponentTestAccess::wire(mc, controller, history);
+  MainComponentTestAccess access{mc};
+
+  // El motor global arranca en PSOLA; el caso lo cambia a Pitchcore.
+  auto sharedEngine = std::make_shared<SynthesisEnginePreference>();
+  sharedEngine->value.store(SynthesisEngineType::Psola);
+  controller.shareSynthesisEngine(sharedEngine);
+
+  PlanBackend backend;
+  backend.live = controller.getProject();
+  backend.controller->shareSynthesisEngine(sharedEngine);
+  backend.finish = [&mc](bool ok) { mc.finishBackendRender(ok); };
+  mc.setOnRequestBackendRender(
+      [&backend](const Project &source) { backend.request(source); });
+
+  auto &project = *controller.getProject();
+  project.setSynthesisEngine(SynthesisEngineType::Psola);
+  controller.setSynthesisEngineType(SynthesisEngineType::Psola);
+
+  // Punto de partida con audio ya renderizado: el caso no mide "¿se renderizó
+  // alguna vez?", mide que el cambio y el nudge no mezclen motores. El global
+  // parte de PSOLA; el de bloque, de Pitchcore.
+  const auto baselineEngine =
+      blockEngineChange ? SynthesisEngineType::Pitchcore
+                        : SynthesisEngineType::Psola;
+  project.setSynthesisEngine(baselineEngine);
+  controller.setSynthesisEngineType(baselineEngine);
+  project = fullRender(project, baselineEngine, "D-292 baseline");
+
+  IncrementalSynthesizer::resetFallbackCommitCount();
+
+  if (!blockEngineChange) {
+    // Cambio de motor GLOBAL: mismo camino que rerenderEditedNotes().
+    project.setSynthesisEngine(SynthesisEngineType::Pitchcore);
+    controller.setSynthesisEngineType(SynthesisEngineType::Pitchcore);
+    access.rerenderEditedNotes();
+  } else {
+    // Cambio de motor de BLOQUE sobre la nota 0 (bloque 1) mientras el global
+    // es Pitchcore: applyNoteEngineToIndices marca el bloque y pide el render.
+    project.setSynthesisEngine(SynthesisEngineType::Pitchcore);
+    controller.setSynthesisEngineType(SynthesisEngineType::Pitchcore);
+    access.applyNoteEngineToIndices({0}, NoteEngine::Psola);
+  }
+
+  // Política A: el render arranca ya (debounce vencido). Queda EN VUELO.
+  access.bypassDebounce();
+  access.serviceEditRender();
+  const bool renderWasInFlight = access.editRenderInFlight();
+
+  // Play en mitad del render: D-292 exige que no cancele la cadena. El
+  // transporte arranca con el audio publicado; el render sigue.
+  const bool held = access.flushForHostPlay();
+  mc.updateHostPlaybackState(true);
+
+  // Nudge de la nota 3 (bloque 3: fuera del bloque 1) mientras el render corre.
+  nudgeNoteMidi(project, 3, project.getNotes()[3].getMidiNote() + 1.0f);
+  access.markRenderDirty();
+
+  pumpUntilSettled(access, project, 60.0);
+
+  std::printf("D-292 %s: enVuelo=%d playRetenido=%d peticiones=%d pases=%d "
+              "fallback=%d dirtyNotas=%d f0Dirty=%d pub=%llu dirty=%llu\n",
+              blockEngineChange ? "bloque" : "global", renderWasInFlight ? 1 : 0,
+              held ? 1 : 0, backend.requests, access.chainPasses(),
+              IncrementalSynthesizer::getFallbackCommitCount(),
+              project.hasDirtyNotes() ? 1 : 0,
+              project.hasF0DirtyRange() ? 1 : 0,
+              static_cast<unsigned long long>(access.publishedRevision()),
+              static_cast<unsigned long long>(access.dirtyRevision()));
+
+  CHECK(renderWasInFlight);
+  CHECK(!held); // D-292: Play no para el transporte ni reinicia la cadena
+  CHECK(!project.hasDirtyNotes());
+  CHECK(!project.hasF0DirtyRange());
+  CHECK(access.publishedRevision() == access.dirtyRevision());
+  CHECK(IncrementalSynthesizer::getFallbackCommitCount() == 0);
+  CHECK(access.chainPasses() <= 8);
+
+  // Motor efectivo pedido en cada nota del bloque.
+  const auto globalEngine = controller.getSynthesisEngineType();
+  for (size_t i = 0; i < project.getNotes().size(); ++i) {
+    const auto effective =
+        engineBlocks::effectiveEngine(project.getNotes()[i], globalEngine);
+    if (blockEngineChange && i < 2) {
+      CHECK(effective == SynthesisEngineType::Psola);
+      CHECK(project.getNotes()[i].getEngine() == NoteEngine::Psola);
+    } else {
+      CHECK(effective == SynthesisEngineType::Pitchcore);
+    }
+  }
+
+  // Referencia: render completo del estado final (motor global Pitchcore, con
+  // el motor de bloque y el nudge ya aplicados).
+  Project reference = project;
+  for (auto &note : reference.getNotes())
+    note.clearDirty();
+  reference.setF0DirtyRange(0, 560);
+  reference = fullRender(reference, SynthesisEngineType::Pitchcore, "D-292 ref");
+
+  const auto &rendered = project.getAudioData().waveform;
+  const auto &original = project.getAudioData().originalWaveform;
+  const auto &expected = reference.getAudioData().waveform;
+  const float d1 = maxAbsDiff(rendered, original, 45, 195);
+  const float d2 = maxAbsDiff(rendered, original, 245, 315);
+  const float d3 = maxAbsDiff(rendered, original, 365, 435);
+  const float r1 = maxAbsDiff(rendered, expected, 45, 195);
+  const float r2 = maxAbsDiff(rendered, expected, 245, 315);
+  const float r3 = maxAbsDiff(rendered, expected, 365, 435);
+  std::printf("D-292 %s vs original: %.6f %.6f %.6f (>1e-3) | vs render "
+              "completo: %.8f %.8f %.8f (lim 1e-7)\n",
+              blockEngineChange ? "bloque" : "global", d1, d2, d3, r1, r2, r3);
+  CHECK(d1 > 1.0e-3f);
+  CHECK(d2 > 1.0e-3f);
+  CHECK(d3 > 1.0e-3f);
+  CHECK(r1 <= 1.0e-7f);
+  CHECK(r2 <= 1.0e-7f);
+  CHECK(r3 <= 1.0e-7f);
+
+  mc.updateHostPlaybackState(false);
+}
+
+void testRenderPlanSurvivesEngineChangePlayAndNudge() {
+  std::printf("--- D-292 global ---\n");
+  runPlanCase(/*blockEngineChange*/ false);
+  std::printf("--- D-292 bloque ---\n");
+  runPlanCase(/*blockEngineChange*/ true);
+}
+
+// D-292: la fusión del resultado del backend no puede borrar una nota cuya
+// dirtyRevision avanzó después de la copia. Solo se aplica lo que el render de
+// la copia limpió y con la misma revisión.
+void testRenderedMergeKeepsNewerEdit() {
+  Project live = makeProject(NoteEngine::Psola);
+  live.clearAllDirty();
+  Project renderedCopy = live;
+
+  live.getNotes()[0].markDirty(); // renderizado por el backend (bloque 1)
+  live.getNotes()[1].markDirty();
+  live.getNotes()[3].markDirty(); // fuera del plan: sigue sucio en la copia
+  renderedCopy = live;
+  renderedCopy.getNotes()[0].clearDirty();
+  renderedCopy.getNotes()[1].clearDirty();
+
+  // Edición nueva de la nota 1 mientras el render está en vuelo.
+  live.getNotes()[1].markDirty();
+  const auto newerRevision = live.getNotes()[1].getDirtyRevision();
+  const auto before = live.getNotes()[3].getDirtyRevision();
+
+  live.applyRenderedNoteState(renderedCopy);
+
+  std::printf("D-292 fusión: nota0 dirty %d (0) | nota1 dirty %d (1, rev nueva) "
+              "| nota3 dirty %d (1)\n",
+              live.getNotes()[0].isDirty() ? 1 : 0,
+              live.getNotes()[1].isDirty() ? 1 : 0,
+              live.getNotes()[3].isDirty() ? 1 : 0);
+  CHECK(!live.getNotes()[0].isDirty());
+  CHECK(live.getNotes()[1].isDirty());
+  CHECK(live.getNotes()[1].getDirtyRevision() == newerRevision);
+  CHECK(live.getNotes()[3].isDirty());
+  CHECK(live.getNotes()[3].getDirtyRevision() == before);
 }
 } // namespace
 
@@ -819,6 +1060,8 @@ int main() {
   testS4dCloseKeepsSecondEdit();
   testEngineChangeBlockedWhilePlaying();
   testEngineChangeRendersEveryBlock();
+  testRenderPlanSurvivesEngineChangePlayAndNudge();
+  testRenderedMergeKeepsNewerEdit();
   testChainPassesAreBounded();
   testStaleOverrideStillCommits();
   testStaleAudioIsCaughtUpOnce();

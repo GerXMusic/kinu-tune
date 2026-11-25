@@ -140,12 +140,26 @@ void Project::applyRenderedNoteState(const Project &rendered)
 {
     auto &targetNotes = notes;
     const auto &renderedNotes = rendered.getNotes();
+    // D-292: una lista de notas distinta (split/merge durante el render) no se
+    // puede casar por indice: el resultado se descarta.
     if (targetNotes.size() != renderedNotes.size())
         return;
     for (size_t i = 0; i < targetNotes.size(); ++i)
     {
-        targetNotes[i].setRenderedEdit(renderedNotes[i].hasRenderedEdit());
-        targetNotes[i].setSynthDirty(renderedNotes[i].isSynthDirty());
+        const auto &renderedNote = renderedNotes[i];
+        // D-292: el backend limpia en SU copia solo las notas que commiteo. Una
+        // nota que sigue sucia en la copia no la toco este render. Y una nota
+        // cuya dirtyRevision avanzo en el editor despues de la copia es una
+        // edicion nueva: se conserva su dirty (antes, clearDirty() a ciegas la
+        // borraba con el waveform entero y su audio no se publicaba).
+        const bool committedByRender = !renderedNote.isDirty();
+        if (!committedByRender)
+            continue;
+        if (targetNotes[i].getDirtyRevision() !=
+            renderedNote.getDirtyRevision())
+            continue;
+        targetNotes[i].setRenderedEdit(renderedNote.hasRenderedEdit());
+        targetNotes[i].setSynthDirty(renderedNote.isSynthDirty());
         targetNotes[i].clearDirty();
     }
 }

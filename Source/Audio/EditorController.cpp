@@ -601,6 +601,57 @@ void EditorController::resynthesizeIncrementalAsync(
     return;
   }
 
+  // D-292: el plan de la cadena se construye AQUI, desde el estado sucio actual,
+  // y es inmutable mientras la cadena vive. Ni el Project ni un cursor guardado
+  // deciden el bloque siguiente: lo decide esta copia.
+  auto plan = std::make_shared<renderPlan::Plan>(
+      renderPlan::build(project));
+  if (plan->empty())
+  {
+    if (onComplete)
+      onComplete(true);
+    return;
+  }
+  LOG("D-292: plan de render rev=" + juce::String(plan->revision) +
+      " bloques=" + juce::String(static_cast<int>(plan->blocks.size())) +
+      " f0=[" + juce::String(plan->f0StartFrame) + "," +
+      juce::String(plan->f0EndFrame) + ")");
+  runIncrementalPass(project, onProgress, onComplete, pendingRerun,
+                     isPluginMode, std::move(plan), 0);
+}
+
+void EditorController::runIncrementalPass(
+    Project &project,
+    const std::function<void(const juce::String &)> &onProgress,
+    const std::function<void(bool)> &onComplete,
+    std::atomic<bool> &pendingRerun, bool isPluginMode,
+    std::shared_ptr<const renderPlan::Plan> plan, int blockIndex)
+{
+  auto *synth = incrementalSynth.get();
+  if (!synth || !vocoder)
+  {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+
+  auto &audioData = project.getAudioData();
+  if (audioData.melSpectrogram.empty() || audioData.f0.empty())
+  {
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+
+  const bool hasBlock = plan && blockIndex >= 0 &&
+                        blockIndex < static_cast<int>(plan->blocks.size());
+  if (!hasBlock && !project.hasDirtyNotes() && !project.hasF0DirtyRange())
+  {
+    if (onComplete)
+      onComplete(true);
+    return;
+  }
+
   if (!vocoder->isReady())
   {
     auto modelPath = PlatformPaths::getVocoderModelFile();
@@ -628,37 +679,21 @@ void EditorController::resynthesizeIncrementalAsync(
     {
       juce::Timer::callAfterDelay(
           50, [this, projectPtr = &project, onProgress, onComplete,
-               pending = &pendingRerun, isPluginMode]() {
-            resynthesizeIncrementalAsync(*projectPtr, onProgress, onComplete,
-                                         *pending, isPluginMode);
+               pending = &pendingRerun, isPluginMode, plan, blockIndex]() {
+            runIncrementalPass(*projectPtr, onProgress, onComplete, *pending,
+                               isPluginMode, plan, blockIndex);
           });
       return;
     }
   }
 
-  if (project.hasEditedBlockPlan() && !synth->hasRenderRangeOverrideValue())
-  {
-    int blockStart = -1, blockEnd = -1;
-    if (project.nextEditedBlockRange(blockStart, blockEnd))
-      synth->setRenderRangeOverride(blockStart, blockEnd);
-  }
-
-  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())  {
-    // D-285: sin trabajo no hay fallo (ver la comprobacion temprana). Este
-    // punto solo se alcanza si el proyecto se limpio mientras cargaba el
-    // vocoder; tambien es un no-op correcto.
-    if (onComplete)
-      onComplete(true);
-    return;
-  }
-
-  auto [dirtyStart, dirtyEnd] = project.getDirtyFrameRange();
-  if (dirtyStart < 0 || dirtyEnd < 0)
-  {
-    if (onComplete)
-      onComplete(false);
-    return;
-  }
+  // D-292: el bloque del plan manda. El override D-291 se limpia siempre: el
+  // camino de producción no lo usa y no puede quedar uno de una cadena previa.
+  if (hasBlock)
+    synth->setRenderPlanBlock(plan->blocks[static_cast<size_t>(blockIndex)]);
+  else
+    synth->clearRenderPlanBlock();
+  synth->clearRenderRangeOverride();
 
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
@@ -679,24 +714,9 @@ void EditorController::resynthesizeIncrementalAsync(
           onProgress(message);
       },
       [this, projectPtr = &project, pending = &pendingRerun, onComplete,
-       audioEnginePtr, isPluginMode](bool success)
+       audioEnginePtr, isPluginMode, plan, blockIndex,
+       hasBlock](bool success)
       {
-        // D-197: one render per silence-bounded edited block. The project keeps
-        // every edited note dirty; the block walk only chooses the window.
-        if (success && projectPtr->hasEditedBlockPlan())
-        {
-          int blockStart = -1, blockEnd = -1;
-          auto *s = incrementalSynth.get();
-          if (s && projectPtr->nextEditedBlockRange(blockStart, blockEnd))
-          {
-            s->setRenderRangeOverride(blockStart, blockEnd);
-            resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
-                                         *pending, isPluginMode);
-            return;
-          }
-          if (s)
-            s->clearRenderRangeOverride();
-        }
         if (!success)
         {
           if (pending->exchange(false))
@@ -710,6 +730,18 @@ void EditorController::resynthesizeIncrementalAsync(
           {
             onComplete(false);
           }
+          return;
+        }
+
+        // D-292: un bloque del plan por pase, con el indice local de esta
+        // cadena. Una edicion que llegue mientras tanto no reescribe el plan:
+        // su trabajo se ve al cerrar (finishBackendRender) y arranca otra
+        // cadena con un plan nuevo.
+        if (hasBlock &&
+            blockIndex + 1 < static_cast<int>(plan->blocks.size()))
+        {
+          runIncrementalPass(*projectPtr, nullptr, onComplete, *pending,
+                             isPluginMode, plan, blockIndex + 1);
           return;
         }
 
