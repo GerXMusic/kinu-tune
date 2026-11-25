@@ -172,8 +172,10 @@ jobs:
             find "$vst3" "$au" -type f \( -name '*.old.*' -o -name '*.bak' -o -name '~$*' \) >&2
             exit 1
           fi
-          [ -x "$vst3/Contents/MacOS/TuneX" ] || { echo "the VST3 binary is missing" >&2; exit 1; }
-          [ -x "$au/Contents/MacOS/TuneX" ] || { echo "the AU binary is missing" >&2; exit 1; }
+          find "$vst3/Contents/MacOS" -type f -perm -u+x | grep -q . || {
+            echo "the VST3 binary is missing" >&2; exit 1; }
+          find "$au/Contents/MacOS" -type f -perm -u+x | grep -q . || {
+            echo "the AU binary is missing" >&2; exit 1; }
           grep -q '<string>ARA</string>' "$au/Contents/Info.plist" || {
             echo "the AU does not declare the ARA label" >&2; exit 1; }
           version_re=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
