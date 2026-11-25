@@ -102,11 +102,14 @@ certificados en el proyecto; la firma queda fuera del alcance por ahora.
   limpio, cargó el plugin, desinstaló y encontró **el mismo SHA**. El `.exe` y el zip
   suelto llevan el mismo VST3. CI del código (`45596396776`): 3 shards de
   `windows-tests` + `windows-vst3-check` verdes.
-- **macOS arm64.** Run `45588294186`: build verde; `.pkg` `1AD005776A3EC20E3B8A6ECDEC5DBE6C7F5F6EB6FFA8EA1158C76196522F7619`
-  (174.723.023 B). Check de instalación + preinstall + `pluginval` pendiente de runner
-  (D-284); el workflow vigente lo hace en el mismo job (`1bad85e`), pero el pool canceló
-  todos los intentos. El `.pkg` no se usa hasta que ese check pase.
-- **SHA-256.** En `SHA256SUMS.txt`; macOS pendiente del check.
+- **macOS arm64.** Run `45609030006` **verde** (`fb90961`): el workflow construyó y
+  verificó en el mismo job. El `.pkg` es
+  `6D7843AE092FAB12F44AF8F3D7B677922E00CED28BB6A83C60971FF2BD21F974` (174.723.046 B);
+  se instaló en el home, con VST3/AU/ARA/modelos/licencias y `moduleinfo` 0.1.6, el
+  `TuneX.old.vst3`/`TuneX.old.component` y los `STALE.txt` sembrados **no sobrevivieron**
+  y `pluginval` strictness 5 dio **SUCCESS**. `pkgutil` → `no signature`; bundles `adhoc`.
+- **SHA-256.** En `SHA256SUMS.txt`: `.exe` `1088C9B4…`, zip VST3 `865FC426…`, modelos
+  `15E3242F…`, `.pkg` `6D7843AE…`. El VST3 del `.exe` y del zip es `DECB3510…`.
 
 ## Licencias
 
