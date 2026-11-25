@@ -1,12 +1,18 @@
-name: Windows installer (exe)
+# Builds the production Windows VST3 (DirectML) ONCE, checks it, zips those
+# exact bytes and builds the installer FROM that zip. The VST3 inside the .exe
+# is therefore byte-identical to the standalone zip, and check-installer.ps1
+# compares the installed DLL SHA with the zip's SHA.
+#
+# Both artifacts are uploaded for the release:
+#   - TuneX-vst3-Windows-x64  (TuneX.vst3.zip, plugin only)
+#   - TuneX-Windows-x64-Setup (TuneX-<version>-Windows-x64-Setup.exe)
+name: Windows release (DirectML VST3 + installer)
 
-# Fabrica el instalador .exe (Inno Setup): plugin VST3, modelos, licencias y el
-# Visual C++ Redistributable. Se lanza a mano desde Actions.
 on:
   workflow_dispatch:
 
 jobs:
-  windows-exe:
+  windows-release:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -57,6 +63,9 @@ jobs:
           $files = @(Get-ChildItem $dllDir -Filter *.vst3 -File)
           if ($files.Count -ne 1) { throw "el bundle tiene $($files.Count) .vst3 en x86_64-win" }
           if ($files[0].Name -ne 'TuneX.vst3') { throw "el .vst3 se llama $($files[0].Name)" }
+          $backups = @(Get-ChildItem (Join-Path $rel 'TuneX.vst3') -Recurse -File |
+                       Where-Object { $_.Name -match '\.old(\.|$)|\.bak|~$' })
+          if ($backups.Count -gt 0) { throw "el bundle lleva backups: $($backups.FullName -join ', ')" }
           $version = (Select-String -Path CMakeLists.txt -Pattern '^project\(PitchNet VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
           if (-not $version) { throw 'no pude leer la version' }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -64,31 +73,91 @@ jobs:
           Get-ChildItem $rel | Select-Object Name
           "release: {0:N1} MB" -f ((Get-ChildItem $rel -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 
+      # The zip is the tested artifact. The installer is assembled FROM it, so
+      # the VST3 inside the .exe is the exact same file.
+      - name: Zip the VST3 and stage the installer from the zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
+          Compress-Archive -Path 'dist/release/TuneX.vst3' -DestinationPath 'dist/TuneX.vst3.zip' -CompressionLevel Optimal
+          $stage = 'dist/installer-stage'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Expand-Archive -Path 'dist/TuneX.vst3.zip' -DestinationPath $stage
+          Copy-Item 'dist/release/models' (Join-Path $stage 'models') -Recurse -Force
+          Copy-Item 'dist/release/LICENSE','dist/release/THIRD_PARTY_NOTICES.txt','dist/release/MODIFICATIONS.md' $stage -Force
+          Copy-Item 'dist/release/licenses' (Join-Path $stage 'licenses') -Recurse -Force
+          $dll = Join-Path $stage 'TuneX.vst3/Contents/x86_64-win/TuneX.vst3'
+          if (-not (Test-Path $dll)) { throw "no existe el VST3 descomprimido: $dll" }
+          $sha = (Get-FileHash $dll -Algorithm SHA256).Hash
+          "VST3_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "VST3 from the zip: $dll"
+          Write-Host "VST3 SHA-256: $sha"
+          "zip: {0:N1} MB" -f ((Get-Item 'dist/TuneX.vst3.zip').Length / 1MB)
+
+      - name: Start Docker
+        shell: pwsh
+        run: |
+          $svc = Get-Service docker -ErrorAction SilentlyContinue
+          if (-not $svc) {
+            Get-Service | Where-Object { $_.Name -match 'docker' } | Format-Table -AutoSize
+            throw "no docker service on this runner"
+          }
+          if ($svc.Status -ne 'Running') { Start-Service docker }
+          for ($i = 0; $i -lt 60; $i++) {
+            docker info *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 2
+          }
+          docker info
+
+      - name: Check the VST3 from the zip like a host does
+        shell: pwsh
+        run: ./tools/windows/check-vst3.ps1 -Vst3 "dist/installer-stage/TuneX.vst3"
+
       - name: Download the Visual C++ Redistributable
         shell: pwsh
         run: |
           curl.exe -sSfL -o vc_redist.x64.exe https://aka.ms/vc14/vc_redist.x64.exe
-          "redist: {0:N1} MB" -f ((Get-Item vc_redist.x64.exe).Length / 1MB)
+          $sig = Get-AuthenticodeSignature vc_redist.x64.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "vc_redist.x64.exe signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          "redist: {0:N1} MB, signed by $($sig.SignerCertificate.Subject)" -f ((Get-Item vc_redist.x64.exe).Length / 1MB)
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
 
-      - name: Build the .exe
+      - name: Build the .exe from the zip
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "no encuentro ISCC en $iscc" }
-          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$PWD\dist\release" "/DRedist=$PWD\vc_redist.x64.exe" "/O$PWD\Output" "packaging\windows\TuneX.iss"
+          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$PWD\dist\installer-stage" "/DRedist=$PWD\vc_redist.x64.exe" "/O$PWD\Output" "packaging\windows\TuneX.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC fallo con $LASTEXITCODE" }
           $setup = Get-ChildItem 'Output' -Filter *.exe | Select-Object -First 1
           if (-not $setup) { throw 'no se genero ningun .exe' }
           "SETUP=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "setup: {0:N1} MB" -f ($setup.Length / 1MB)
-          "SHA256 $((Get-FileHash $setup.FullName -Algorithm SHA256).Hash)"
+          "setup SHA-256: $((Get-FileHash $setup.FullName -Algorithm SHA256).Hash)"
+
+      - name: Check the installer on a clean Windows
+        shell: pwsh
+        run: ./tools/windows/check-installer.ps1 -Setup "$env:SETUP" -ExpectedSha "$env:VST3_SHA"
 
       - name: Upload the .exe
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: TuneX-Windows-x64-Setup
           path: Output/TuneX-*-Windows-x64-Setup.exe
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload the VST3 zip
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TuneX-vst3-Windows-x64
+          path: dist/TuneX.vst3.zip
+          retention-days: 7
           if-no-files-found: error
