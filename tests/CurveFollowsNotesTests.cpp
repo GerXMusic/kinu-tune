@@ -12,6 +12,7 @@
 // clic (afinar al 100 %), inspector y Cortar/Unir.
 #include "../Source/Models/Project.h"
 #include "../Source/UI/PianoRollComponent.h"
+#include "../Source/UI/PianoRoll/PitchCurveRenderer.h"
 #include "../Source/Undo/PitchUndoManager.h"
 #include "../Source/Utils/Constants.h"
 #include "../Source/Utils/PitchCurveProcessor.h"
@@ -247,6 +248,43 @@ int main() {
     const float desync = project.maxCurveNotesDisagreement();
     std::printf("D-286 nota corta (10 frames) entre saltos: %.4f st\n", desync);
     CHECK(desync <= kTolerance);
+  }
+
+  // --- D-303: el centro de render no se cuenta como desfase ----------------
+  // Una mitad de un corte muestra un centro (media local) distinto del que usa
+  // el motor para la base. Con el centro visible, esa nota dispararia la
+  // reparacion al cargar; la base se compara con el centro de render.
+  {
+    Fixture f;
+    f.note(0).setRenderCenterOffset(-0.4f);
+    PitchCurveProcessor::rebuildBaseFromNotes(f.project);
+    std::printf("D-303 nota con renderCenterOffset -0,4 st\n");
+    checkCurveFollows(f, "D-303 renderCenterOffset");
+  }
+
+  // --- D-306: inclinar no mueve el cuerpo, la base resta la media del tilt --
+  {
+    Fixture f;
+    const float beforeMidi = f.note(1).getMidiNote();
+    f.note(1).setTiltLeft(1.5f);
+    f.note(1).setTiltRight(-1.0f);
+    PitchCurveProcessor::rebuildBaseFromNotes(f.project);
+    std::printf("D-306 nota inclinada: cuerpo %.2f -> %.2f\n", beforeMidi,
+                f.note(1).getMidiNote());
+    CHECK(std::abs(f.note(1).getMidiNote() - beforeMidi) <= 1.0e-4f);
+    checkCurveFollows(f, "D-306 nota inclinada");
+  }
+
+  // --- D-304: la curva es una sola polilinea entre notas contiguas ---------
+  // Regla pura que usa el pintor: sin hueco, misma region y la nota anterior
+  // dibujada => no se corta el trazo.
+  {
+    CHECK(!PitchCurveRenderer::shouldBreakPolyline(true, 100.0f, 100.0f, 0, 0));
+    CHECK(!PitchCurveRenderer::shouldBreakPolyline(true, 100.0f, 100.4f, 0, 0));
+    CHECK(PitchCurveRenderer::shouldBreakPolyline(true, 100.0f, 130.0f, 0, 0));
+    CHECK(PitchCurveRenderer::shouldBreakPolyline(true, 100.0f, 100.0f, 0, 1));
+    CHECK(PitchCurveRenderer::shouldBreakPolyline(false, 100.0f, 100.0f, 0, 0));
+    std::printf("D-304 regla de polilinea: contiguas 1 trazo, hueco/region 2\n");
   }
 
   std::printf("CurveFollowsNotesTests: en verde\n");

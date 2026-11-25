@@ -168,7 +168,21 @@ public:
     void setOriginalMidiNote(float note) { originalMidiNote = note; }
     float getPitchOffset() const { return pitchOffset; }
     void setPitchOffset(float offset) { pitchOffset = offset; }
+    // Centro visible/editable: lo que la nota muestra y lo que editan los
+    // gestos de altura.
     float getAdjustedMidiNote() const { return midiNote + pitchOffset; }
+    // D-303: centro de RENDER, separado del visible. Al cortar una nota cada
+    // mitad se recentra en la media local de la curva blanca (centro visible),
+    // pero el motor tiene que seguir construyendo su base desde el centro que
+    // tenia la nota original; si no, el corte moveria el audio (el escalon de
+    // 14,6 c de D-285). En una nota normal vale 0 y todo queda como hoy.
+    float getRenderCenterOffset() const { return renderCenterOffset; }
+    void setRenderCenterOffset(float offset) { renderCenterOffset = offset; }
+    float getRenderMidiNote() const { return midiNote + renderCenterOffset; }
+    float getRenderAdjustedMidiNote() const
+    {
+        return midiNote + pitchOffset + renderCenterOffset;
+    }
     float getFormantShift() const { return formantShift; }
     void setFormantShift(float st) { formantShift = juce::jlimit(-12.0f, 12.0f, st); }
     float getVolumeDb() const { return volumeDb; }
@@ -350,6 +364,9 @@ private:
     float lastNonMacroMidiNote = 60.0f;
     float originalMidiNote = 60.0f;
     float pitchOffset = 0.0f;
+    // D-303: separa el centro visible (midiNote) del centro que usa el motor
+    // para construir la base. Solo el corte lo pone distinto de 0.
+    float renderCenterOffset = 0.0f;
     float formantShift = 0.0f; // Semitones, independent of F0
     float sourceAmplitude = 0.0f;
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)

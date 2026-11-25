@@ -46,6 +46,20 @@ void PitchCurveRenderer::invalidateBasePitchCache()
   cachedBasePitch.shrink_to_fit();
 }
 
+bool PitchCurveRenderer::shouldBreakPolyline(bool hasPreviousNote,
+                                             float previousVisualEndFrame,
+                                             float visualStartFrame,
+                                             int previousRegion,
+                                             int currentRegion,
+                                             float toleranceFrames)
+{
+  if (!hasPreviousNote)
+    return true; // first visible note, or the previous one was culled
+  if (previousRegion != currentRegion)
+    return true;
+  return std::abs(visualStartFrame - previousVisualEndFrame) > toleranceFrames;
+}
+
 void PitchCurveRenderer::updateBasePitchCacheIfNeeded()
 {
   if (!project)
@@ -79,9 +93,15 @@ void PitchCurveRenderer::updateBasePitchCacheIfNeeded()
       {
         if (!note.isRest())
         {
+          // D-303: same base center the audio uses (PitchCurveProcessor's
+          // collectNoteSegments): render center minus the tilt mean.
+          const float audioCenter = note.getMidiNote() + note.getPitchOffset() +
+                                    note.getRenderCenterOffset();
           noteSegments.push_back(
-              {note.getStartFrame(), note.getEndFrame(), note.getMidiNote(),
-               note.getAdjustedMidiNote() - note.getOriginalMidiNote()});
+              {note.getStartFrame(), note.getEndFrame(),
+               audioCenter -
+                   (note.getTiltLeft() + note.getTiltRight()) / 2.0f,
+               audioCenter - note.getOriginalMidiNote()});
         }
       }
 
@@ -179,6 +199,11 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
     bool hasPreviousNote = false;
     float previousVisualEndFrame = -1.0f;
     int previousRegion = -1;
+    // D-304: una sola polilinea mientras las notas sean contiguas y de la misma
+    // region. previousFinalMidi sobrevive a la frontera para que el filtro de
+    // saltos (>0,75 st) tambien actue ahi.
+    float previousFinalMidi = -1.0f;
+    const bool drawingPreview = params.midiCurveOverride != nullptr;
 
     // Only build path geometry for notes that can touch the viewport. Without
     // this, every repaint (drag, zoom, scroll) walked and stroked the pitch
@@ -212,6 +237,7 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
           // across the skipped (off-screen) span.
           strokeCurrentPath();
           hasPreviousNote = false;
+          previousFinalMidi = -1.0f;
           continue;
         }
       }
@@ -222,34 +248,20 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
       const float visualStartFrame = note.getVisualStartFrame();
       const float visualEndFrame = note.getVisualEndFrame();
       const int currentRegion = getRegionIndex(note);
-      // Melodyne draws one line per note, inside the note's own semitone row.
-      juce::ignoreUnused(currentRegion);
 
-      // Flush the previous note before changing the clip. The curve of each
-      // note is clipped to its own row: the composed pitch can jump octaves
-      // at boundaries and those spikes used to run across the whole canvas.
-      strokeCurrentPath();
-
-      const float noteLeftPx =
-          framesToSeconds(std::min(visualStartFrame, visualEndFrame)) *
-          pixelsPerSecond;
-      const float noteRightPx =
-          framesToSeconds(std::max(visualStartFrame, visualEndFrame)) *
-          pixelsPerSecond;
-      // Each note's contour is clipped to its own horizontal span only. A real
-      // portamento can leave the note's semitone row by many semitones (the
-      // user saw it cut at the row); the row clip was also what made the drawn
-      // preview look like a broken F0. Vertical outliers are handled by the
-      // path break below, not by hiding the part of the curve outside the row.
-      const bool drawingPreview = params.midiCurveOverride != nullptr;
-      const auto canvasClip = g.getClipBounds();
-      const juce::Rectangle<int> curveClip(
-          static_cast<int>(std::floor(std::min(noteLeftPx, noteRightPx))) - 1,
-          canvasClip.getY(),
-          static_cast<int>(std::ceil(std::abs(noteRightPx - noteLeftPx))) + 2,
-          canvasClip.getHeight());
-      juce::Graphics::ScopedSaveState noteClip(g);
-      g.reduceClipRegion(curveClip);
+      // D-304: la curva compuesta se dibuja continua entre notas contiguas
+      // ("Las notas de la melodia original son continuas en la vista normal").
+      // Solo se corta en un hueco, al cambiar de region o cuando la nota
+      // anterior se salto por culling. Antes se recortaba cada nota a su propio
+      // tramo y el trazo se partia en cada frontera, incluso donde la altura
+      // era la misma.
+      if (shouldBreakPolyline(hasPreviousNote, previousVisualEndFrame,
+                              visualStartFrame, previousRegion,
+                              currentRegion))
+      {
+        strokeCurrentPath();
+        previousFinalMidi = -1.0f;
+      }
 
       // Clip long notes to the viewport before constructing the path.
       const int sourceLength = std::max(1, endFrame - startFrame);
@@ -266,7 +278,6 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         lastVisible = std::min(endFrame, startFrame + static_cast<int>(
             std::ceil((right - visualStartFrame) / visualLength * sourceLength)) + 1);
       }
-      float previousFinalMidi = -1.0f;
       for (int i = firstVisible; i < lastVisible; ++i)
       {
         float finalMidi = 0.0f;
@@ -329,7 +340,9 @@ void PitchCurveRenderer::draw(juce::Graphics &g, const Params &params)
         }
       }
 
-      strokeCurrentPath();
+      // D-304: do not flush here. The polyline continues into the next note
+      // when it is contiguous; it is only stroked at a gap, a region change,
+      // an unvoiced frame or a real jump.
       hasPreviousNote = true;
       previousVisualEndFrame = visualEndFrame;
       previousRegion = currentRegion;

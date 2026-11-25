@@ -68,10 +68,9 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
     if (note)
     {
       auto params = TransformParams::fromNote(*note);
-      // Store baseline midiNote (without tilt mean shift)
-      // This ensures tilt adjustments are absolute, not cumulative
-      const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-      params.midiNote = note->getMidiNote() - currentTiltMean;
+      // D-306: inclinar ya no mueve el cuerpo, asi que el punto de partida es
+      // el centro visible tal cual. Antes se guardaba el midiNote sin la media
+      // del tilt y cada gesto la volvia a sumar.
       originalParams.push_back(params);
     }
     else
@@ -133,9 +132,10 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
     return true;
   }
 
-  // The drag previews through rebuildDeltaForNotes(), which leaves basePitch
-  // as it was. Commit through the same full rebuild PitchToolAction's undo and
-  // redo use, so the edit renders from the curves its undo would reproduce.
+  // The drag previews through rebuildDeltaForNotes() (and, for tilt, through
+  // rebuildBaseFromNotesForDrag() because the base subtracts the tilt mean).
+  // Commit through the same full rebuild PitchToolAction's undo and redo use,
+  // so the edit renders from the curves its undo would reproduce.
   if (project)
   {
     for (auto* note : affectedNotes)
@@ -155,15 +155,9 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
       newParams.emplace_back();
   }
 
-  // Fix oldParams to store live midiNote (with tilt mean) for correct undo/redo
-  // originalParams stores baseline midiNote (without tilt mean) for applyOperation,
-  // but undo/redo needs the live midiNote value
+  // D-306: inclinar ya no toca midiNote, asi que los parametros capturados al
+  // empezar el gesto SON el estado anterior (no hay media del tilt que sumar).
   std::vector<TransformParams> undoOldParams = originalParams;
-  for (size_t i = 0; i < undoOldParams.size(); ++i)
-  {
-    const float tiltMean = (undoOldParams[i].tiltLeft + undoOldParams[i].tiltRight) / 2.0f;
-    undoOldParams[i].midiNote += tiltMean;
-  }
 
   auto action = std::make_unique<PitchToolAction>(
       project, affectedNotes, undoOldParams, newParams, onRangeChanged);
@@ -220,9 +214,9 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     origParams.applyToNote(*note);
 
     // The pitch when the gesture began, and the pitch this handle moves the
-    // segment to (written through NotePitch after the switch).
-    const float origLiveMidi =
-        origParams.midiNote + (origParams.tiltLeft + origParams.tiltRight) * 0.5f;
+    // segment to (written through NotePitch after the switch). D-306: tilt is
+    // the only gesture that no longer writes the body, so liveMidi stays put.
+    const float origLiveMidi = origParams.midiNote;
     float liveMidi = origLiveMidi;
 
     // Apply new transformation by updating the appropriate parameter
@@ -230,21 +224,14 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     {
       case PitchToolHandles::HandleType::TiltLeft:
       {
-        // Drag UP = positive semitoneDelta = left edge goes UP
-        const float amount = semitoneDelta;
-        note->setTiltLeft(origParams.tiltLeft + amount);
-        // Calculate tilt mean shift
-        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + newTiltMean;
+        // Drag UP = positive semitoneDelta = left edge goes UP. The curve
+        // rotates around the body: no midiNote write (D-306).
+        note->setTiltLeft(origParams.tiltLeft + semitoneDelta);
         break;
       }
       case PitchToolHandles::HandleType::TiltRight:
       {
-        const float amount = semitoneDelta;
-        note->setTiltRight(origParams.tiltRight + amount);
-        // Calculate tilt mean shift
-        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + newTiltMean;
+        note->setTiltRight(origParams.tiltRight + semitoneDelta);
         break;
       }
       case PitchToolHandles::HandleType::Formant:
@@ -262,11 +249,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Additive accumulation from original value (consistent with tilt handles)
         // Drag UP increases modulation; drag DOWN decreases it.
         const float dragDelta = -dragDeltaY / 100.0f;
-        const float newScale = origParams.vibrato + dragDelta;
-        note->setVibrato(newScale);
-        // Preserve tilt offset when adjusting vibrato.
-        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + currentTiltMean;
+        note->setVibrato(origParams.vibrato + dragDelta);
         break;
       }
       case PitchToolHandles::HandleType::CorrectPitch:
@@ -276,8 +259,9 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // is removed. Dragging up adds to the share the segment had when the
         // drag began, 60 px for the full correction. The reference itself
         // is left alone, so the slider shows the same value afterwards.
-        const float tiltMean = (origParams.tiltLeft + origParams.tiltRight) / 2.0f;
-        const float startMidi = origParams.midiNote + tiltMean;
+        // D-306: the visible center IS the pitch (the tilt mean is no longer
+        // folded into midiNote), so the reference starts at origParams.midiNote.
+        const float startMidi = origParams.midiNote;
         const int referenceHz = project->getPitchReferenceHz();
         float source = origParams.correctionSource;
         // A pitch that is not a 0-100% correction of its reference (older
@@ -303,9 +287,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // 5px per additional frame, range [5, 50]
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(dragDeltaX / 5.0f));
         note->setSmoothLeftFrames(transitionFrames);
-        // Preserve tilt offset when adjusting smoothing
-        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + currentTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::SmoothRight:
@@ -314,9 +295,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Use -dragDeltaX so LEFT drag increases frames
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(-dragDeltaX / 5.0f));
         note->setSmoothRightFrames(transitionFrames);
-        // Preserve tilt offset when adjusting smoothing
-        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + currentTiltMean;
         break;
       }
       case PitchToolHandles::HandleType::None:
@@ -325,8 +303,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     }
 
     // The other handles move the segment as an edit, which keeps the Correct
-    // Pitch reference by the shared rule (see NotePitch).
-    if (type != PitchToolHandles::HandleType::CorrectPitch)
+    // Pitch reference by the shared rule (see NotePitch). Tilt does not move
+    // the body, so it no longer goes through NotePitch (D-306).
+    if (type != PitchToolHandles::HandleType::CorrectPitch &&
+        std::abs(liveMidi - origLiveMidi) > 1.0e-4f)
       NotePitch::applyEdit(*note, *project, origParams.correctionSource,
                            origLiveMidi, liveMidi);
 
@@ -339,9 +319,16 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     return;
   }
 
-  // NON-DESTRUCTIVE: Recompose only the affected notes' delta + f0
-  // This is much faster than rebuildBaseFromNotes() which rebuilds everything
-  PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
+  // NON-DESTRUCTIVE preview. D-306: tilt also changes the base (the base
+  // subtracts the tilt mean and the curve rotates), so it needs the base
+  // rebuild; the rest only recompose their delta + f0.
+  const bool tiltPreview =
+      type == PitchToolHandles::HandleType::TiltLeft ||
+      type == PitchToolHandles::HandleType::TiltRight;
+  if (tiltPreview)
+    PitchCurveProcessor::rebuildBaseFromNotesForDrag(*project, notes);
+  else
+    PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
   // Mark dirty range for synthesis
   if (!notes.empty())
   {
@@ -370,12 +357,9 @@ void PitchToolController::cancel()
   {
     if (i < originalParams.size() && affectedNotes[i])
     {
-      const auto& params = originalParams[i];
-      params.applyToNote(*affectedNotes[i]);
-      // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
-      const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;
-      NotePitch::restore(*affectedNotes[i], params.midiNote + tiltMean,
-                         params.correctionSource);
+      // D-306: params.midiNote is the live body (tilt no longer migrates into
+      // it), so applyToNote restores the pitch and the reference in one go.
+      originalParams[i].applyToNote(*affectedNotes[i]);
     }
   }
 

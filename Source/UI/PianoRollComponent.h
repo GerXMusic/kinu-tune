@@ -86,7 +86,7 @@ public:
   // Inspector sliders (VariAudio section). They act on the selected
   // segments, or on every segment when nothing is selected; one slider
   // gesture is one undo step.
-  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
+  enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight, Tilt };
   // D-279: Melodyne's Reset Individual Edits categories.
   enum class NoteRestoreMode { Pitch, Formant, Amplitude, Timing, All };
   std::vector<Note *> getInspectorTargets() const;

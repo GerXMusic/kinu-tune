@@ -43,8 +43,9 @@ std::vector<float> Note::computeF0FromDelta() const
         // Get delta pitch for this frame (or 0 if not available)
         float delta = (i < static_cast<int>(activeDelta.size())) ? activeDelta[i] : 0.0f;
 
-        // Actual MIDI = base + offset + delta
-        float actualMidi = midiNote + pitchOffset + delta;
+        // Actual MIDI = render center + delta. D-303: el motor usa el centro de
+        // render, no el visible, para que un corte no mueva el audio.
+        float actualMidi = getRenderAdjustedMidiNote() + delta;
 
         // Convert to Hz
         result[i] = midiToFreq(actualMidi);
@@ -65,7 +66,9 @@ bool Note::isNeutralForOriginalWaveform() const
 
     return ! muted &&
            startFrame == srcStartFrame && endFrame == srcEndFrame &&
-           std::abs(midiNote - originalMidiNote) <= kPitchEpsilon &&
+           // D-303: la neutralidad se mide contra el centro de render; el
+           // pitchOffset se comprueba aparte justo debajo.
+           std::abs(getRenderMidiNote() - originalMidiNote) <= kPitchEpsilon &&
            !hasBakedDeltaPitch() &&
            std::abs(pitchOffset) <= kPitchEpsilon &&
            std::abs(formantShift) <= kPitchEpsilon &&

@@ -92,12 +92,16 @@ namespace
             BasePitchCurve::NoteSegment seg;
             seg.startFrame = note.getStartFrame();
             seg.endFrame = note.getEndFrame();
+            // D-303: la base sale del centro de RENDER (visible + offset), que
+            // es el que el motor siempre uso. Una nota cortada tiene un centro
+            // visible nuevo (la media local) y conserva el de audio original.
+            const float audioCenter = note.getMidiNote() + note.getPitchOffset() +
+                                      note.getRenderCenterOffset();
             // Base pitch already includes per-note offset
-            seg.midiNote = note.getMidiNote() + note.getPitchOffset()
+            seg.midiNote = audioCenter
                          - (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
             // D-182: how far this note was moved from where it was sung.
-            seg.shiftSemitones =
-                note.getAdjustedMidiNote() - note.getOriginalMidiNote();
+            seg.shiftSemitones = audioCenter - note.getOriginalMidiNote();
             segments.push_back(seg);
         }
 
@@ -155,9 +159,16 @@ namespace
                             ordered[i - 1]->getEndFrame();
             if (gap > kEditedBoundaryMaxGapFrames)
                 continue;
-            const float left = ordered[i - 1]->getAdjustedMidiNote() -
+            // D-303: the shift is measured between the two render centers, not
+            // the visible ones: a cut note's half carries its own visible
+            // center but the same audio center as the original.
+            const float left = ordered[i - 1]->getMidiNote() +
+                               ordered[i - 1]->getPitchOffset() +
+                               ordered[i - 1]->getRenderCenterOffset() -
                                ordered[i - 1]->getOriginalMidiNote();
-            const float right = ordered[i]->getAdjustedMidiNote() -
+            const float right = ordered[i]->getMidiNote() +
+                                ordered[i]->getPitchOffset() +
+                                ordered[i]->getRenderCenterOffset() -
                                 ordered[i]->getOriginalMidiNote();
             const bool anyEdited =
                 std::abs(left) > 0.001f || std::abs(right) > 0.001f;

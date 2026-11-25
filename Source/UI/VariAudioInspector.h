@@ -24,8 +24,10 @@ class VariAudioInspector : public juce::Component, private juce::Timer
 public:
     static constexpr int preferredWidth = 240;
 
-    // Slider order matches PianoRollComponent::InspectorParam.
-    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight };
+    // Slider order matches PianoRollComponent::InspectorParam. Tilt (D-307) is
+    // the symmetric control: it moves the two tilts in opposite directions and
+    // keeps each note's common part.
+    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight, Tilt };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };
 
@@ -159,7 +161,7 @@ private:
     juce::ComboBox engineBox;
     juce::Label engineStatusLabel; // D-185: effective engine and refusal cause
     juce::Label targetLabel;
-    std::array<std::unique_ptr<ValueRow>, 8> rows;
+    std::array<std::unique_ptr<ValueRow>, 9> rows;
     std::array<std::unique_ptr<DisabledRow>, 2> placeholderRows;
     juce::TextButton muteButton;
     juce::TextButton deleteButton;

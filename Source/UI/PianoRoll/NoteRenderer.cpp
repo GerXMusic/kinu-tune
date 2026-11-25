@@ -266,18 +266,16 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     if (drawHoveredBody && &note != hoveredNote)
       continue;
 
-    // Viewport culling: skip notes outside visible area. In segment style the
-    // ghost of the original position counts too.
-    const double noteStartTime = framesToSeconds(note.getVisualStartFrame());
-    const double noteEndTime = framesToSeconds(note.getVisualEndFrame());
-    const bool ghostMayShow = segmentStyle && !greyscale;
-    const double cullStart = ghostMayShow
-        ? std::min(noteStartTime, static_cast<double>(framesToSeconds(note.getSrcStartFrame())))
-        : noteStartTime;
-    const double cullEnd = ghostMayShow
-        ? std::max(noteEndTime, static_cast<double>(framesToSeconds(note.getSrcEndFrame())))
-        : noteEndTime;
-    if (cullEnd < visibleStartTime || cullStart > visibleEndTime)
+    // Viewport culling: skip notes outside visible area. D-305 removed the
+    // ghost of the original segment from the normal view, so the source frame
+    // range no longer widens the cull box there. The bypass / original-pitch
+    // views draw at source coordinates, so for them the cull box is the source
+    // span (same visible notes as before).
+    const double noteStartTime = framesToSeconds(
+        originalPitchView ? note.getSrcStartFrame() : note.getVisualStartFrame());
+    const double noteEndTime = framesToSeconds(
+        originalPitchView ? note.getSrcEndFrame() : note.getVisualEndFrame());
+    if (noteEndTime < visibleStartTime || noteStartTime > visibleEndTime)
       continue;
 
     const float x = originalPitchView
@@ -372,60 +370,6 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                      audioData.sampleRate);
         startSample = std::max(0, std::min(startSample, totalSamples - 1));
         endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
-      }
-
-      if (segmentStyle && !greyscale && drawBodies && !drawHoveredBody)
-      {
-        // Ghost of the original segment: its original pitch curve where it
-        // was analysed (timing and pitch), faint grey, so an edited segment
-        // can be brought back by eye. Only the curve, no segment box.
-        constexpr float kEps = 0.005f;
-        const bool pitchOrTimingEdited =
-            note.getStartFrame() != note.getSrcStartFrame() ||
-            note.getEndFrame() != note.getSrcEndFrame() ||
-            std::abs(note.getAdjustedMidiNote() - note.getOriginalMidiNote()) > kEps ||
-            note.hasBakedDeltaPitch() ||
-            std::abs(note.getTiltLeft()) > kEps || std::abs(note.getTiltRight()) > kEps ||
-            std::abs(note.getVibrato() - 1.0f) > kEps ||
-            std::abs(note.getPitchDrift() - 1.0f) > kEps ||
-            std::abs(note.getDeltaScale() - 1.0f) > kEps ||
-            std::abs(note.getDeltaOffset()) > kEps;
-        if (pitchOrTimingEdited)
-        {
-          const float ghostX = static_cast<float>(
-              framesToSeconds(note.getSrcStartFrame()) * pixelsPerSecond);
-
-          const auto& originalDelta = note.getOriginalDeltaPitch();
-          const auto& originalF0 = note.getF0Values();
-          if (!originalDelta.empty())
-          {
-            juce::Path curve;
-            bool penDown = false;
-            const float frameWidth = static_cast<float>(
-                framesToSeconds(1) * pixelsPerSecond);
-            for (size_t i = 0; i < originalDelta.size(); ++i)
-            {
-              const bool voiced = originalF0.size() != originalDelta.size() ||
-                                  originalF0[i] > 0.0f;
-              if (!voiced)
-              {
-                penDown = false;
-                continue;
-              }
-              const float px = ghostX + (static_cast<float>(i) + 0.5f) * frameWidth;
-              const float py = coordMapper->midiToY(note.getOriginalMidiNote() +
-                                                    originalDelta[i]) +
-                               pixelsPerSemitone * 0.5f;
-              if (!penDown)
-                curve.startNewSubPath(px, py);
-              else
-                curve.lineTo(px, py);
-              penDown = true;
-            }
-            g.setColour(juce::Colour(0xFFB0B0B0u).withAlpha(0.5f));
-            g.strokePath(curve, juce::PathStrokeType(1.0f));
-          }
-        }
       }
 
       if (segmentStyle)

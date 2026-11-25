@@ -22,7 +22,7 @@ constexpr int kToggleHeight = 24;
 constexpr int kTargetLabelHeight = 20;
 constexpr int kEngineStatusHeight = 34;
 constexpr int kValueRowHeight = 38;
-constexpr int kNumRows = 8;
+constexpr int kNumRows = 9;
 constexpr int kPlaceholderRowHeight = 34;
 constexpr int kPlaceholderBoxHeight = 2 * kPlaceholderRowHeight + 4;
 constexpr int kActionRowHeight = 26;
@@ -221,6 +221,7 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::PitchDrift:
             return juce::String(juce::roundToInt(value)) + " %";
         case Param::Formant:
+        case Param::Tilt:
         case Param::TiltLeft:
         case Param::TiltRight:
             return (value > 0.0 ? "+" : "") + juce::String(value, 1) + " st";
@@ -311,9 +312,10 @@ VariAudioInspector::VariAudioInspector()
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
     rows[4] = std::make_unique<ValueRow>(Param::Volume, -60.0, 12.0, 0.0, 0.1);
     rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
-    // Tilt moved here from the retired per-note smart-control cluster.
-    rows[6] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
-    rows[7] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
+    // D-307: one symmetric tilt control, then the two absolute edges.
+    rows[6] = std::make_unique<ValueRow>(Param::Tilt, -12.0, 12.0, 0.0, 0.1);
+    rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
+    rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
     for (auto& row : rows)
     {
         auto* r = row.get();
@@ -527,12 +529,14 @@ void VariAudioInspector::refreshLocalisedText()
     rows[3]->caption = TR("inspector.formant");
     rows[4]->caption = TR("inspector.amplitude");
     rows[5]->caption = TR("inspector.transition");
-    rows[6]->caption = TR("inspector.tilt_left");
-    rows[7]->caption = TR("inspector.tilt_right");
+    rows[6]->caption = TR("inspector.tilt");
+    rows[7]->caption = TR("inspector.tilt_left");
+    rows[8]->caption = TR("inspector.tilt_right");
     // D-225: the control belongs to the union with the next note.
     rows[5]->setTooltip(TR("inspector.transition_hint"));
-    rows[6]->setTooltip(TR("inspector.tilt_left_hint"));
-    rows[7]->setTooltip(TR("inspector.tilt_right_hint"));
+    rows[6]->setTooltip(TR("inspector.tilt_hint"));
+    rows[7]->setTooltip(TR("inspector.tilt_left_hint"));
+    rows[8]->setTooltip(TR("inspector.tilt_right_hint"));
     placeholderRows[0]->caption = TR("inspector.sibilant");
     placeholderRows[1]->caption = TR("inspector.attack_speed");
     muteButton.setButtonText(TR("inspector.mute_note"));
@@ -644,6 +648,7 @@ void VariAudioInspector::refreshFromProject()
         const auto value = getParamValue ? getParamValue(rows[i]->param) : std::nullopt;
         const bool advancedOnly = rows[i]->param == Param::Formant ||
                                   rows[i]->param == Param::Volume ||
+                                  rows[i]->param == Param::Tilt ||
                                   rows[i]->param == Param::TiltLeft ||
                                   rows[i]->param == Param::TiltRight;
         const bool enabled = value.has_value() &&

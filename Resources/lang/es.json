@@ -350,6 +350,8 @@
   "inspector.smart_default": "Por defecto",
   "inspector.smart_all_short": "Todos",
   "inspector.transition_hint": "Transición hacia la nota siguiente",
+  "inspector.tilt": "Inclinación",
+  "inspector.tilt_hint": "Inclinación simétrica: sube un borde y baja el otro sin mover el cuerpo",
   "inspector.tilt_left": "Inclinar izquierda",
   "inspector.tilt_right": "Inclinar derecha",
   "inspector.tilt_left_hint": "Tono en el borde izquierdo, en semitonos",

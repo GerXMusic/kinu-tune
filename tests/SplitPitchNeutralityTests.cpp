@@ -15,6 +15,7 @@
 //   Control: la misma medida sin cortar debe dar exactamente 0. Si el
 //   instrumento no da 0 en el control, la medida no vale.
 #include "../Source/Models/Project.h"
+#include "../Source/Models/ProjectSerializer.h"
 #include "../Source/UI/PianoRoll/NoteSplitter.h"
 #include "../Source/Undo/PitchUndoManager.h"
 #include "../Source/Utils/Constants.h"
@@ -38,6 +39,22 @@ constexpr int kEdgeFrames = 6;
 
 float cents(float hz) {
   return 1200.0f * std::log2(std::max(hz, 1.0e-6f) / 440.0f);
+}
+
+// D-303: la media local que usa el corte, calculada igual que el splitter
+// (solo tramas sonoras de la curva compuesta).
+float meanMidi(const std::vector<float> &f0, int start, int end) {
+  double sum = 0.0;
+  int count = 0;
+  for (int frame = std::max(0, start);
+       frame < std::min(end, static_cast<int>(f0.size())); ++frame) {
+    const float hz = f0[static_cast<size_t>(frame)];
+    if (hz > 0.0f && std::isfinite(hz)) {
+      sum += freqToMidi(hz);
+      ++count;
+    }
+  }
+  return count > 0 ? static_cast<float>(sum / count) : 0.0f;
 }
 
 // Dos notas contiguas con contorno de afinacion realista: la primera derivando
@@ -144,6 +161,12 @@ void testControlWithoutCut() {
 void testSplitIsPitchNeutral() {
   Project project = makeProject();
   const auto before = project.getAdjustedF0();
+  // D-303: la media local de cada mitad, medida sobre la MISMA curva que lee
+  // el splitter antes de tocar la nota.
+  const float expectLeftMean =
+      meanMidi(project.getAudioData().f0, 0, kSplitFrame);
+  const float expectRightMean =
+      meanMidi(project.getAudioData().f0, kSplitFrame, kNoteA);
 
   PitchUndoManager history(100);
   NoteSplitter splitter;
@@ -199,6 +222,20 @@ void testSplitIsPitchNeutral() {
               diff.body, diff.bodyWorstFrame, diff.seam, diff.seamWorstFrame);
   CHECK(diff.body <= 0.5f);
   juce::ignoreUnused(worstHalfSemitones);
+  // D-303: cada mitad se recentra en la media local de la curva blanca...
+  CHECK(std::abs(left.getMidiNote() - expectLeftMean) <= 0.02f);
+  CHECK(std::abs(right.getMidiNote() - expectRightMean) <= 0.02f);
+  // ...y conserva el centro de AUDIO de la nota original, que es el que
+  // construye la base: por eso el corte no mueve la afinacion.
+  CHECK(std::abs(left.getMidiNote() + left.getRenderCenterOffset() - firstMidi) <=
+        1.0e-3f);
+  CHECK(std::abs(right.getMidiNote() + right.getRenderCenterOffset() - firstMidi) <=
+        1.0e-3f);
+  std::printf("2.3 D-303 mitades visibles %.3f / %.3f | audio %.3f / %.3f "
+              "(original %.3f)\n",
+              left.getMidiNote(), right.getMidiNote(),
+              left.getMidiNote() + left.getRenderCenterOffset(),
+              right.getMidiNote() + right.getRenderCenterOffset(), firstMidi);
   // La correccion de cada mitad sigue siendo la de la nota original.
   CHECK(std::abs((left.getLastNonMacroMidiNote() - left.getMidiNote()) -
                  (firstSource - firstMidi)) <= 1.0e-3f);
@@ -219,6 +256,8 @@ void testSplitIsPitchNeutral() {
   CHECK(farAway.first == nullptr && farAway.second == nullptr);
 
   // Unir vuelve a una sola nota y no mueve la afinacion compuesta.
+  const float expectUnionMean =
+      meanMidi(project.getAudioData().f0, firstStart, firstEnd);
   CHECK(splitter.mergeNotes(mergeable.first, mergeable.second));
   CHECK(project.getNotes().size() == 2);
   PitchCurveProcessor::rebuildBaseFromNotes(project);
@@ -228,6 +267,35 @@ void testSplitIsPitchNeutral() {
               mergeDiff.body, mergeDiff.seam,
               static_cast<int>(project.getNotes().size()));
   CHECK(mergeDiff.body <= 0.5f);
+  // D-303: la nota unida muestra la media local de la union y conserva el
+  // centro de audio que tenian las dos mitades.
+  const Note &mergedNote = project.getNotes().front();
+  CHECK(std::abs(mergedNote.getMidiNote() - expectUnionMean) <= 0.02f);
+  CHECK(std::abs(mergedNote.getMidiNote() + mergedNote.getRenderCenterOffset() -
+                 firstMidi) <= 1.0e-3f);
+  std::printf("2.2 D-303 union: visible %.3f (media %.3f) | audio %.3f\n",
+              mergedNote.getMidiNote(), expectUnionMean,
+              mergedNote.getMidiNote() + mergedNote.getRenderCenterOffset());
+
+  // D-303: el centro de render sobrevive a guardar y cargar.
+  {
+    const juce::var json = ProjectSerializer::toJson(project);
+    Project loaded;
+    CHECK(ProjectSerializer::fromJson(loaded, json));
+    CHECK(loaded.getNotes().size() == project.getNotes().size());
+    for (size_t i = 0; i < loaded.getNotes().size() &&
+                       i < project.getNotes().size();
+         ++i) {
+      CHECK(std::abs(loaded.getNotes()[i].getMidiNote() -
+                     project.getNotes()[i].getMidiNote()) <= 1.0e-3f);
+      CHECK(std::abs(loaded.getNotes()[i].getRenderCenterOffset() -
+                     project.getNotes()[i].getRenderCenterOffset()) <= 1.0e-4f);
+    }
+    std::printf("2.2 D-303 json: renderCenterOffset cargado %.4f (guardado "
+                "%.4f)\n",
+                loaded.getNotes().front().getRenderCenterOffset(),
+                project.getNotes().front().getRenderCenterOffset());
+  }
 }
 
 } // namespace

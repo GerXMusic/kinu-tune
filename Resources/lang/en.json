@@ -325,6 +325,8 @@
   "inspector.volume": "Volume",
   "inspector.transition": "Transition",
   "inspector.transition_hint": "Transition into the next note",
+  "inspector.tilt": "Tilt",
+  "inspector.tilt_hint": "Symmetric tilt: one edge goes up and the other down, without moving the body",
   "inspector.tilt_left": "Tilt Left",
   "inspector.tilt_right": "Tilt Right",
   "inspector.tilt_left_hint": "Pitch at the left edge, in semitones",

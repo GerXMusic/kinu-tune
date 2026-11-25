@@ -919,6 +919,11 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("lastNonMacroMidiNote", note.getLastNonMacroMidiNote());
     obj->setProperty("originalMidiNote", note.getOriginalMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
+    // D-303: additive key, only when the cut separated the render center from
+    // the visible one. Absent (the normal case) loads as 0, so no archive
+    // version changes.
+    if (std::abs(note.getRenderCenterOffset()) > 1.0e-6f)
+        obj->setProperty("renderCenterOffset", note.getRenderCenterOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
     obj->setProperty("muted", note.isMuted());
     obj->setProperty("deleted", note.isDeleted());
@@ -999,6 +1004,10 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
                        static_cast<float>(json.getProperty("lastNonMacroMidiNote",
                                                            legacySourceMidi)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
+    // D-303: optional; absent in every project written before the field, and
+    // in every note that was never cut.
+    note.setRenderCenterOffset(
+        static_cast<float>(json.getProperty("renderCenterOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));
     note.setMuted(static_cast<bool>(json.getProperty("muted", false)));
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));

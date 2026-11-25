@@ -109,6 +109,9 @@ namespace
   {
     float midiNote;
     float pitchOffset;
+    // D-303: el centro de render tambien es parte del estado guardado; si
+    // "restablecer" lo dejara fuera, la base quedaria desplazada.
+    float renderCenterOffset;
     float volumeDb;
     float formantShift;
     float tiltLeft;
@@ -136,7 +139,9 @@ namespace
 
     static NoteEditState capture(const Note& note)
     {
-      return {note.getMidiNote(), note.getPitchOffset(), note.getVolumeDb(), note.getFormantShift(),
+      return {note.getMidiNote(), note.getPitchOffset(),
+              note.getRenderCenterOffset(), note.getVolumeDb(),
+              note.getFormantShift(),
               note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
@@ -148,8 +153,8 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-              0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+              1.0f, 0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
               note.getOriginalMidiNote(), 0, NoteEngine::Inherit, false,
               NoteEngine::Inherit};
     }
@@ -158,6 +163,7 @@ namespace
     {
       NotePitch::restore(note, midiNote, correctionSource);
       note.setPitchOffset(pitchOffset);
+      note.setRenderCenterOffset(renderCenterOffset);
       note.setVolumeDb(volumeDb);
       note.setFormantShift(formantShift);
       note.setTiltLeft(tiltLeft);
@@ -199,6 +205,7 @@ namespace
     const auto defaults = NoteEditState::defaultsFor(note);
     return current.midiNote != defaults.midiNote ||
            current.pitchOffset != defaults.pitchOffset ||
+           current.renderCenterOffset != defaults.renderCenterOffset ||
            current.transitionOutMs != defaults.transitionOutMs ||
            current.tiltLeft != defaults.tiltLeft ||
            current.tiltRight != defaults.tiltRight ||
@@ -3552,6 +3559,9 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
       return note.getTiltLeft();
     case InspectorParam::TiltRight:
       return note.getTiltRight();
+    case InspectorParam::Tilt:
+      // D-307: v = (izquierda - derecha) / 2; la parte comun no se muestra.
+      return (note.getTiltLeft() - note.getTiltRight()) * 0.5f;
   }
   return std::nullopt;
 }
@@ -3632,22 +3642,25 @@ void PianoRollComponent::setInspectorEditValue(float value)
       case InspectorParam::TiltLeft:
       case InspectorParam::TiltRight:
       {
-        // Tilt changes the segment's mean pitch, so it goes through NotePitch
-        // like the old smart-control handle: restore the gesture's baseline,
-        // write both tilt values, then carry the Correct Pitch reference.
+        // D-306: inclinar solo escribe los dos tilt; el cuerpo no se mueve y
+        // la correccion no se re-ancla. La base ya resta la media del tilt, asi
+        // que la curva rota alrededor del cuerpo.
         const auto &original = inspectorEditOldParams[i];
-        const float originalMean =
-            (original.tiltLeft + original.tiltRight) * 0.5f;
-        const float baselineMidi = original.midiNote - originalMean;
-        const float tiltLeft = inspectorEditParam == InspectorParam::TiltLeft
-                                   ? value : original.tiltLeft;
-        const float tiltRight = inspectorEditParam == InspectorParam::TiltRight
-                                    ? value : original.tiltRight;
-        note->setTiltLeft(tiltLeft);
-        note->setTiltRight(tiltRight);
-        const float newMean = (tiltLeft + tiltRight) * 0.5f;
-        NotePitch::applyEdit(*note, *project, original.correctionSource,
-                             original.midiNote, baselineMidi + newMean);
+        note->setTiltLeft(inspectorEditParam == InspectorParam::TiltLeft
+                              ? value : original.tiltLeft);
+        note->setTiltRight(inspectorEditParam == InspectorParam::TiltRight
+                               ? value : original.tiltRight);
+        break;
+      }
+      case InspectorParam::Tilt:
+      {
+        // D-307: inclinacion simetrica. v = (left - right) / 2 y cada nota
+        // conserva su parte comun, asi que en una seleccion multiple con
+        // comunes distintos cada nota gira alrededor de su propio cuerpo.
+        const auto &original = inspectorEditOldParams[i];
+        const float common = (original.tiltLeft + original.tiltRight) * 0.5f;
+        note->setTiltLeft(common + value);
+        note->setTiltRight(common - value);
         break;
       }
     }
@@ -3687,7 +3700,14 @@ void PianoRollComponent::setInspectorEditValue(float value)
   }
   else if (inspectorEditParam != InspectorParam::Volume)
   {
-    PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
+    // D-306: inclinar cambia la base (que resta la media del tilt) ademas del
+    // delta, asi que su preview reconstruye la base. El resto solo recompone.
+    if (inspectorEditParam == InspectorParam::TiltLeft ||
+        inspectorEditParam == InspectorParam::TiltRight ||
+        inspectorEditParam == InspectorParam::Tilt)
+      PitchCurveProcessor::rebuildBaseFromNotesForDrag(*project, inspectorEditNotes);
+    else
+      PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
     project->markNoteEditDirtyRange(minFrame, maxFrame);
     invalidateBasePitchCache();
     if (onPitchEdited)
@@ -3769,9 +3789,9 @@ void PianoRollComponent::endInspectorEdit()
   // lists in sync at compile time.
   static const char *names[] = {"Correct Pitch", "Flatten Curve", "Pitch Drift",
                                 "Shift Formant", "Change Volume", "Transition",
-                                "Tilt Left", "Tilt Right"};
+                                "Tilt Left", "Tilt Right", "Tilt"};
   static_assert(sizeof(names) / sizeof(names[0]) ==
-                    static_cast<size_t>(InspectorParam::TiltRight) + 1,
+                    static_cast<size_t>(InspectorParam::Tilt) + 1,
                 "undo name table out of sync with InspectorParam");
   if (undoManager)
     undoManager->addAction(std::make_unique<InspectorEditAction>(

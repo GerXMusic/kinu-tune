@@ -48,6 +48,17 @@ public:
 
   void draw(juce::Graphics &g, const Params &params);
 
+  // D-304: la curva compuesta es una sola polilinea mientras las notas sean
+  // contiguas y de la misma region. Se corta en un hueco, al cambiar de region
+  // o cuando la nota anterior no se dibujo (culling). Regla pura y publica para
+  // poder medirla sin dibujar.
+  static bool shouldBreakPolyline(bool hasPreviousNote,
+                                  float previousVisualEndFrame,
+                                  float visualStartFrame,
+                                  int previousRegion,
+                                  int currentRegion,
+                                  float toleranceFrames = 0.5f);
+
   void beginMacroPreview(const std::vector<Note*>& notes);
   void endMacroPreview() { macroPreview.clear(); macroNotes.clear(); }
 

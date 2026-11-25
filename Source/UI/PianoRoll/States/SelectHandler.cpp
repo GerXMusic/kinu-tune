@@ -967,7 +967,6 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         std::vector<float> oldTilts;
         std::vector<float> oldMidiNotes;
         std::vector<float> oldSources;
-        std::vector<float> newSources;
 
         for (auto *note : selectedNotes)
         {
@@ -976,19 +975,9 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             oldTilts.push_back(note->getTiltLeft());
             oldMidiNotes.push_back(note->getMidiNote());
             oldSources.push_back(note->getLastNonMacroMidiNote());
-            const float oldTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            const float baseline =
-                note->getMidiNote() - oldTiltMean;
+            // D-306: inclinar no mueve el cuerpo; resetear tampoco. Se pone el
+            // tilt a 0 y el midiNote y la referencia de correccion se quedan.
             note->setTiltLeft(0.0f);
-            const float newTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            // Keep the Correct Pitch reference (see NotePitch).
-            newSources.push_back(NotePitch::applyEdit(
-                *note, *project, oldSources.back(), oldMidiNotes.back(),
-                baseline + newTiltMean));
             note->markDirty();
           }
         }
@@ -999,7 +988,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
               oldTilts, oldMidiNotes,
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); },
-              oldSources, newSources));
+              oldSources));
 
         rebuildAndNotify();
         return;
@@ -1013,7 +1002,6 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         std::vector<float> oldTilts;
         std::vector<float> oldMidiNotes;
         std::vector<float> oldSources;
-        std::vector<float> newSources;
 
         for (auto *note : selectedNotes)
         {
@@ -1022,19 +1010,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             oldTilts.push_back(note->getTiltRight());
             oldMidiNotes.push_back(note->getMidiNote());
             oldSources.push_back(note->getLastNonMacroMidiNote());
-            const float oldTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            const float baseline =
-                note->getMidiNote() - oldTiltMean;
+            // D-306: same as the left reset: the body and the reference stay.
             note->setTiltRight(0.0f);
-            const float newTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            // Keep the Correct Pitch reference (see NotePitch).
-            newSources.push_back(NotePitch::applyEdit(
-                *note, *project, oldSources.back(), oldMidiNotes.back(),
-                baseline + newTiltMean));
             note->markDirty();
           }
         }
@@ -1045,7 +1022,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
               oldTilts, oldMidiNotes,
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); },
-              oldSources, newSources));
+              oldSources));
 
         rebuildAndNotify();
         return;
