@@ -8,6 +8,7 @@
 #include "../Source/Models/Project.h"
 #include "../Source/Undo/UndoActions.h"
 #include "../Source/Utils/NotePitch.h"
+#include "../Source/Utils/PitchCurveProcessor.h"
 
 #include <cmath>
 #include <cstdio>
@@ -181,6 +182,33 @@ void testNoGuideMeansNoChange()
     CHECK(action == nullptr);
     CHECK(near(project.getNotes()[0].getMidiNote(), 57.0f));
 }
+
+void testCurveMustBeRebuiltAfterApply()
+{
+    // D-285: the white base curve follows the note centres. Applying a guide
+    // moves the centres, so the base has to be rebuilt; measured in REAPER,
+    // skipping it left 4,4 st of disagreement.
+    Project project;
+    project.getNotes().push_back(Note(0, 43, 57.0f));
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    CHECK(project.maxCurveNotesDisagreement() < 0.5f);
+
+    GuideSource guide;
+    guide.notes.push_back({0.0, 1.0, 59.0f, 0.8f});
+
+    std::unique_ptr<MidiGuideApplyAction> action;
+    CHECK(applyGuide(project, guide, action).matched == 1);
+
+    // The production callback rebuilds; after it the invariant holds again.
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    CHECK(project.maxCurveNotesDisagreement() < 0.5f);
+
+    // Undo must rebuild too, or the curve would keep the guided pitch.
+    action->undo();
+    PitchCurveProcessor::rebuildBaseFromNotes(project);
+    CHECK(near(project.getNotes()[0].getMidiNote(), 57.0f));
+    CHECK(project.maxCurveNotesDisagreement() < 0.5f);
+}
 } // namespace
 
 int main()
@@ -189,6 +217,7 @@ int main()
     testNeighbourIsUntouched();
     testMutedAndRestNotesAreSkipped();
     testNoGuideMeansNoChange();
+    testCurveMustBeRebuiltAfterApply();
 
     std::printf("MidiGuideApplyTests: all checks passed\n");
     return 0;

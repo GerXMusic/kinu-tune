@@ -6874,6 +6874,12 @@ void MainComponent::applyMidiGuide()
         std::move(oldSources), std::move(newSources),
         [this](const std::vector<Note *> &)
         {
+          // D-285: moving the centres without rebuilding the base leaves the
+          // white curve at the old pitch (measured: 4,4 st of disagreement
+          // after one apply). undoing a guide has to rebuild it too, so it
+          // lives in the action's callback, not in the commit path.
+          if (auto *changedProject = getProject())
+            PitchCurveProcessor::rebuildBaseFromNotes(*changedProject);
           pianoRoll.repaint();
           pianoRollView.repaint();
         },
