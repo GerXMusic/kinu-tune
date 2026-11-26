@@ -12,6 +12,7 @@
 #include "../Audio/IO/MidiExporter.h"
 #include "../Audio/IO/MidiGuideImporter.h"
 #include "../Models/ProjectSerializer.h"
+#include "../Models/MidiGuideRegionScope.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/NotePitch.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -38,6 +39,12 @@
 
 namespace
 {
+// Defined further down, next to the guide UI code; declared here because the
+// local channel (guide_debug) is defined above it.
+const HostTempoMap &activeTempoMapForGuide(
+    const std::shared_ptr<const HostTempoMap> &hostTempoMap,
+    const HostTempoMap &fallback);
+
 class EditorTooltipWindow final : public juce::TooltipWindow
 {
 public:
@@ -2272,6 +2279,77 @@ void MainComponent::pollMcpControl()
                                 ? juce::String(hostTempoMap->describe().c_str())
                                 : juce::String("none"));
       response->setProperty("ok", true);
+    }
+    else if (command == "guide_debug")
+    {
+      // R1: the same windowing Apply uses, published read-only so the region
+      // scope can be checked from outside (no keyboard/mouse scripting, D-126).
+      auto *responseProject = getProject();
+      if (responseProject == nullptr)
+      {
+        response->setProperty("ok", false);
+      }
+      else
+      {
+        const auto &guides = responseProject->getMidiGuides();
+        const bool hasGuide =
+            selectedMidiGuide >= 0 &&
+            selectedMidiGuide < static_cast<int>(guides.size());
+        const double offset = pianoRoll.projectToTimeline(0.0);
+        const auto windows = midiGuideScopeWindowsFor(*responseProject, offset);
+
+        response->setProperty("region_valid", windows.valid);
+        response->setProperty("active_offset", offset);
+        response->setProperty("active_region_source_start",
+                              windows.sourceStartSeconds);
+        response->setProperty("active_region_source_end",
+                              windows.sourceEndSeconds);
+        response->setProperty("active_region_host_start",
+                              windows.hostStartSeconds());
+        response->setProperty("active_region_host_end",
+                              windows.hostEndSeconds());
+        response->setProperty("guide_index", selectedMidiGuide);
+        response->setProperty("has_guide", hasGuide);
+        // Stable shape: the probe can read these even with no guide selected.
+        response->setProperty("guide_notes", 0);
+        response->setProperty("guide_host_start", 0.0);
+        response->setProperty("guide_host_end", 0.0);
+        response->setProperty("guide_notes_in_region", 0);
+        response->setProperty("matched_in_region", 0);
+        response->setProperty("matched_outside_region", 0);
+        response->setProperty("changes_in_region", 0);
+        response->setProperty("audio_notes_in_region", 0);
+
+        if (hasGuide && !guides[static_cast<size_t>(selectedMidiGuide)]
+                              .notes.empty())
+        {
+          const HostTempoMap fallback = HostTempoMap::constant(
+              cachedHostTempoBpm, cachedHostBeatNumerator,
+              cachedHostBeatDenominator);
+          const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
+          const auto plan = planMidiGuideScope(
+              *responseProject, guides[static_cast<size_t>(selectedMidiGuide)],
+              tempo, windows, SAMPLE_RATE, HOP_SIZE);
+
+          response->setProperty("guide_notes", plan.report.guideNotes);
+          response->setProperty("guide_host_start",
+                                plan.report.guideHostStartSeconds);
+          response->setProperty("guide_host_end",
+                                plan.report.guideHostEndSeconds);
+          response->setProperty("guide_notes_in_region",
+                                plan.report.guideNotesInRegion);
+          response->setProperty("matched_in_region",
+                                plan.report.matchedInRegion);
+          response->setProperty("matched_outside_region",
+                                plan.report.matchedOutsideRegion);
+          response->setProperty("changes_in_region",
+                                plan.report.changesInRegion);
+          response->setProperty(
+              "audio_notes_in_region",
+              static_cast<int>(plan.audio.size()));
+        }
+        response->setProperty("ok", true);
+      }
     }
     else if (command == "sync_midi_guides")
     {
@@ -6792,69 +6870,47 @@ void MainComponent::applyMidiGuide()
       cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
   const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
 
-  MidiGuideMapping mapping;
-  mapping.tempoMap = &tempo;
-  mapping.timelineDisplayOffsetSeconds = pianoRoll.projectToTimeline(0.0);
-  mapping.sampleRate = SAMPLE_RATE;
-  mapping.hopSize = HOP_SIZE;
+  // R1/D-313: the guide covers the track, but Apply only edits the active item.
+  // The source window is the ARA playback region this project holds; the host
+  // window is that interval on the timeline, where the guide slots live.
+  const auto windows =
+      midiGuideScopeWindowsFor(*project, pianoRoll.projectToTimeline(0.0));
+  auto plan =
+      planMidiGuideScope(*project, guide, tempo, windows, SAMPLE_RATE, HOP_SIZE);
 
-  // Guide notes on the timeline (the matcher never sees quarters).
-  std::vector<MidiGuideMatcher::GuideSlot> slots;
-  slots.reserve(guide.notes.size());
-  for (size_t i = 0; i < guide.notes.size(); ++i)
+  if (windows.valid && plan.slots.empty())
   {
-    const auto &note = guide.notes[i];
-    MidiGuideMatcher::GuideSlot slot;
-    slot.guideIndex = static_cast<int>(i);
-    slot.startSeconds = mapping.timelineSecondsForQuarter(note.startQuarter);
-    slot.endSeconds = mapping.timelineSecondsForQuarter(note.endQuarter);
-    slot.pitch = static_cast<double>(note.pitch);
-    if (slot.endSeconds <= slot.startSeconds)
-      continue;
-    slots.push_back(slot);
+    // Nothing to match inside the active item: say so and touch nothing, so the
+    // audio is not marked dirty for a no-op.
+    juce::String outside = TR("midi.outside_item");
+    outside = outside.replace(
+        "%1", juce::String(windows.hostStartSeconds(), 3));
+    outside = outside.replace("%2", juce::String(windows.hostEndSeconds(), 3));
+    outside = outside.replace(
+        "%3", juce::String(windows.sourceStartSeconds, 3));
+    outside = outside.replace("%4",
+                              juce::String(windows.sourceEndSeconds, 3));
+    midiGuidePanel.setStatusText(outside);
+    return;
   }
 
-  // Audio notes on the same axis. Muted notes are skipped: applying a guide to
-  // something that does not sound would be invisible state.
-  std::vector<MidiGuideMatcher::AudioNote> audio;
   auto &notes = project->getNotes();
-  audio.reserve(notes.size());
-  for (size_t i = 0; i < notes.size(); ++i)
-  {
-    const auto &note = notes[i];
-    if (note.isRest() || note.isMuted())
-      continue;
-    MidiGuideMatcher::AudioNote entry;
-    entry.index = static_cast<int>(i);
-    entry.startSeconds =
-        static_cast<double>(note.getStartFrame()) * HOP_SIZE / SAMPLE_RATE +
-        mapping.timelineDisplayOffsetSeconds;
-    entry.endSeconds =
-        static_cast<double>(note.getEndFrame()) * HOP_SIZE / SAMPLE_RATE +
-        mapping.timelineDisplayOffsetSeconds;
-    entry.centerMidi = static_cast<double>(note.getAdjustedMidiNote());
-    if (entry.endSeconds <= entry.startSeconds)
-      continue;
-    audio.push_back(entry);
-  }
-
-  const auto matches = MidiGuideMatcher::match(audio, slots);
+  const auto &changes = plan.changes;
 
   int matched = 0;
-  if (!matches.empty())
+  if (!changes.empty())
   {
     std::vector<Note *> targetNotes;
     std::vector<float> oldMidis, newMidis, oldSources, newSources;
-    targetNotes.reserve(matches.size());
+    targetNotes.reserve(changes.size());
 
-    for (const auto &match : matches)
+    for (const auto &change : changes)
     {
-      auto &note = notes[static_cast<size_t>(match.audioIndex)];
-      const auto &slot = slots[static_cast<size_t>(match.guideIndex)];
+      auto &note = notes[static_cast<size_t>(change.noteIndex)];
 
       const float oldMidi = note.getMidiNote();
       const float oldSource = note.getLastNonMacroMidiNote();
-      const float target = static_cast<float>(slot.pitch);
+      const float target = static_cast<float>(change.targetPitch);
       // D-312: only the centre moves. sourceAfterEdit keeps the Correct Pitch
       // reference consistent, exactly like a drag; deltaPitch and pitchOffset
       // are never touched here.
@@ -6896,7 +6952,7 @@ void MainComponent::applyMidiGuide()
   }
 
   juce::String status;
-  status << matched << "/" << static_cast<int>(audio.size()) << " "
+  status << matched << "/" << static_cast<int>(plan.audio.size()) << " "
          << (matched == 1 ? "note" : "notes");
   midiGuidePanel.setStatusText(status);
 }

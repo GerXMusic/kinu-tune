@@ -37,6 +37,8 @@ set(PITCHNET_TEST_SOURCES
     MidiGuideTests.cpp
     MidiGuideImportTests.cpp
     MidiGuideApplyTests.cpp    NoteEngineTests.cpp
+    # R1: la guia solo edita el item activo (ventanas fuente/host).
+    MidiGuideRegionScopeTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp

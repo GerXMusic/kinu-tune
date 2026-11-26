@@ -310,6 +310,7 @@
   "midi.apply": "Aplicar",
   "midi.ghosts": "Ver fantasmas",
   "midi.empty": "Sin guías MIDI",
+  "midi.outside_item": "0 notas de guía dentro del ítem activo; guía %1–%2 s, ítem %3–%4 s",
   "midi.hint": "Importa un .mid o recibe una guía del ReaScript. Aplicar lleva cada nota emparejada a su nota guía y conserva vibrato y edición.",
   "editor.scale": "Escala",
   "editor.grid": "Cuadrícula",
