@@ -286,8 +286,11 @@ public:
   void setTimelineDisplayOffset(double seconds);
   double projectToTimeline(double projectSeconds) const;
   double timelineToProject(double timelineSeconds) const;
-  void setTimelineBeatSignature(int numerator, int denominator);
-  void setTimelineTempoBpm(double bpm);
+  // R4 (D-317): persistToProject = false is the host's cursor value, which is
+  // display/fallback only while a real host tempo map exists.
+  void setTimelineBeatSignature(int numerator, int denominator,
+                                bool persistToProject = true);
+  void setTimelineTempoBpm(double bpm, bool persistToProject = true);
   // D-310: the host tempo map snapshot. Null means "no usable host map" and
   // the constant BPM above stays the fallback. Published by the editor timer;
   // consumed by the grid phase and by the MIDI guide when placing ghosts.

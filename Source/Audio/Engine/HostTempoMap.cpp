@@ -168,6 +168,17 @@ double HostTempoMap::quarterForTime(double timeSeconds) const
     return a.quarter + (timeSeconds - a.timeSeconds) / slope;
 }
 
+double HostTempoMap::snapTimeToGrid(double timeSeconds, double gridQuarterNotes) const
+{
+    if (!valid || !(gridQuarterNotes > 0.0))
+        return timeSeconds;
+
+    const double quarter = quarterForTime(timeSeconds);
+    const double snappedQuarter =
+        std::round(quarter / gridQuarterNotes) * gridQuarterNotes;
+    return timeForQuarter(snappedQuarter);
+}
+
 double HostTempoMap::bpmAtTime(double timeSeconds) const
 {
     if (!valid)

@@ -112,6 +112,12 @@ public:
     // Seconds -> quarter notes. Extrapolates beyond the first/last entry.
     double quarterForTime(double timeSeconds) const;
 
+    // R4 (D-317): snap a host time to the musical grid. The grid is counted in
+    // quarter notes from the song start (multiple of gridQuarterNotes), so the
+    // result follows the tempo map: 1/4 at 60 BPM is 1 s, at 120 BPM 0.5 s.
+    // An invalid map or a non-positive grid returns the input untouched.
+    double snapTimeToGrid(double timeSeconds, double gridQuarterNotes) const;
+
     // Tempo in BPM at a point, from the segment that contains it.
     double bpmAtTime(double timeSeconds) const;
     double bpmAtQuarter(double quarter) const;

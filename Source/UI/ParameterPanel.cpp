@@ -969,10 +969,11 @@ void ParameterPanel::setUiBrightness(double brightnessPercent)
     brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
 }
 
-void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator)
+void ParameterPanel::setHostTimelineState(double bpm, int numerator, int denominator,
+                                          bool persistToProject)
 {
-    setTimelineTempoBpmInternal(bpm, false);
-    setTimelineBeatSignatureInternal(numerator, denominator, false);
+    setTimelineTempoBpmInternal(bpm, false, persistToProject);
+    setTimelineBeatSignatureInternal(numerator, denominator, false, persistToProject);
 }
 
 void ParameterPanel::setSelectedNote(Note* note)
@@ -1294,7 +1295,9 @@ void ParameterPanel::setTimelineDisplayModeInternal(TimelineDisplayMode mode, bo
         onTimelineDisplayModeChanged(mode);
 }
 
-void ParameterPanel::setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify)
+void ParameterPanel::setTimelineBeatSignatureInternal(int numerator, int denominator,
+                                                     bool notify,
+                                                     bool persistToProject)
 {
     const int normalizedNumerator = juce::jlimit(1, 32, numerator);
     const int normalizedDenominator = normalizeTimelineBeatDenominator(denominator);
@@ -1308,21 +1311,22 @@ void ParameterPanel::setTimelineBeatSignatureInternal(int numerator, int denomin
     timelineBeatButton.setButtonText(
         getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
 
-    if (project != nullptr && changed)
+    if (project != nullptr && changed && persistToProject)
         project->setTimelineBeatSignature(normalizedNumerator, normalizedDenominator);
 
     if (notify && changed && onTimelineBeatSignatureChanged)
         onTimelineBeatSignatureChanged(normalizedNumerator, normalizedDenominator);
 }
 
-void ParameterPanel::setTimelineTempoBpmInternal(double bpm, bool notify)
+void ParameterPanel::setTimelineTempoBpmInternal(double bpm, bool notify,
+                                                 bool persistToProject)
 {
     const double normalized = juce::jlimit(20.0, 300.0, bpm);
     const bool changed = std::abs(timelineTempoBpm - normalized) > 1.0e-6;
     timelineTempoBpm = normalized;
     timelineTempoSlider.setValue(normalized, juce::dontSendNotification);
 
-    if (project != nullptr && changed)
+    if (project != nullptr && changed && persistToProject)
         project->setTimelineTempoBpm(normalized);
 
     if (notify && changed && onTimelineTempoChanged)

@@ -3,6 +3,7 @@
 #include "GpuDeviceList.h"
 #include "AraViewFocusPolicy.h"
 #include "CursorFollowPolicy.h"
+#include "HostTimelineStatePolicy.h"
 #include "../Plugin/AraDiagnostics.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
@@ -6671,14 +6672,17 @@ void MainComponent::updateHostTimelineState(double bpm, int numerator,
 
   // Analysis and project restoration can replace timeline settings without a
   // host tempo change. Reapply the host values whenever a project is bound.
+  //
+  // R4 (D-317): with a real host tempo map the cursor BPM is display only and
+  // the project keeps its saved fallback; without a map it is the fallback and
+  // is stored, as it always was.
+  const bool persist = shouldPersistHostCursorTempo(hostTempoMap);
   if (auto *project = getProject())
-  {
-    project->setTimelineTempoBpm(bpm);
-    project->setTimelineBeatSignature(numerator, denominator);
-  }
-  parameterPanel.setHostTimelineState(bpm, numerator, denominator);
-  pianoRoll.setTimelineTempoBpm(bpm);
-  pianoRoll.setTimelineBeatSignature(numerator, denominator);
+    applyHostTimelineStateToProject(*project, hostTempoMap, bpm, numerator,
+                                    denominator);
+  parameterPanel.setHostTimelineState(bpm, numerator, denominator, persist);
+  pianoRoll.setTimelineTempoBpm(bpm, persist);
+  pianoRoll.setTimelineBeatSignature(numerator, denominator, persist);
 }
 
 void MainComponent::updateHostTempoMap(

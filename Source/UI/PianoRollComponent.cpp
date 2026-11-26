@@ -21,6 +21,7 @@
 #include "../Undo/NoteMuteAction.h"
 #include "../Undo/NoteDeleteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
+#include "PianoRoll/TimelineGridSnap.h"
 #include "Components/AppFont.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
@@ -1998,15 +1999,31 @@ double PianoRollComponent::getTimelineGridQuarterNotes() const
 
 bool PianoRollComponent::shouldSnapCycleToGrid() const
 {
-  return timelineDisplayMode == TimelineDisplayMode::Beats &&
-         timelineSnapCycle &&
-         getTimelineGridSeconds() > 1.0e-6;
+  if (timelineDisplayMode != TimelineDisplayMode::Beats || !timelineSnapCycle)
+    return false;
+
+  // R4 (D-317): with a real host map the grid is musical (quarters), so the
+  // seconds interval is no longer the reference.
+  if (hostTempoMap != nullptr && hostTempoMap->isValid())
+    return getTimelineGridQuarterNotes() > 0.0;
+
+  return getTimelineGridSeconds() > 1.0e-6;
 }
 
 double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const
 {
   if (!shouldSnapCycleToGrid())
     return std::max(getTimelineStart(), timeSeconds);
+
+  // R4 (D-317): project -> host -> quarter -> round -> host -> project, so the
+  // snap lands on the lines the ruler draws with a real tempo map.
+  if (hostTempoMap != nullptr && hostTempoMap->isValid())
+    return std::max(
+        getTimelineStart(),
+        snapProjectSecondsToHostGrid(*hostTempoMap,
+                                     coordMapper->getTimelineDisplayOffset(),
+                                     timeSeconds,
+                                     getTimelineGridQuarterNotes()));
 
   const double interval = getTimelineGridSeconds();
   const double snapped =
@@ -3635,7 +3652,8 @@ void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode)
   repaint();
 }
 
-void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator)
+void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator,
+                                                 bool persistToProject)
 {
   const int normalizedNumerator = juce::jlimit(1, 32, numerator);
   const int normalizedDenominator = normalizeTimelineBeatDenominator(denominator);
@@ -3645,19 +3663,19 @@ void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator
 
   timelineBeatNumerator = normalizedNumerator;
   timelineBeatDenominator = normalizedDenominator;
-  if (project != nullptr)
+  if (project != nullptr && persistToProject)
     project->setTimelineBeatSignature(normalizedNumerator, normalizedDenominator);
   repaint();
 }
 
-void PianoRollComponent::setTimelineTempoBpm(double bpm)
+void PianoRollComponent::setTimelineTempoBpm(double bpm, bool persistToProject)
 {
   const double normalized = juce::jlimit(20.0, 300.0, bpm);
   if (std::abs(timelineTempoBpm - normalized) < 1.0e-6)
     return;
 
   timelineTempoBpm = normalized;
-  if (project != nullptr)
+  if (project != nullptr && persistToProject)
     project->setTimelineTempoBpm(normalized);
   repaint();
 }

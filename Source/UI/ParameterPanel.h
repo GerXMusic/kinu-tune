@@ -34,7 +34,10 @@ public:
     void refreshLocalisedText();
 
     void setUiBrightness(double brightnessPercent);
-    void setHostTimelineState(double bpm, int numerator, int denominator);
+    // R4 (D-317): persistToProject = false when a real host tempo map exists;
+    // the values are then display/fallback only.
+    void setHostTimelineState(double bpm, int numerator, int denominator,
+                              bool persistToProject = true);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
@@ -107,8 +110,10 @@ private:
     void setSynthesisEngineInternal(SynthesisEngineType type, bool notify);
     void refreshTimelineModeToggles();
     void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
-    void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
-    void setTimelineTempoBpmInternal(double bpm, bool notify);
+    void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify,
+                                          bool persistToProject = true);
+    void setTimelineTempoBpmInternal(double bpm, bool notify,
+                                     bool persistToProject = true);
     void setTimelineGridDivisionInternal(TimelineGridDivision division, bool notify);
     void setTimelineSnapCycleInternal(bool enabled, bool notify);
 

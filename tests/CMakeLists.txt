@@ -34,6 +34,10 @@ set(PITCHNET_TEST_SOURCES
     HostTempoMapTests.cpp
     # R3: la grilla y la regla siguen el mapa del host (compases reales).
     TempoGridTests.cpp
+    # R4: el snap del ciclo pasa por el mapa (quarters) y el BPM del cursor
+    # solo se guarda cuando no hay mapa.
+    SnapTempoMapTests.cpp
+    ProjectTempoPersistenceTests.cpp
     # D-311/D-312: la guia MIDI (coordenadas, emparejamiento, importacion y
     # persistencia).
     MidiGuideTests.cpp
@@ -101,6 +105,9 @@ target_sources(NonAraLifecycleTests PRIVATE
 # R3: la grilla comparte la iteracion con el renderer (TempoGridView.cpp vive
 # en la capa UI), asi que el test enlaza tambien pitchnet_ui.
 target_link_libraries(TempoGridTests PRIVATE pitchnet_ui)
+
+# R4: la regla de persistencia del tempo vive en Source/UI (pitchnet_ui).
+target_link_libraries(ProjectTempoPersistenceTests PRIVATE pitchnet_ui)
 
 # TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
 target_compile_definitions(TimingAudioTests PRIVATE
