@@ -114,8 +114,9 @@ namespace
     float renderCenterOffset;
     float volumeDb;
     float formantShift;
-    float tiltLeft;
-    float tiltRight;
+    float tilt;
+    float tiltFineLeft;
+    float tiltFineRight;
     float vibrato;
     float pitchDrift;
     int smoothLeftFrames;
@@ -142,7 +143,8 @@ namespace
       return {note.getMidiNote(), note.getPitchOffset(),
               note.getRenderCenterOffset(), note.getVolumeDb(),
               note.getFormantShift(),
-              note.getTiltLeft(), note.getTiltRight(), note.getVibrato(), note.getPitchDrift(),
+              note.getTilt(), note.getTiltFineLeft(), note.getTiltFineRight(),
+              note.getVibrato(), note.getPitchDrift(),
               note.getSmoothLeftFrames(), note.getSmoothRightFrames(),
               note.getDeltaScale(), note.getDeltaOffset(),
               note.getBakedDeltaPitch(), note.getDeltaPitch(),
@@ -153,10 +155,10 @@ namespace
 
     static NoteEditState defaultsFor(const Note& note)
     {
-      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
-              1.0f, 0, 0, 1.0f, 0.0f, {}, note.getOriginalDeltaPitch(),
-              note.getOriginalMidiNote(), 0, NoteEngine::Inherit, false,
-              NoteEngine::Inherit};
+      return {note.getOriginalMidiNote(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+              0.0f, 1.0f, 1.0f, 0, 0, 1.0f, 0.0f, {},
+              note.getOriginalDeltaPitch(), note.getOriginalMidiNote(), 0,
+              NoteEngine::Inherit, false, NoteEngine::Inherit};
     }
 
     void applyTo(Note& note) const
@@ -166,8 +168,9 @@ namespace
       note.setRenderCenterOffset(renderCenterOffset);
       note.setVolumeDb(volumeDb);
       note.setFormantShift(formantShift);
-      note.setTiltLeft(tiltLeft);
-      note.setTiltRight(tiltRight);
+      note.setTilt(tilt);
+      note.setTiltFineLeft(tiltFineLeft);
+      note.setTiltFineRight(tiltFineRight);
       note.setVibrato(vibrato);
       note.setPitchDrift(pitchDrift);
       note.setSmoothLeftFrames(smoothLeftFrames);
@@ -207,8 +210,9 @@ namespace
            current.pitchOffset != defaults.pitchOffset ||
            current.renderCenterOffset != defaults.renderCenterOffset ||
            current.transitionOutMs != defaults.transitionOutMs ||
-           current.tiltLeft != defaults.tiltLeft ||
-           current.tiltRight != defaults.tiltRight ||
+           current.tilt != defaults.tilt ||
+           current.tiltFineLeft != defaults.tiltFineLeft ||
+           current.tiltFineRight != defaults.tiltFineRight ||
            current.vibrato != defaults.vibrato ||
            current.pitchDrift != defaults.pitchDrift ||
            current.smoothLeftFrames != defaults.smoothLeftFrames ||
@@ -3556,12 +3560,13 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
         return std::nullopt;
       return static_cast<float>(note.getTransitionOutMs());
     case InspectorParam::TiltLeft:
-      return note.getTiltLeft();
+      return note.getTiltFineLeft();
     case InspectorParam::TiltRight:
-      return note.getTiltRight();
+      return note.getTiltFineRight();
     case InspectorParam::Tilt:
-      // D-307: v = (izquierda - derecha) / 2; la parte comun no se muestra.
-      return (note.getTiltLeft() - note.getTiltRight()) * 0.5f;
+      // D-308: the general layer. The body is the centre and the fines are
+      // separate controls, so this no longer folds in a "common" part.
+      return note.getTilt();
   }
   return std::nullopt;
 }
@@ -3640,29 +3645,18 @@ void PianoRollComponent::setInspectorEditValue(float value)
         note->setTransitionOutMs(juce::roundToInt(value));
         break;
       case InspectorParam::TiltLeft:
+        // D-308: each control writes only its own layer. The left fine moves
+        // the edge->centre half; the right half is untouched.
+        note->setTiltFineLeft(value);
+        break;
       case InspectorParam::TiltRight:
-      {
-        // D-306: inclinar solo escribe los dos tilt; el cuerpo no se mueve y
-        // la correccion no se re-ancla. La base ya resta la media del tilt, asi
-        // que la curva rota alrededor del cuerpo.
-        const auto &original = inspectorEditOldParams[i];
-        note->setTiltLeft(inspectorEditParam == InspectorParam::TiltLeft
-                              ? value : original.tiltLeft);
-        note->setTiltRight(inspectorEditParam == InspectorParam::TiltRight
-                               ? value : original.tiltRight);
+        note->setTiltFineRight(value);
         break;
-      }
       case InspectorParam::Tilt:
-      {
-        // D-307: inclinacion simetrica. v = (left - right) / 2 y cada nota
-        // conserva su parte comun, asi que en una seleccion multiple con
-        // comunes distintos cada nota gira alrededor de su propio cuerpo.
-        const auto &original = inspectorEditOldParams[i];
-        const float common = (original.tiltLeft + original.tiltRight) * 0.5f;
-        note->setTiltLeft(common + value);
-        note->setTiltRight(common - value);
+        // D-308: the general layer (left = centre + value, right = centre -
+        // value). The body and the fines stay where they are.
+        note->setTilt(value);
         break;
-      }
     }
     note->markDirty();
     minFrame = std::min(minFrame, note->getStartFrame());
@@ -3700,14 +3694,10 @@ void PianoRollComponent::setInspectorEditValue(float value)
   }
   else if (inspectorEditParam != InspectorParam::Volume)
   {
-    // D-306: inclinar cambia la base (que resta la media del tilt) ademas del
-    // delta, asi que su preview reconstruye la base. El resto solo recompone.
-    if (inspectorEditParam == InspectorParam::TiltLeft ||
-        inspectorEditParam == InspectorParam::TiltRight ||
-        inspectorEditParam == InspectorParam::Tilt)
-      PitchCurveProcessor::rebuildBaseFromNotesForDrag(*project, inspectorEditNotes);
-    else
-      PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
+    // D-308: the base no longer depends on the tilt (the body is the centre
+    // and the three layers live in the delta), so every pitch preview is a
+    // delta rebuild.
+    PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
     project->markNoteEditDirtyRange(minFrame, maxFrame);
     invalidateBasePitchCache();
     if (onPitchEdited)

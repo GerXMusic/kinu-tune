@@ -949,8 +949,19 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
         obj->setProperty("renderedEdit", true);
 
     // Pitch tool transformation parameters (non-destructive)
-    obj->setProperty("tiltLeft", note.getTiltLeft());
-    obj->setProperty("tiltRight", note.getTiltRight());
+    // D-308: the new model stores three independent layers. `tilt` is the
+    // general one; the fines are written only when set. The old tiltLeft/
+    // tiltRight pair is still written (as the general tilt) so an older build
+    // sees the same overall slope. A reader that finds `tilt` uses the new
+    // model; if it does not, it migrates the old pair.
+    if (note.getTilt() != 0.0f)
+        obj->setProperty("tilt", note.getTilt());
+    if (note.getTiltFineLeft() != 0.0f)
+        obj->setProperty("tiltFineLeft", note.getTiltFineLeft());
+    if (note.getTiltFineRight() != 0.0f)
+        obj->setProperty("tiltFineRight", note.getTiltFineRight());
+    obj->setProperty("tiltLeft", note.getTilt());
+    obj->setProperty("tiltRight", -note.getTilt());
     obj->setProperty("vibrato", note.getVibrato());
     obj->setProperty("pitchDrift", note.getPitchDrift());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
@@ -1043,8 +1054,28 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
         note.setPhoneme(phoneme.toString());
 
     // Pitch tool transformation parameters (with defaults for backwards compatibility)
-    note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
-    note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
+    // D-308: if `tilt` exists this is the new three-layer model. Otherwise
+    // migrate the old pair: tilt = (tiltLeft - tiltRight) / 2, fines = 0. That
+    // reproduces the old composite curve exactly (same base, same delta).
+    auto tiltVar = json.getProperty("tilt", juce::var());
+    if (!tiltVar.isVoid())
+    {
+        note.setTilt(static_cast<float>(tiltVar));
+        note.setTiltFineLeft(
+            static_cast<float>(json.getProperty("tiltFineLeft", 0.0)));
+        note.setTiltFineRight(
+            static_cast<float>(json.getProperty("tiltFineRight", 0.0)));
+    }
+    else
+    {
+        const float oldLeft =
+            static_cast<float>(json.getProperty("tiltLeft", 0.0));
+        const float oldRight =
+            static_cast<float>(json.getProperty("tiltRight", 0.0));
+        note.setTilt((oldLeft - oldRight) * 0.5f);
+        note.setTiltFineLeft(0.0f);
+        note.setTiltFineRight(0.0f);
+    }
     note.setVibrato(static_cast<float>(json.getProperty("vibrato", 1.0)));
     note.setPitchDrift(static_cast<float>(json.getProperty("pitchDrift", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));

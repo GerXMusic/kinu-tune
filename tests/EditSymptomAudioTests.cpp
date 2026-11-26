@@ -175,8 +175,9 @@ void resetNoteToFactory(Note &note) {
   note.setPitchOffset(0.0f);
   note.setVolumeDb(0.0f);
   note.setFormantShift(0.0f);
-  note.setTiltLeft(0.0f);
-  note.setTiltRight(0.0f);
+  note.setTilt(0.0f);
+  note.setTiltFineLeft(0.0f);
+  note.setTiltFineRight(0.0f);
   note.setVibrato(1.0f);
   note.setPitchDrift(1.0f);
   note.setSmoothLeftFrames(0);

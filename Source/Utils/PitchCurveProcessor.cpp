@@ -97,9 +97,10 @@ namespace
             // visible nuevo (la media local) y conserva el de audio original.
             const float audioCenter = note.getMidiNote() + note.getPitchOffset() +
                                       note.getRenderCenterOffset();
-            // Base pitch already includes per-note offset
-            seg.midiNote = audioCenter
-                         - (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
+            // Base pitch already includes per-note offset. D-308: the base is
+            // the render centre itself; tilt (general and fines) lives only in
+            // the delta, anchored at this centre, so the body never moves.
+            seg.midiNote = audioCenter;
             // D-182: how far this note was moved from where it was sung.
             seg.shiftSemitones = audioCenter - note.getOriginalMidiNote();
             segments.push_back(seg);
@@ -759,11 +760,13 @@ namespace PitchCurveProcessor
         auto source = CurveResampler::resampleLinear(sourceDeltaFor(note), frames);
         const auto context = buildAdjacentContext(project.getNotes(), note);
         auto zero = PitchToolOperations::applyAllTransformations(source,
-            note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
-            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 0.0f);
+            note.getTilt(), note.getTiltFineLeft(), note.getTiltFineRight(),
+            note.getVibrato(), note.getSmoothLeftFrames(),
+            note.getSmoothRightFrames(), context, 0.0f);
         auto one = PitchToolOperations::applyAllTransformations(source,
-            note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
-            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 1.0f);
+            note.getTilt(), note.getTiltFineLeft(), note.getTiltFineRight(),
+            note.getVibrato(), note.getSmoothLeftFrames(),
+            note.getSmoothRightFrames(), context, 1.0f);
         for (size_t i = 0; i < one.size(); ++i)
             one[i] = (one[i] - zero[i]) * note.getDeltaScale();
         return one;
@@ -812,8 +815,9 @@ namespace PitchCurveProcessor
 
                 std::vector<float> transformedDelta =
                     PitchToolOperations::applyAllTransformations(
-                        sourceData, note.getTiltLeft(), note.getTiltRight(),
-                        note.getVibrato(), note.getSmoothLeftFrames(),
+                        sourceData, note.getTilt(), note.getTiltFineLeft(),
+                        note.getTiltFineRight(), note.getVibrato(),
+                        note.getSmoothLeftFrames(),
                         note.getSmoothRightFrames(), adjacentContext,
                         note.getPitchDrift());
 

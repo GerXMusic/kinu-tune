@@ -820,8 +820,8 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const float tilt =
             pitchToolController->getActiveHandleType() ==
                     PitchToolHandles::HandleType::TiltLeft
-                ? note.getTiltLeft()
-                : note.getTiltRight();
+                ? note.getTiltFineLeft()
+                : note.getTiltFineRight();
         const juce::String prefix = tilt > 0.0f ? "+" : "";
         label = prefix + juce::String(tilt, 1) + " st";
       }

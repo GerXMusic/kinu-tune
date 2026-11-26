@@ -73,8 +73,9 @@ bool Note::isNeutralForOriginalWaveform() const
            std::abs(pitchOffset) <= kPitchEpsilon &&
            std::abs(formantShift) <= kPitchEpsilon &&
            std::abs(volumeDb) <= kGainEpsilon &&
-           std::abs(tiltLeft) <= kPitchEpsilon &&
-           std::abs(tiltRight) <= kPitchEpsilon &&
+           std::abs(tilt) <= kPitchEpsilon &&
+           std::abs(tiltFineLeft) <= kPitchEpsilon &&
+           std::abs(tiltFineRight) <= kPitchEpsilon &&
            std::abs(vibrato - 1.0f) <= kPitchEpsilon &&
            std::abs(pitchDrift - 1.0f) <= kPitchEpsilon &&
            smoothLeftFrames == 0 &&

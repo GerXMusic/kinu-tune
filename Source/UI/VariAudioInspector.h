@@ -24,9 +24,9 @@ class VariAudioInspector : public juce::Component, private juce::Timer
 public:
     static constexpr int preferredWidth = 240;
 
-    // Slider order matches PianoRollComponent::InspectorParam. Tilt (D-307) is
-    // the symmetric control: it moves the two tilts in opposite directions and
-    // keeps each note's common part.
+    // Slider order matches PianoRollComponent::InspectorParam. D-308: Tilt is
+    // the general layer; TiltLeft/TiltRight are the independent fine layers
+    // for the left and right halves.
     enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight, Tilt };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };

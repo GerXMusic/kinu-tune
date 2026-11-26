@@ -1,10 +1,11 @@
-// D-306: inclinar no mueve el cuerpo de la nota.
+// D-306 / D-308: inclinar no mueve el cuerpo de la nota.
 //
 // Criterio escrito ANTES de medir:
 //
-//   Arrastrar el control de inclinacion (izquierda o derecha) solo escribe
-//   tiltLeft/tiltRight. midiNote y la referencia de Correct Pitch quedan
-//   exactamente como estaban, y la base que se reconstruye con
+//   Arrastrar una manija de esquina solo escribe SU capa fina (D-308):
+//   TiltLeft -> tiltFineLeft, TiltRight -> tiltFineRight. El tilt general, la
+//   otra capa fina, midiNote y la referencia de Correct Pitch quedan
+//   exactamente como estaban. La base que se reconstruye con
 //   rebuildBaseFromNotes() sigue en el centro de la nota
 //   (maxCurveNotesDisagreement <= 0,1 st).
 //
@@ -110,29 +111,38 @@ int main() {
   juce::ScopedJuceInitialiser_GUI gui;
   std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-  // --- Inclinar izquierda no mueve el cuerpo ------------------------------
+  // --- La manija izquierda escribe solo su capa fina ----------------------
   {
     Fixture f;
     const float beforeMidi = f.note().getMidiNote();
     const float beforeSource = f.note().getLastNonMacroMidiNote();
     drag(f, PitchToolHandles::HandleType::TiltLeft, 1.0f);
-    std::printf("D-306 tilt izquierda +1,0 st: tilt %.4f | cuerpo %.4f -> "
-                "%.4f | fuente %.4f -> %.4f\n",
-                f.note().getTiltLeft(), beforeMidi, f.note().getMidiNote(),
+    std::printf("D-308 manija izquierda +1,0 st: fino izq %.4f | general %.4f | "
+                "fino der %.4f | cuerpo %.4f -> %.4f | fuente %.4f -> %.4f\n",
+                f.note().getTiltFineLeft(), f.note().getTilt(),
+                f.note().getTiltFineRight(), beforeMidi, f.note().getMidiNote(),
                 beforeSource, f.note().getLastNonMacroMidiNote());
-    CHECK(near(f.note().getTiltLeft(), 1.0f, 1.0e-3f));
+    CHECK(near(f.note().getTiltFineLeft(), 1.0f, 1.0e-3f));
+    CHECK(near(f.note().getTilt(), 0.0f));
+    CHECK(near(f.note().getTiltFineRight(), 0.0f));
     CHECK(near(f.note().getMidiNote(), beforeMidi));
     CHECK(near(f.note().getLastNonMacroMidiNote(), beforeSource));
   }
 
-  // --- Inclinar derecha tampoco -------------------------------------------
+  // --- La manija derecha tampoco toca el cuerpo ni las otras capas --------
   {
     Fixture f;
+    f.note().setTilt(0.75f);
+    f.note().setTiltFineLeft(-0.5f);
     const float beforeMidi = f.note().getMidiNote();
     drag(f, PitchToolHandles::HandleType::TiltRight, -1.5f);
-    std::printf("D-306 tilt derecha -1,5 st: tilt %.4f | cuerpo %.4f\n",
-                f.note().getTiltRight(), f.note().getMidiNote());
-    CHECK(near(f.note().getTiltRight(), -1.5f, 1.0e-3f));
+    std::printf("D-308 manija derecha -1,5 st: fino der %.4f | general %.4f | "
+                "fino izq %.4f | cuerpo %.4f\n",
+                f.note().getTiltFineRight(), f.note().getTilt(),
+                f.note().getTiltFineLeft(), f.note().getMidiNote());
+    CHECK(near(f.note().getTiltFineRight(), -1.5f, 1.0e-3f));
+    CHECK(near(f.note().getTilt(), 0.75f));
+    CHECK(near(f.note().getTiltFineLeft(), -0.5f));
     CHECK(near(f.note().getMidiNote(), beforeMidi));
   }
 
@@ -141,11 +151,13 @@ int main() {
     Fixture f;
     drag(f, PitchToolHandles::HandleType::TiltLeft, 1.5f);
     drag(f, PitchToolHandles::HandleType::TiltRight, -1.0f);
+    f.note().setTilt(1.25f);
     PitchCurveProcessor::rebuildBaseFromNotes(f.project);
     const float desync = f.project.maxCurveNotesDisagreement();
-    std::printf("D-306 nota inclinada (%.2f / %.2f): desfase curva/notas "
-                "%.4f st (lim %.1f)\n",
-                f.note().getTiltLeft(), f.note().getTiltRight(), desync,
+    std::printf("D-308 nota inclinada (general %.2f, finos %.2f / %.2f): "
+                "desfase curva/notas %.4f st (lim %.1f)\n",
+                f.note().getTilt(), f.note().getTiltFineLeft(),
+                f.note().getTiltFineRight(), desync,
                 kToleranceSemitones);
     CHECK(desync <= kToleranceSemitones);
   }
@@ -157,7 +169,7 @@ int main() {
     drag(f, PitchToolHandles::HandleType::Formant, 1.0f);
     CHECK(near(f.note().getMidiNote(), beforeMidi));
     CHECK(near(f.note().getFormantShift(), 1.0f, 1.0e-3f));
-    std::printf("D-306 control formante: cuerpo %.4f (sin cambio)\n",
+    std::printf("D-308 control formante: cuerpo %.4f (sin cambio)\n",
                 f.note().getMidiNote());
   }
 

@@ -23,7 +23,7 @@ int main() {
   note.setLyric("word");
   note.setPhoneme("w");
   note.setVibrato(0.5f);
-  note.setTiltLeft(1.5f);
+  note.setTilt(1.5f);
   note.setRenderedEdit(true);
   std::vector<float> curve;
   for (int i = 0; i < 12; ++i) curve.push_back(static_cast<float>(i));
@@ -52,7 +52,7 @@ int main() {
     assert(part->getMidiNote() == 67 && part->getPitchOffset() == 2);
     assert(part->getVolumeDb() == -3 && part->getLyric() == "word");
     assert(part->getPhoneme() == "w" && part->getVibrato() == 0.5f);
-    assert(part->getTiltLeft() == 1.5f && part->hasRenderedEdit());
+    assert(part->getTilt() == 1.5f && part->hasRenderedEdit());
     assert(part->getOriginalDeltaPitch() == part->getDeltaPitch());
     assert(part->getBakedDeltaPitch() == part->getDeltaPitch());
     assert(part->getF0Values() == part->getDeltaPitch());

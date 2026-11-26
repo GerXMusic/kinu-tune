@@ -132,8 +132,8 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
     return true;
   }
 
-  // The drag previews through rebuildDeltaForNotes() (and, for tilt, through
-  // rebuildBaseFromNotesForDrag() because the base subtracts the tilt mean).
+  // The drag previews through rebuildDeltaForNotes(): the base is the note
+  // centre and does not depend on the tilt (D-308).
   // Commit through the same full rebuild PitchToolAction's undo and redo use,
   // so the edit renders from the curves its undo would reproduce.
   if (project)
@@ -224,14 +224,16 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     {
       case PitchToolHandles::HandleType::TiltLeft:
       {
-        // Drag UP = positive semitoneDelta = left edge goes UP. The curve
-        // rotates around the body: no midiNote write (D-306).
-        note->setTiltLeft(origParams.tiltLeft + semitoneDelta);
+        // Drag UP = positive semitoneDelta = left edge goes UP. D-308: the
+        // corner handles write the left fine layer (edge -> centre); the body
+        // and the other layers do not move.
+        note->setTiltFineLeft(origParams.tiltFineLeft + semitoneDelta);
         break;
       }
       case PitchToolHandles::HandleType::TiltRight:
       {
-        note->setTiltRight(origParams.tiltRight + semitoneDelta);
+        // D-308: the right corner writes the right fine layer (centre -> edge).
+        note->setTiltFineRight(origParams.tiltFineRight + semitoneDelta);
         break;
       }
       case PitchToolHandles::HandleType::Formant:
@@ -319,16 +321,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     return;
   }
 
-  // NON-DESTRUCTIVE preview. D-306: tilt also changes the base (the base
-  // subtracts the tilt mean and the curve rotates), so it needs the base
-  // rebuild; the rest only recompose their delta + f0.
-  const bool tiltPreview =
-      type == PitchToolHandles::HandleType::TiltLeft ||
-      type == PitchToolHandles::HandleType::TiltRight;
-  if (tiltPreview)
-    PitchCurveProcessor::rebuildBaseFromNotesForDrag(*project, notes);
-  else
-    PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
+  // NON-DESTRUCTIVE preview. D-308: the base no longer depends on the tilt
+  // (the body is the centre and every tilt layer lives in the delta), so all
+  // pitch gestures, tilt included, only rebuild the delta.
+  PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
   // Mark dirty range for synthesis
   if (!notes.empty())
   {

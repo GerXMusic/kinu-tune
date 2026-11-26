@@ -143,8 +143,9 @@ float computeMean(const std::vector<float>& deltaPitch) {
 }
 
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
-                                           float tiltLeft,
-                                           float tiltRight,
+                                           float tilt,
+                                           float fineLeft,
+                                           float fineRight,
                                            float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
@@ -166,15 +167,23 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
   // This retains the established 0% vibrato = flat behavior.
   result = scalePitchDrift(result, pitchDrift);
 
-  // 2. Apply tilt transformations (combined left + right)
-  // TiltLeft: pivot at right (1.0), negative amount
-  if (std::abs(tiltLeft) > 0.001f) {
-    result = tiltDeltaPitch(result, 1.0f, -tiltLeft);
-  }
-  
-  // TiltRight: pivot at left (0.0), positive amount
-  if (std::abs(tiltRight) > 0.001f) {
-    result = tiltDeltaPitch(result, 0.0f, tiltRight);
+  // 2. Tilt: three independent layers, all anchored at the note centre
+  // (D-308). The general layer rotates the whole note around the centre:
+  // left edge +tilt, centre 0, right edge -tilt. Each fine layer moves one
+  // half only and is exactly 0 on the other half, so moving one never touches
+  // the other side (bit-identical there).
+  if (result.size() > 1 &&
+      (std::abs(tilt) > 0.001f || std::abs(fineLeft) > 0.001f ||
+       std::abs(fineRight) > 0.001f)) {
+    const float invLastIndex = 1.0f / static_cast<float>(result.size() - 1);
+    for (size_t i = 0; i < result.size(); ++i) {
+      const float p = static_cast<float>(i) * invLastIndex;
+      result[i] += tilt * (1.0f - 2.0f * p);
+      if (p < 0.5f)
+        result[i] += fineLeft * (1.0f - 2.0f * p);
+      else if (p > 0.5f)
+        result[i] += fineRight * (2.0f * p - 1.0f);
+    }
   }
 
   // 3. Apply boundary smoothing

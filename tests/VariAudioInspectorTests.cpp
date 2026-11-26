@@ -166,6 +166,8 @@ int main()
     }
 
     // --- Tilt moved from the note overlay to the inspector ----------------
+    // D-308: the two edge rows write their fine layer; the general tilt is
+    // untouched.
     {
         Fixture f;
         f.note(0).setSelected(true);
@@ -174,94 +176,91 @@ int main()
         f.roll.beginInspectorEdit(Param::TiltLeft);
         f.roll.setInspectorEditValue(1.0f);
         f.roll.endInspectorEdit();
-        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 1.0f));
+        CHECK(near(f.note(0).getTilt(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineRight(), 0.0f));
         CHECK(near(*f.roll.getInspectorValue(Param::TiltLeft), 1.0f));
         CHECK(f.history.getUndoName() == "Tilt Left");
         // D-306: inclinar no mueve el cuerpo.
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         f.history.undo();
-        CHECK(near(f.note(0).getTiltLeft(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         f.history.redo();
-        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 1.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         f.history.undo();
 
         f.roll.beginInspectorEdit(Param::TiltRight);
         f.roll.setInspectorEditValue(-1.5f);
         f.roll.endInspectorEdit();
-        CHECK(near(f.note(0).getTiltRight(), -1.5f));
+        CHECK(near(f.note(0).getTiltFineRight(), -1.5f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.0f));
+        CHECK(near(f.note(0).getTilt(), 0.0f));
         CHECK(near(*f.roll.getInspectorValue(Param::TiltRight), -1.5f));
         CHECK(f.history.getUndoName() == "Tilt Right");
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         f.history.undo();
-        CHECK(near(f.note(0).getTiltRight(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineRight(), 0.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
     }
 
-    // --- D-307: inclinacion simetrica --------------------------------------
+    // --- D-308: el Tilt general es su propia capa -------------------------
     {
         Fixture f;
         f.note(0).setSelected(true);
         const float beforeMidi = f.note(0).getMidiNote();
         CHECK(near(*f.roll.getInspectorValue(Param::Tilt), 0.0f));
-        // Comun 0: v positivo deja left=+v, right=-v.
+        // Las otras dos capas no se tocan: el general solo escribe `tilt`.
+        f.note(0).setTiltFineLeft(0.25f);
+        f.note(0).setTiltFineRight(-0.5f);
         f.roll.beginInspectorEdit(Param::Tilt);
         f.roll.setInspectorEditValue(1.0f);
         f.roll.endInspectorEdit();
-        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
-        CHECK(near(f.note(0).getTiltRight(), -1.0f));
+        CHECK(near(f.note(0).getTilt(), 1.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.25f));
+        CHECK(near(f.note(0).getTiltFineRight(), -0.5f));
         CHECK(near(*f.roll.getInspectorValue(Param::Tilt), 1.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         CHECK(f.history.getUndoName() == "Tilt");
         f.history.undo();
-        CHECK(near(f.note(0).getTiltLeft(), 0.0f));
-        CHECK(near(f.note(0).getTiltRight(), 0.0f));
+        CHECK(near(f.note(0).getTilt(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.25f));
+        CHECK(near(f.note(0).getTiltFineRight(), -0.5f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
         f.history.redo();
-        CHECK(near(f.note(0).getTiltLeft(), 1.0f));
-        CHECK(near(f.note(0).getTiltRight(), -1.0f));
-        f.history.undo();
-
-        // Comun 0,5: se conserva y el slider solo mueve la parte simetrica.
-        f.note(0).setTiltLeft(1.5f);
-        f.note(0).setTiltRight(-0.5f);
-        f.roll.beginInspectorEdit(Param::Tilt);
-        f.roll.setInspectorEditValue(0.75f);
-        f.roll.endInspectorEdit();
-        CHECK(near(f.note(0).getTiltLeft(), 1.25f));
-        CHECK(near(f.note(0).getTiltRight(), -0.25f));
+        CHECK(near(f.note(0).getTilt(), 1.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
     }
 
-    // --- D-307: seleccion multiple, cada nota conserva su comun ------------
+    // --- D-308: seleccion multiple, una capa por nota ---------------------
     {
         Fixture f;
         f.note(0).setSelected(true);
         f.note(1).setSelected(true);
-        f.note(0).setTiltLeft(0.0f);   // comun 0
-        f.note(0).setTiltRight(0.0f);
-        f.note(1).setTiltLeft(2.0f);   // comun 1,0
-        f.note(1).setTiltRight(0.0f);
+        f.note(0).setTiltFineLeft(0.25f);
+        f.note(1).setTiltFineLeft(-0.75f);
         f.roll.beginInspectorEdit(Param::Tilt);
         f.roll.setInspectorEditValue(0.5f);
         f.roll.endInspectorEdit();
-        CHECK(near(f.note(0).getTiltLeft(), 0.5f));
-        CHECK(near(f.note(0).getTiltRight(), -0.5f));
-        CHECK(near(f.note(1).getTiltLeft(), 1.5f));
-        CHECK(near(f.note(1).getTiltRight(), 0.5f));
+        CHECK(near(f.note(0).getTilt(), 0.5f));
+        CHECK(near(f.note(1).getTilt(), 0.5f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.25f));
+        CHECK(near(f.note(1).getTiltFineLeft(), -0.75f));
     }
 
-    // --- D-307: restablecer deja las dos inclinaciones a 0 ----------------
+    // --- D-308: restablecer deja las tres capas a 0 ----------------------
     {
         Fixture f;
-        f.note(0).setTiltLeft(1.0f);
-        f.note(0).setTiltRight(-1.0f);
+        f.note(0).setTilt(1.0f);
+        f.note(0).setTiltFineLeft(0.25f);
+        f.note(0).setTiltFineRight(-0.5f);
         const float beforeMidi = f.note(0).getMidiNote();
         f.note(0).setSelected(true);
         f.roll.resetSelection(PianoRollComponent::NoteRestoreMode::Pitch);
-        CHECK(near(f.note(0).getTiltLeft(), 0.0f));
-        CHECK(near(f.note(0).getTiltRight(), 0.0f));
+        CHECK(near(f.note(0).getTilt(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineLeft(), 0.0f));
+        CHECK(near(f.note(0).getTiltFineRight(), 0.0f));
         CHECK(near(f.note(0).getMidiNote(), beforeMidi));
     }
 

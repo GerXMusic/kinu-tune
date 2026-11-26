@@ -221,6 +221,13 @@ target_link_libraries(TiltCenterTests PRIVATE pitchnet_ui)
 target_compile_features(TiltCenterTests PRIVATE cxx_std_17)
 add_test(NAME TiltCenterTests COMMAND TiltCenterTests)
 
+# D-308: tres capas de inclinacion independientes (general + un fino por
+# mitad), con curva compuesta, undo/redo, JSON y corte de nota inclinada.
+add_executable(TiltIndependenceTests TiltIndependenceTests.cpp)
+target_link_libraries(TiltIndependenceTests PRIVATE pitchnet_ui)
+target_compile_features(TiltIndependenceTests PRIVATE cxx_std_17)
+add_test(NAME TiltIndependenceTests COMMAND TiltIndependenceTests)
+
 # D-266 (T6): estado unico derivado del render (tabla de transiciones).
 add_executable(RenderStateTests RenderStateTests.cpp)
 target_link_libraries(RenderStateTests PRIVATE pitchnet_core)

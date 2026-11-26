@@ -1,6 +1,7 @@
 #include "NoteSplitter.h"
 #include "../../Utils/NoteAmplitude.h"
 #include "../../Utils/Constants.h"
+#include "../../Utils/CurveResampler.h"
 #include "../../Utils/NotePitch.h"
 #include <algorithm>
 #include <cmath>
@@ -103,6 +104,45 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     const float rightMean =
         calculatePitchCenter(audioForSplit, splitFrame, endFrame, parentEditCenter);
 
+    // D-308: a split used to rebuild each half's tilt ramp from its own new
+    // duration, so an inclined note jumped by 2*tilt at the cut. The fix is to
+    // commit the parent's transformed contour into `bakedDeltaPitch` and leave
+    // both halves neutral (all three tilt layers = 0). The baked curve is the
+    // parent's active delta (resampled to its frame count) plus the three
+    // ramps evaluated over the parent's frames, split at the cut. The base is
+    // the render centre, which both halves keep in renderCenterOffset, so the
+    // composite curve (base + delta) is the same before and after the split.
+    const int parentFrames = endFrame - startFrame;
+    std::vector<float> parentCurve = note->getActiveDeltaPitch();
+    if (!parentCurve.empty() &&
+        static_cast<int>(parentCurve.size()) != parentFrames)
+        parentCurve = CurveResampler::resampleLinear(parentCurve, parentFrames);
+    if (!parentCurve.empty() && parentCurve.size() > 1)
+    {
+        const float parentTilt = note->getTilt();
+        const float parentFineLeft = note->getTiltFineLeft();
+        const float parentFineRight = note->getTiltFineRight();
+        const float invLastIndex = 1.0f / static_cast<float>(parentCurve.size() - 1);
+        for (size_t i = 0; i < parentCurve.size(); ++i)
+        {
+            const float p = static_cast<float>(i) * invLastIndex;
+            parentCurve[i] += parentTilt * (1.0f - 2.0f * p);
+            if (p < 0.5f)
+                parentCurve[i] += parentFineLeft * (1.0f - 2.0f * p);
+            else if (p > 0.5f)
+                parentCurve[i] += parentFineRight * (2.0f * p - 1.0f);
+        }
+    }
+    std::vector<float> leftBaked, rightBaked;
+    if (!parentCurve.empty())
+    {
+        const int splitOffset =
+            std::clamp(splitFrame - startFrame, 0,
+                       static_cast<int>(parentCurve.size()));
+        leftBaked.assign(parentCurve.begin(), parentCurve.begin() + splitOffset);
+        rightBaked.assign(parentCurve.begin() + splitOffset, parentCurve.end());
+    }
+
     // Create the second note (right part)
     Note secondNote;
     secondNote.setStartFrame(splitFrame);
@@ -128,8 +168,6 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setPhoneme(note->getPhoneme());
     secondNote.setVolumeDb(note->getVolumeDb());
     secondNote.setSelected(note->isSelected());
-    secondNote.setTiltLeft(note->getTiltLeft());
-    secondNote.setTiltRight(note->getTiltRight());
     secondNote.setVibrato(note->getVibrato());
     secondNote.setPitchDrift(note->getPitchDrift());
     secondNote.setFormantShift(note->getFormantShift());
@@ -192,15 +230,19 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         secondNote.setDeltaPitch(std::move(rightDelta));
     }
 
-    if (note->hasBakedDeltaPitch()) {
-        const auto& delta = note->getBakedDeltaPitch();
-        int splitOffset = splitFrame - startFrame;
-        splitOffset = std::clamp(splitOffset, 0, static_cast<int>(delta.size()));
-        std::vector<float> leftDelta(delta.begin(), delta.begin() + splitOffset);
-        std::vector<float> rightDelta(delta.begin() + splitOffset, delta.end());
-        note->setBakedDeltaPitch(std::move(leftDelta));
-        secondNote.setBakedDeltaPitch(std::move(rightDelta));
+    // D-308: the tilt contour is already committed in the baked delta above;
+    // both halves stay neutral so no ramp is rebuilt from the new durations.
+    if (!leftBaked.empty() || !rightBaked.empty())
+    {
+        note->setBakedDeltaPitch(std::move(leftBaked));
+        secondNote.setBakedDeltaPitch(std::move(rightBaked));
     }
+    note->setTilt(0.0f);
+    note->setTiltFineLeft(0.0f);
+    note->setTiltFineRight(0.0f);
+    secondNote.setTilt(0.0f);
+    secondNote.setTiltFineLeft(0.0f);
+    secondNote.setTiltFineRight(0.0f);
 
     const auto& f0Values = note->getF0Values();
     if (!f0Values.empty()) {

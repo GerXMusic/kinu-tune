@@ -959,12 +959,13 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         return;
       }
 
-      // TiltLeft: Reset tiltLeft to 0
+      // D-308: the corner handles reset their own fine layer; the general tilt
+      // and the other half stay where they are.
       if (handle.type ==
           PitchToolHandles::HandleType::TiltLeft)
       {
         auto selectedNotes = project->getSelectedNotes();
-        std::vector<float> oldTilts;
+        std::vector<float> oldTilts, oldFineLeft, oldFineRight;
         std::vector<float> oldMidiNotes;
         std::vector<float> oldSources;
 
@@ -972,12 +973,13 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         {
           if (note)
           {
-            oldTilts.push_back(note->getTiltLeft());
+            oldTilts.push_back(note->getTilt());
+            oldFineLeft.push_back(note->getTiltFineLeft());
+            oldFineRight.push_back(note->getTiltFineRight());
             oldMidiNotes.push_back(note->getMidiNote());
             oldSources.push_back(note->getLastNonMacroMidiNote());
-            // D-306: inclinar no mueve el cuerpo; resetear tampoco. Se pone el
-            // tilt a 0 y el midiNote y la referencia de correccion se quedan.
-            note->setTiltLeft(0.0f);
+            // D-306: inclinar no mueve el cuerpo; resetear tampoco.
+            note->setTiltFineLeft(0.0f);
             note->markDirty();
           }
         }
@@ -985,7 +987,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         if (owner_.undoManager)
           owner_.undoManager->addAction(std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Left,
-              oldTilts, oldMidiNotes,
+              oldTilts, oldFineLeft, oldFineRight, oldMidiNotes,
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); },
               oldSources));
@@ -994,12 +996,12 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         return;
       }
 
-      // TiltRight: Reset tiltRight to 0
+      // TiltRight: reset the right fine layer
       if (handle.type ==
           PitchToolHandles::HandleType::TiltRight)
       {
         auto selectedNotes = project->getSelectedNotes();
-        std::vector<float> oldTilts;
+        std::vector<float> oldTilts, oldFineLeft, oldFineRight;
         std::vector<float> oldMidiNotes;
         std::vector<float> oldSources;
 
@@ -1007,11 +1009,13 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         {
           if (note)
           {
-            oldTilts.push_back(note->getTiltRight());
+            oldTilts.push_back(note->getTilt());
+            oldFineLeft.push_back(note->getTiltFineLeft());
+            oldFineRight.push_back(note->getTiltFineRight());
             oldMidiNotes.push_back(note->getMidiNote());
             oldSources.push_back(note->getLastNonMacroMidiNote());
             // D-306: same as the left reset: the body and the reference stay.
-            note->setTiltRight(0.0f);
+            note->setTiltFineRight(0.0f);
             note->markDirty();
           }
         }
@@ -1019,7 +1023,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         if (owner_.undoManager)
           owner_.undoManager->addAction(std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Right,
-              oldTilts, oldMidiNotes,
+              oldTilts, oldFineLeft, oldFineRight, oldMidiNotes,
               [project, selectedNotes]()
               { rebuildProjectForNotes(project, selectedNotes); },
               oldSources));

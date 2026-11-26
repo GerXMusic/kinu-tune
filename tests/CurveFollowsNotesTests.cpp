@@ -262,17 +262,18 @@ int main() {
     checkCurveFollows(f, "D-303 renderCenterOffset");
   }
 
-  // --- D-306: inclinar no mueve el cuerpo, la base resta la media del tilt --
+  // --- D-308: inclinar no mueve el cuerpo; la base ES el centro ------------
   {
     Fixture f;
     const float beforeMidi = f.note(1).getMidiNote();
-    f.note(1).setTiltLeft(1.5f);
-    f.note(1).setTiltRight(-1.0f);
+    f.note(1).setTilt(1.25f);
+    f.note(1).setTiltFineLeft(0.25f);
+    f.note(1).setTiltFineRight(-0.25f);
     PitchCurveProcessor::rebuildBaseFromNotes(f.project);
-    std::printf("D-306 nota inclinada: cuerpo %.2f -> %.2f\n", beforeMidi,
+    std::printf("D-308 nota inclinada: cuerpo %.2f -> %.2f\n", beforeMidi,
                 f.note(1).getMidiNote());
     CHECK(std::abs(f.note(1).getMidiNote() - beforeMidi) <= 1.0e-4f);
-    checkCurveFollows(f, "D-306 nota inclinada");
+    checkCurveFollows(f, "D-308 nota inclinada");
   }
 
   // --- D-304: la curva es una sola polilinea entre notas contiguas ---------

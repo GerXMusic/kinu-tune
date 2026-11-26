@@ -487,8 +487,9 @@ void PitchDrawingHandler::applyPreviewToProject()
     // Keep the live note center calculated by updateAffectedNotePositions(),
     // but make the per-note transforms neutral before deriving the base curve
     // for the baked preview contour.
-    note.setTiltLeft(0.0f);
-    note.setTiltRight(0.0f);
+    note.setTilt(0.0f);
+    note.setTiltFineLeft(0.0f);
+    note.setTiltFineRight(0.0f);
     note.setVibrato(1.0f);
     note.setPitchDrift(1.0f);
     note.setSmoothLeftFrames(0);

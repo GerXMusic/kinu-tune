@@ -575,13 +575,13 @@ float Project::maxCurveNotesDisagreement() const
             referenceMidi = freqToMidi(hz);
         }
 
-        // D-303: la base se compara con el centro de RENDER (menos la media del
-        // tilt, que la base ya resta). Con el centro visible, una nota cortada
-        // (que lo mueve a la media local) o inclinada dispararia la reparacion
-        // al cargar y re-renderizaria un proyecto sano.
+        // D-303/D-308: la base se compara con el centro de RENDER. Desde D-308
+        // la base ya no resta la media del tilt (el cuerpo ES el centro y las
+        // tres capas viven solo en el delta). Con el centro visible, una nota
+        // cortada (que lo mueve a la media local) no dispara la reparacion al
+        // cargar ni re-renderiza un proyecto sano.
         const float renderCenter = note.getMidiNote() + note.getPitchOffset() +
-                                   note.getRenderCenterOffset() -
-                                   (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
+                                   note.getRenderCenterOffset();
         worst = std::max(worst, std::abs(referenceMidi - renderCenter));
     }
     return worst;

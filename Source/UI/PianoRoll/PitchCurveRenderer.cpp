@@ -93,14 +93,13 @@ void PitchCurveRenderer::updateBasePitchCacheIfNeeded()
       {
         if (!note.isRest())
         {
-          // D-303: same base center the audio uses (PitchCurveProcessor's
-          // collectNoteSegments): render center minus the tilt mean.
+          // D-303/D-308: same base centre the audio uses. Since D-308 the base
+          // no longer subtracts the tilt mean: the body is the centre and the
+          // three tilt layers live only in the delta.
           const float audioCenter = note.getMidiNote() + note.getPitchOffset() +
                                     note.getRenderCenterOffset();
           noteSegments.push_back(
-              {note.getStartFrame(), note.getEndFrame(),
-               audioCenter -
-                   (note.getTiltLeft() + note.getTiltRight()) / 2.0f,
+              {note.getStartFrame(), note.getEndFrame(), audioCenter,
                audioCenter - note.getOriginalMidiNote()});
         }
       }

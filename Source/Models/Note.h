@@ -230,11 +230,17 @@ public:
         return deltaPitch;
     }
 
-    // Pitch tool transformation parameters (non-destructive)
-    float getTiltLeft() const { return tiltLeft; }
-    void setTiltLeft(float tilt) { tiltLeft = tilt; }
-    float getTiltRight() const { return tiltRight; }
-    void setTiltRight(float tilt) { tiltRight = tilt; }
+    // Pitch tool transformation parameters (non-destructive). D-308: three
+    // independent layers, all anchored at the note centre (the body never
+    // moves): `tilt` rotates the whole note (left = centre + t, right = centre
+    // - t); `tiltFineLeft` only moves the left half (edge -> centre);
+    // `tiltFineRight` only moves the right half (centre -> edge).
+    float getTilt() const { return tilt; }
+    void setTilt(float value) { tilt = value; }
+    float getTiltFineLeft() const { return tiltFineLeft; }
+    void setTiltFineLeft(float value) { tiltFineLeft = value; }
+    float getTiltFineRight() const { return tiltFineRight; }
+    void setTiltFineRight(float value) { tiltFineRight = value; }
     // Scales deviations from the note center: 1.0 preserves the recorded
     // contour, 0.0 flattens it, and negative values invert it. The range is
     // limited to -10.0 through 10.0 (-1000% through 1000%).
@@ -378,8 +384,10 @@ private:
     std::vector<float> bakedDeltaPitch; // Optional committed editable contour
 
     // Pitch tool transformation parameters (non-destructive, stored as parameters)
-    float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
-    float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
+    // D-308: see the accessors. General tilt plus one fine layer per half.
+    float tilt = 0.0f;               // General tilt (semitones, left +, right -)
+    float tiltFineLeft = 0.0f;       // Left half only (edge -> centre)
+    float tiltFineRight = 0.0f;      // Right half only (centre -> edge)
     float vibrato = 1.0f;            // 1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert
     float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary

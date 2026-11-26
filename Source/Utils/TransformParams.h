@@ -9,8 +9,9 @@
  */
 struct TransformParams
 {
-    float tiltLeft = 0.0f;
-    float tiltRight = 0.0f;
+    float tilt = 0.0f;
+    float tiltFineLeft = 0.0f;
+    float tiltFineRight = 0.0f;
     float formantShift = 0.0f;
     float volumeDb = 0.0f;
     float vibrato = 1.0f;
@@ -30,8 +31,9 @@ struct TransformParams
     static TransformParams fromNote(const Note& note)
     {
         TransformParams p;
-        p.tiltLeft = note.getTiltLeft();
-        p.tiltRight = note.getTiltRight();
+        p.tilt = note.getTilt();
+        p.tiltFineLeft = note.getTiltFineLeft();
+        p.tiltFineRight = note.getTiltFineRight();
         p.formantShift = note.getFormantShift();
         p.volumeDb = note.getVolumeDb();
         p.vibrato = note.getVibrato();
@@ -50,8 +52,9 @@ struct TransformParams
     void applyToNote(Note& note) const
     {
         NotePitch::restore(note, midiNote, correctionSource);
-        note.setTiltLeft(tiltLeft);
-        note.setTiltRight(tiltRight);
+        note.setTilt(tilt);
+        note.setTiltFineLeft(tiltFineLeft);
+        note.setTiltFineRight(tiltFineRight);
         note.setVibrato(vibrato);
         note.setPitchDrift(pitchDrift);
         note.setFormantShift(formantShift);
@@ -65,8 +68,9 @@ struct TransformParams
 
     bool operator==(const TransformParams& other) const
     {
-        return tiltLeft == other.tiltLeft &&
-               tiltRight == other.tiltRight &&
+        return tilt == other.tilt &&
+               tiltFineLeft == other.tiltFineLeft &&
+               tiltFineRight == other.tiltFineRight &&
                formantShift == other.formantShift &&
                volumeDb == other.volumeDb &&
                vibrato == other.vibrato &&
@@ -87,8 +91,9 @@ struct TransformParams
 
     bool isIdentity() const
     {
-        return tiltLeft == 0.0f &&
-               tiltRight == 0.0f &&
+        return tilt == 0.0f &&
+               tiltFineLeft == 0.0f &&
+               tiltFineRight == 0.0f &&
                formantShift == 0.0f &&
                volumeDb == 0.0f &&
                vibrato == 1.0f &&

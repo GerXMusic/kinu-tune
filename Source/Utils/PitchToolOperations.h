@@ -64,12 +64,15 @@ struct AdjacentNoteContext
  * This function chains multiple transformations in order:
  * 1. Vibrato scaling
  * 2. Slow pitch-drift scaling
- * 3. Tilt (left and right combined)
+ * 3. Tilt (three independent layers, D-308: general + one fine per half,
+ *    all anchored at the note centre; the body does not move)
  * 4. Boundary smoothing (left and right)
  * 
  * @param originalDelta The pristine deltaPitch curve from analysis (never modified)
- * @param tiltLeft Tilt amount at left edge in semitones
- * @param tiltRight Tilt amount at right edge in semitones
+ * @param tilt General tilt in semitones: left edge = centre + tilt,
+ *             right edge = centre - tilt. The centre stays put.
+ * @param fineLeft Left half only (edge -> centre), 0 on the right half
+ * @param fineRight Right half only (centre -> edge), 0 on the left half
  * @param vibrato Vibrato factor (1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert)
  * @param smoothLeftFrames Smoothing transition length at left boundary
  * @param smoothRightFrames Smoothing transition length at right boundary
@@ -78,8 +81,9 @@ struct AdjacentNoteContext
  * @return Transformed deltaPitch curve
  */
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
-                                           float tiltLeft,
-                                           float tiltRight,
+                                           float tilt,
+                                           float fineLeft,
+                                           float fineRight,
                                            float vibrato,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,

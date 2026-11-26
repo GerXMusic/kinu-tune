@@ -112,8 +112,9 @@ private:
 };
 
 /**
- * Action for resetting tilt values on multiple notes.
- * Used for double-click on TiltLeft/TiltRight handles to reset to 0.
+ * Action for resetting one tilt layer on multiple notes.
+ * Used for double-click on the TiltLeft/TiltRight handles: each corner resets
+ * its own fine layer (D-308). The general tilt and the other fine stay put.
  */
 class TiltResetAction : public UndoableAction
 {
@@ -126,14 +127,17 @@ public:
 
     // oldSources: Correct Pitch references to restore, one per note (see
     // NotePitch). D-306: tilt no longer moves the body, so undo and redo both
-    // put back the same midiNote / reference; only the tilt side differs.
+    // put back the same midiNote / reference; only the fine layer differs.
     TiltResetAction(const std::vector<Note *> &notes,
                     TiltSide side,
                     const std::vector<float> &oldTilts,
+                    const std::vector<float> &oldFineLeft,
+                    const std::vector<float> &oldFineRight,
                     const std::vector<float> &oldMidiNotes,
                     std::function<void()> onChanged,
                     std::vector<float> oldSources)
         : notes(notes), side(side), oldTilts(oldTilts),
+          oldFineLeft(oldFineLeft), oldFineRight(oldFineRight),
           oldMidiNotes(oldMidiNotes), onChanged(onChanged),
           oldSources(std::move(oldSources)) {}
 
@@ -143,10 +147,13 @@ public:
         {
             if (notes[i])
             {
-                if (side == TiltSide::Left)
-                    notes[i]->setTiltLeft(oldTilts[i]);
-                else
-                    notes[i]->setTiltRight(oldTilts[i]);
+                // D-308: restore all three layers so undo is exact even if the
+                // note was edited elsewhere in between.
+                notes[i]->setTilt(oldTilts[i]);
+                if (i < oldFineLeft.size())
+                    notes[i]->setTiltFineLeft(oldFineLeft[i]);
+                if (i < oldFineRight.size())
+                    notes[i]->setTiltFineRight(oldFineRight[i]);
 
                 if (i < oldMidiNotes.size() && i < oldSources.size())
                     NotePitch::restore(*notes[i], oldMidiNotes[i], oldSources[i]);
@@ -166,12 +173,12 @@ public:
             if (notes[i])
             {
                 if (side == TiltSide::Left)
-                    notes[i]->setTiltLeft(0.0f);
+                    notes[i]->setTiltFineLeft(0.0f);
                 else
-                    notes[i]->setTiltRight(0.0f);
+                    notes[i]->setTiltFineRight(0.0f);
 
                 // D-306: the body and the Correct Pitch reference stay where
-                // they were; only the tilt goes back to 0.
+                // they were; the general tilt and the other fine are untouched.
                 if (i < oldMidiNotes.size() && i < oldSources.size())
                     NotePitch::restore(*notes[i], oldMidiNotes[i], oldSources[i]);
 
@@ -192,6 +199,8 @@ private:
     std::vector<Note *> notes;
     TiltSide side;
     std::vector<float> oldTilts;
+    std::vector<float> oldFineLeft;
+    std::vector<float> oldFineRight;
     std::vector<float> oldMidiNotes;
     std::function<void()> onChanged;
     std::vector<float> oldSources;

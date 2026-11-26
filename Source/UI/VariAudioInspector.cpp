@@ -312,7 +312,8 @@ VariAudioInspector::VariAudioInspector()
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
     rows[4] = std::make_unique<ValueRow>(Param::Volume, -60.0, 12.0, 0.0, 0.1);
     rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
-    // D-307: one symmetric tilt control, then the two absolute edges.
+    // D-308: one general tilt control and the two independent fine layers
+    // (left half / right half).
     rows[6] = std::make_unique<ValueRow>(Param::Tilt, -12.0, 12.0, 0.0, 0.1);
     rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
     rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
