@@ -6424,6 +6424,20 @@ void MainComponent::updateHostTimelineState(double bpm, int numerator,
   pianoRoll.setTimelineBeatSignature(numerator, denominator);
 }
 
+void MainComponent::updateHostTempoMap(
+    std::shared_ptr<const HostTempoMap> tempoMap)
+{
+  if (!isPluginMode())
+    return;
+
+  // Same snapshot: nothing to repaint or rebuild.
+  if (hostTempoMap == tempoMap)
+    return;
+
+  hostTempoMap = std::move(tempoMap);
+  pianoRoll.setHostTempoMap(hostTempoMap);
+}
+
 void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,
                                         bool enabled, bool hasRange)
 {

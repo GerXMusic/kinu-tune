@@ -358,6 +358,12 @@ option(PITCHNET_DEV_BUILD "Build with a separate development plugin identity" OF
 # by default - release builds contain none of it.
 option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF)
 
+# D-310 G1 probe: writes the host tempo map (contexts, entry count, first/last
+# sync point, grade and the active region's start times) to
+# %APPDATA%/TuneX/Logs/tempo_map_probe.log whenever it changes. One-off builds
+# only; the product builds leave it OFF and the code is compiled out.
+option(PITCHNET_TEMPO_MAP_PROBE "Record the ARA tempo map for the G1 gate" OFF)
+
 # TuneX is a modified version of PitchNet (Session Loops), itself derived
 # from HachiTune. It ships under its own vendor identity so it installs next to
 # PitchNet instead of replacing it.
@@ -500,6 +506,11 @@ endif()
 if(ARA_AVAILABLE)
     target_compile_definitions(PitchNetPlugin PRIVATE
         JucePlugin_Enable_ARA=1)
+    if(PITCHNET_TEMPO_MAP_PROBE)
+        target_compile_definitions(PitchNetPlugin PRIVATE
+            PITCHNET_TEMPO_MAP_PROBE=1)
+        message(STATUS "TuneX: tempo-map G1 probe ENABLED")
+    endif()
     if(PITCHNET_ARA_DIAGNOSTICS)
         target_compile_definitions(PitchNetPlugin PRIVATE
             PITCHNET_ARA_DIAGNOSTICS=1)
@@ -566,6 +577,7 @@ file(GLOB PLUGIN_SOURCES
     "Source/Plugin/AAX_VARABinding.cpp"
     "Source/Plugin/ARADocumentController.cpp" "Source/Plugin/ARADocumentController.h"
     "Source/Plugin/NonAraCaptureController.cpp" "Source/Plugin/NonAraCaptureController.h"
+    "Source/Plugin/ARATempoMapReader.cpp" "Source/Plugin/ARATempoMapReader.h"
     "Source/Plugin/HostCompatibility.cpp" "Source/Plugin/HostCompatibility.h")
 
 target_sources(PitchNet PRIVATE

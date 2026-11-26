@@ -3639,6 +3639,18 @@ void PianoRollComponent::setTimelineTempoBpm(double bpm)
   repaint();
 }
 
+void PianoRollComponent::setHostTempoMap(
+    std::shared_ptr<const HostTempoMap> tempoMap)
+{
+  if (hostTempoMap == tempoMap)
+    return;
+
+  hostTempoMap = std::move(tempoMap);
+  // D-310 step 1 publishes the snapshot only: the grid still uses the constant
+  // BPM (its own phase), and the MIDI guide reads this map to place ghosts.
+  // No repaint here on purpose: nothing on screen depends on it yet.
+}
+
 void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division)
 {
   if (timelineGridDivision == division)

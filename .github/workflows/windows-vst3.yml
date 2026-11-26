@@ -19,6 +19,10 @@ on:
         description: "Branch, tag or commit to build (empty = the ref this run is dispatched from)"
         required: false
         default: ""
+      tempo_probe:
+        description: "G1: record the ARA tempo map in one-off builds (ON/OFF)"
+        required: false
+        default: "OFF"
 
 permissions:
   contents: read
@@ -47,6 +51,7 @@ jobs:
           -DUSE_BUNDLED_DIRECTML_RUNTIME=ON
           -DUSE_ASIO=OFF
           -DPITCHNET_ARA_DIAGNOSTICS=OFF
+          -DPITCHNET_TEMPO_MAP_PROBE=${{ inputs.tempo_probe || 'OFF' }}
           -DPITCHNET_BUILD_TESTS=OFF
 
       - name: Build the VST3

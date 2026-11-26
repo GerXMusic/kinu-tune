@@ -57,6 +57,9 @@ private:
     // Rebuild the Regions card's region list and push it to the UI, but only
     // when it actually differs from what the card already shows.
     void refreshAraRegionList();
+    // D-310: read the host tempo map (message thread) and publish it to the
+    // view when it changed. No-op outside ARA.
+    void refreshHostTempoMap();
     // Switch the canvas to a region the user picked in the Regions card, or
     // clicked on the canvas. A canvas click leaves the view where it is
     // (focusView = false): the region is already on screen.
@@ -118,6 +121,9 @@ private:
     // drawn on the canvas. Never contains the active track.
     std::set<juce::String> pinnedTrackKeys;
     int regionListRefreshCountdown = 0;
+    // D-310: signature of the last tempo map published (probe + map summary),
+    // so the timer only republishes when the host map really changed.
+    juce::String lastTempoMapSignature;
 #endif
     bool lunaSoftwareRendererApplied = false;
     // D-178: ignore the host's initial selection for a short grace period, so

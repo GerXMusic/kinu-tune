@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/Engine/HostTempoMap.h"
 #include "RegionPreview.h"
 #include <functional>
 #include <memory>
@@ -190,6 +191,10 @@ public:
   virtual bool isFlushChainActive() const { return false; }
   virtual void updateHostTimelineState(double bpm, int numerator,
                                        int denominator) = 0;
+  // D-310: the host tempo map as an immutable snapshot. Null means the host
+  // gave no usable map and the view keeps its constant-BPM fallback.
+  virtual void updateHostTempoMap(
+      std::shared_ptr<const HostTempoMap> /*tempoMap*/) {}
   virtual void updateHostLoopRange(double startSeconds, double endSeconds,
                                    bool enabled, bool hasRange) = 0;
   virtual void notifyHostStopped() = 0;

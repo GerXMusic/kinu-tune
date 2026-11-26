@@ -288,6 +288,8 @@ public:
   void updateHostPlaybackState(bool isPlaying) override;
   void updateHostTimelineState(double bpm, int numerator,
                                int denominator) override;
+  void updateHostTempoMap(
+      std::shared_ptr<const HostTempoMap> tempoMap) override;
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback
@@ -763,6 +765,9 @@ private:
   double cachedHostTempoBpm = 120.0;
   int cachedHostBeatNumerator = 4;
   int cachedHostBeatDenominator = 4;
+  // D-310: the host tempo map snapshot. Null means "no usable host map"; the
+  // cached BPM above is then the fallback, exactly as before.
+  std::shared_ptr<const HostTempoMap> hostTempoMap;
 
   bool hasCachedHostLoopRange = false;
   double cachedHostLoopStartSeconds = 0.0;

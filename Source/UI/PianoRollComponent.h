@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Audio/Synthesis/EngineBlocks.h"
+#include "../Audio/Engine/HostTempoMap.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
@@ -286,6 +287,13 @@ public:
   double timelineToProject(double timelineSeconds) const;
   void setTimelineBeatSignature(int numerator, int denominator);
   void setTimelineTempoBpm(double bpm);
+  // D-310: the host tempo map snapshot. Null means "no usable host map" and
+  // the constant BPM above stays the fallback. Published by the editor timer;
+  // consumed by the grid phase and by the MIDI guide when placing ghosts.
+  void setHostTempoMap(std::shared_ptr<const HostTempoMap> tempoMap);
+  std::shared_ptr<const HostTempoMap> getHostTempoMap() const {
+    return hostTempoMap;
+  }
   void setTimelineGridDivision(TimelineGridDivision division);
   void setTimelineSnapCycle(bool enabled);
 
@@ -714,6 +722,8 @@ private:
   int &timelineBeatNumerator = viewState.timelineBeatNumerator;
   int &timelineBeatDenominator = viewState.timelineBeatDenominator;
   double &timelineTempoBpm = viewState.timelineTempoBpm;
+  // D-310: host tempo map snapshot (null = constant-BPM fallback).
+  std::shared_ptr<const HostTempoMap> hostTempoMap;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
   bool &timelineSnapCycle = viewState.timelineSnapCycle;
   bool &cycleEditEnabled = viewState.cycleEditEnabled;

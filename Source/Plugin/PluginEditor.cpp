@@ -11,6 +11,7 @@
 
 #if JucePlugin_Enable_ARA
 #include "ARADocumentController.h"
+#include "ARATempoMapReader.h"
 #include "AraSelectionPolicy.h"
 #include "PitchNetAudioModification.h"
 #include "SingleWindowPolicy.h"
@@ -720,6 +721,7 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
     startTimerHz(kRegionListRefreshHz);
 
   refreshAraRegionList();
+  refreshHostTempoMap();
 
   // D-178: the editor renderer carries this instance's region sequence (track)
   // even when the playback renderer has no regions yet (REAPER). Use that
@@ -788,6 +790,9 @@ void PitchNetAudioProcessorEditor::timerCallback() {
     regionListRefreshCountdown =
         juce::jmax(1, (1000 / kRegionListRefreshHz) / interval);
     refreshAraRegionList();
+    // D-310: same cadence; the ARA content reader must stay off the audio
+    // thread and off the paint path.
+    refreshHostTempoMap();
   }
 #endif
 }
@@ -983,6 +988,67 @@ PitchNetAudioProcessorEditor::collectAraPlaybackRegions() const {
                             b->getStartInPlaybackTime();
                    });
   return regions;
+}
+
+void PitchNetAudioProcessorEditor::refreshHostTempoMap() {
+  auto *editorView = getARAEditorView();
+  if (editorView == nullptr || mainView == nullptr)
+    return;
+
+  // Pick the region being edited; fall back to the host selection and finally
+  // to any region, so the map is published even before a region is "current"
+  // (the tempo map belongs to the musical context, not to the clip).
+  juce::ARAPlaybackRegion *region = nullptr;
+  if (auto *docController = editorView->getDocumentController()) {
+    if (auto *pitchDocController =
+            juce::ARADocumentControllerSpecialisation::getSpecialisedDocumentController<
+                PitchNetDocumentController>(docController))
+      region = pitchDocController->getCurrentPlaybackRegion();
+
+    if (region == nullptr) {
+      const auto selected =
+          editorView->getViewSelection()
+              .getPlaybackRegions<juce::ARAPlaybackRegion>();
+      if (!selected.empty())
+        region = selected.front();
+    }
+  }
+  if (region == nullptr) {
+    const auto regions = collectAraPlaybackRegions();
+    if (!regions.empty())
+      region = regions.front();
+  }
+
+  ARATempoMapReader::Probe probe;
+  auto map = ARATempoMapReader::readForRegion(region, &probe);
+
+  juce::String signature = probe.toString();
+  if (map != nullptr)
+    signature << " | " << juce::String(map->describe().c_str());
+  if (signature == lastTempoMapSignature)
+    return;
+  lastTempoMapSignature = signature;
+
+  mainView->updateHostTempoMap(map);
+
+#if PITCHNET_TEMPO_MAP_PROBE
+  // G1 probe (one-off builds only): the numbers go next to the region starts
+  // so the "song time vs modification time" question can be answered without
+  // guessing. Remove with the PITCHNET_TEMPO_MAP_PROBE option.
+  auto logFile = PlatformPaths::getLogFile("tempo_map_probe.log");
+  juce::String line;
+  line << juce::Time::getCurrentTime().toString(true, true, true, false)
+       << " srate=" << audioProcessor.getHostSampleRate();
+  if (region != nullptr) {
+    line << " regionPlayback=" << juce::String(region->getStartInPlaybackTime(), 6)
+         << " regionModSamples="
+         << juce::String(region->getStartInAudioModificationSamples());
+  }
+  line << " " << probe.toString();
+  if (map != nullptr)
+    line << " | " << juce::String(map->describe().c_str());
+  logFile.appendText(line + "\n");
+#endif
 }
 
 void PitchNetAudioProcessorEditor::refreshAraRegionList() {
