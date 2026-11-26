@@ -314,9 +314,11 @@ VariAudioInspector::VariAudioInspector()
     rows[5] = std::make_unique<ValueRow>(Param::Transition, 0.0, 250.0, 0.0, 1.0);
     // D-308: one general tilt control and the two independent fine layers
     // (left half / right half).
-    rows[6] = std::make_unique<ValueRow>(Param::Tilt, -12.0, 12.0, 0.0, 0.1);
-    rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -12.0, 12.0, 0.0, 0.1);
-    rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -12.0, 12.0, 0.0, 0.1);
+    // D-308: el rango util del inspector es -2..+2 st (rara vez se inclina mas).
+    // No se limita el modelo: un proyecto viejo con mas inclinacion se carga igual.
+    rows[6] = std::make_unique<ValueRow>(Param::Tilt, -2.0, 2.0, 0.0, 0.1);
+    rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -2.0, 2.0, 0.0, 0.1);
+    rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -2.0, 2.0, 0.0, 0.1);
     for (auto& row : rows)
     {
         auto* r = row.get();
