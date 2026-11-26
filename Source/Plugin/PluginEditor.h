@@ -3,6 +3,7 @@
 #include <set>
 
 #include "../JuceHeader.h"
+#include "../Models/DocumentNoteIndex.h"
 #include "../UI/IMainView.h"
 #include "../UI/MainViewFactory.h"
 #include <cstddef>
@@ -77,6 +78,12 @@ private:
         const std::vector<juce::ARAPlaybackRegion*>& regions,
         const std::vector<MainViewRegionEntry>& entries,
         const juce::String& activeKey);
+    // N1 (D-340): read-only index of every note of the active track, built and
+    // published next to the previews. Null outside track mode.
+    void publishDocumentNoteIndex(DocumentNoteIndexPtr index);
+    // Notes the host stored for a modification (archive count), cached per
+    // session; -1 when it cannot be read.
+    int savedNoteCountForModification(PitchNetAudioModification* modification);
     // Push every track (region sequence) in the ARA document - i.e. every
     // track that has PitchNet on it - to the left side panel, marking the
     // track of the active region. Only republishes when something changed.
@@ -114,6 +121,11 @@ private:
     std::map<juce::String, RegionPreviewCacheEntry> regionPreviewCache;
     juce::String lastPublishedPreviewSignature;
     juce::String lastPublishedTrackSignature;
+    // N1 (D-340): the document's note index for the active track and the
+    // signature of what was last published, so equal content is not repushed.
+    DocumentNoteIndexPtr documentNoteIndex;
+    juce::String lastPublishedNoteIndexSignature;
+    std::map<juce::String, int> savedNoteCountsByModification;
     // Track key -> selector of the region last active on that track, so
     // switching back to a track returns to the clip you were editing.
     std::map<juce::String, juce::String> lastActiveRegionByTrack;

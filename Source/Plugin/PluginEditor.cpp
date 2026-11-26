@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "HostCompatibility.h"
 #include "../Models/Project.h"
+#include "../Models/DocumentNoteIndex.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
 #include "../Undo/ContextUndoAction.h"
@@ -80,10 +81,10 @@ void requestClosePreviousEditorWindow(PitchNetAudioProcessorEditor *previous,
 // notes, pitch arrays and the window's audio (for the notes' inline waveform).
 // No mel spectrogram or original audio, so its size follows the region, not
 // the take. windowZeroSeconds receives the window zero in modification time.
-std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
-                                                 double windowStart,
-                                                 double windowEnd,
-                                                 double &windowZeroSeconds)
+std::shared_ptr<Project> makeRegionWindowProject(
+    const Project &source, double windowStart, double windowEnd,
+    double &windowZeroSeconds,
+    const std::vector<DocumentNoteRef> *indexNotes = nullptr)
 {
   windowZeroSeconds = 0.0;
   const auto &src = source.getAudioData();
@@ -105,12 +106,23 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
   {
     const int windowFirst = firstFrame;
     const int windowLast = lastFrame;
-    for (const auto &note : source.getNotes())
+    const auto widen = [&](const Note &note) {
       if (note.getEndFrame() > windowFirst && note.getStartFrame() < windowLast)
       {
         firstFrame = std::min(firstFrame, note.getStartFrame());
         lastFrame = std::max(lastFrame, note.getEndFrame());
       }
+    };
+    // N1 (D-340): the document index already decided which notes this window
+    // shows. Walking it, instead of the whole project, is what makes the drawn
+    // copy and the index cover the same notes.
+    if (indexNotes != nullptr)
+      for (const auto &ref : *indexNotes)
+        if (ref.note != nullptr)
+          widen(*ref.note);
+    else
+      for (const auto &note : source.getNotes())
+        widen(note);
     firstFrame = juce::jlimit(0, frameCount, firstFrame);
     lastFrame = juce::jlimit(firstFrame, frameCount, lastFrame);
   }
@@ -161,12 +173,11 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
   }
 
   auto &notes = window->getNotes();
-  for (const auto &note : source.getNotes())
-  {
+  const auto copyNote = [&](const Note &note) {
     // Every note touching the region was covered by widening the window; a
     // note starting before it lies wholly outside the region and is skipped.
     if (note.getStartFrame() < firstFrame || note.getStartFrame() >= lastFrame)
-      continue;
+      return;
     Note copy = note;
     copy.setStartFrame(copy.getStartFrame() - firstFrame);
     copy.setEndFrame(copy.getEndFrame() - firstFrame);
@@ -174,7 +185,14 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
     copy.setSrcEndFrame(copy.getSrcEndFrame() - firstFrame);
     copy.setSelected(note.isSelected()); // Track selection spans all projects
     notes.push_back(std::move(copy));
-  }
+  };
+  if (indexNotes != nullptr)
+    for (const auto &ref : *indexNotes)
+      if (ref.note != nullptr)
+        copyNote(*ref.note);
+  else
+    for (const auto &note : source.getNotes())
+      copyNote(note);
   return window;
 }
 
@@ -183,33 +201,51 @@ std::shared_ptr<Project> makeRegionWindowProject(const Project &source,
 // Projects are stored in MODIFICATION time (PR #8), so the window starts at
 // the region's start in the modification and is shifted by
 // (host start - modification start) onto the timeline.
-MainViewRegionPreview buildRegionPreview(const Project &project,
-                                         double regionStart, double regionEnd,
-                                         double startInModificationSeconds)
+MainViewRegionPreview buildRegionPreview(
+    const Project &project, double regionStart, double regionEnd,
+    double startInModificationSeconds,
+    const DocumentNoteRegion *indexRegion = nullptr)
 {
   MainViewRegionPreview preview;
   preview.hasContent = true;
 
   const auto &audioData = project.getAudioData();
   const double shift = regionStart - std::max(0.0, startInModificationSeconds);
-  const double localStart = regionStart - shift;
-  const double localEnd = regionEnd - shift;
+  // The source window is the one the index published (ARA's start/end in
+  // modification samples) so the drawing copy and the index cannot disagree
+  // about which notes the item shows.
+  const double localStart =
+      indexRegion != nullptr ? indexRegion->sourceStartSeconds
+                             : regionStart - shift;
+  const double localEnd =
+      indexRegion != nullptr ? indexRegion->sourceEndSeconds : regionEnd - shift;
 
-  for (const auto &note : project.getNotes())
+  if (indexRegion != nullptr)
   {
-    if (note.isRest())
-      continue;
-    const double start =
-        std::max(regionStart, framesToSeconds(note.getVisualStartFrame()) + shift);
-    const double end =
-        std::min(regionEnd, framesToSeconds(note.getVisualEndFrame()) + shift);
-    if (end <= start)
-      continue;
-    preview.notes.push_back({start, end, note.getAdjustedMidiNote()});
+    // N1 (D-340): the note shapes come from the index, not from a second walk
+    // of the project.
+    for (const auto &shape : documentNoteShapes(*indexRegion))
+      preview.notes.push_back({shape.startSeconds, shape.endSeconds, shape.midi});
+  }
+  else
+  {
+    for (const auto &note : project.getNotes())
+    {
+      if (note.isRest())
+        continue;
+      const double start =
+          std::max(regionStart, framesToSeconds(note.getVisualStartFrame()) + shift);
+      const double end =
+          std::min(regionEnd, framesToSeconds(note.getVisualEndFrame()) + shift);
+      if (end <= start)
+        continue;
+      preview.notes.push_back({start, end, note.getAdjustedMidiNote()});
+    }
   }
 
   preview.project = makeRegionWindowProject(
-      project, localStart, localEnd, preview.projectHostOffsetSeconds);
+      project, localStart, localEnd, preview.projectHostOffsetSeconds,
+      indexRegion != nullptr ? &indexRegion->notes : nullptr);
   preview.sourceProject = &project;
   preview.sourceFirstFrame = static_cast<int>(std::llround(
       preview.projectHostOffsetSeconds * SAMPLE_RATE / HOP_SIZE));
@@ -237,6 +273,60 @@ MainViewRegionPreview buildRegionPreview(const Project &project,
   }
 
   return preview;
+}
+
+// N1 (D-340): the audio source (file) an item comes from. Items of the same
+// take share it, so it groups the index by source.
+juce::String araSourceKey(juce::ARAPlaybackRegion &region) {
+  auto *modification = region.getAudioModification();
+  auto *source = modification != nullptr ? modification->getAudioSource() : nullptr;
+  if (source == nullptr)
+    return {};
+  if (const char *name = source->getName()) {
+    const juce::String text = juce::String::fromUTF8(name).trim();
+    if (text.isNotEmpty())
+      return text;
+  }
+  return "source " + juce::String::toHexString(static_cast<juce::int64>(
+                        reinterpret_cast<std::uintptr_t>(source)));
+}
+
+// The item's window of its modification, in modification seconds. ARA's own
+// start/end, not the host duration: a trimmed or stretched clip has one and the
+// other disagree, and the notes belong to the modification window.
+struct AraRegionSourceWindow {
+  double startSeconds = 0.0;
+  double endSeconds = 0.0;
+};
+
+AraRegionSourceWindow araRegionSourceWindow(juce::ARAPlaybackRegion &region) {
+  AraRegionSourceWindow window;
+  auto *modification = region.getAudioModification();
+  auto *source = modification != nullptr ? modification->getAudioSource() : nullptr;
+  const double sampleRate = source != nullptr ? source->getSampleRate() : 0.0;
+  if (sampleRate <= 0.0) {
+    window.endSeconds =
+        window.startSeconds + std::max(0.0, region.getDurationInPlaybackTime());
+    return window;
+  }
+  window.startSeconds = static_cast<double>(
+      region.getStartInAudioModificationSamples()) / sampleRate;
+  window.endSeconds = static_cast<double>(
+      region.getEndInAudioModificationSamples()) / sampleRate;
+  if (window.endSeconds <= window.startSeconds)
+    window.endSeconds =
+        window.startSeconds + std::max(0.0, region.getDurationInPlaybackTime());
+  return window;
+}
+
+const DocumentNoteRegion *findIndexRegion(const DocumentNoteIndex *index,
+                                          const juce::String &key) {
+  if (index == nullptr)
+    return nullptr;
+  for (const auto &region : index->regions)
+    if (region.key == key)
+      return &region;
+  return nullptr;
 }
 #endif
 
@@ -1368,6 +1458,10 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
       lastPublishedPreviewSignature = "clip";
       mainView->updateRegionPreviews(nullptr);
     }
+    // N1 (D-340): no track index outside track mode; notes_debug says so
+    // instead of addressing a single item as if it were the track.
+    documentNoteIndex.reset();
+    publishDocumentNoteIndex(nullptr);
     return;
   }
 
@@ -1380,6 +1474,42 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
       break;
     }
 
+  // N1 (D-340): one read-only index of every note the track's items hold. It
+  // points at the real Note objects (no copy, no second owner) and is the
+  // single enumeration track mode is drawn from. Built before the previews so
+  // their note shapes come from it.
+  std::vector<DocumentNoteRegionSpec> noteSpecs;
+  for (size_t i = 0; i < regions.size() && i < entries.size(); ++i) {
+    auto *region = regions[i];
+    if (activeSequence != nullptr && region->getRegionSequence() != activeSequence)
+      continue;
+    DocumentNoteRegionSpec spec;
+    spec.key = entries[i].key;
+    spec.name = entries[i].name;
+    if (auto *modification = region->getAudioModification()) {
+      spec.modificationKey = pitchnetModificationKey(*modification);
+      spec.sourceKey = araSourceKey(*region);
+      spec.savedNotes = savedNoteCountForModification(
+          region->getAudioModification<PitchNetAudioModification>());
+    }
+    spec.hostStartSeconds = std::max(0.0, region->getStartInPlaybackTime());
+    spec.hostEndSeconds =
+        std::max(spec.hostStartSeconds, region->getEndInPlaybackTime());
+    const auto sourceWindow = araRegionSourceWindow(*region);
+    spec.sourceStartSeconds = sourceWindow.startSeconds;
+    spec.sourceEndSeconds = sourceWindow.endSeconds;
+    std::uint64_t revision = 0;
+    bool fromCanvas = false;
+    spec.project = const_cast<Project *>(audioProcessor.getAraProjectForPreview(
+        region->getAudioModification<PitchNetAudioModification>(), revision,
+        fromCanvas));
+    noteSpecs.push_back(std::move(spec));
+  }
+  documentNoteIndex = buildDocumentNoteIndex(
+      activeSequence != nullptr ? araTrackKey(activeSequence) : juce::String(),
+      noteSpecs);
+  publishDocumentNoteIndex(documentNoteIndex);
+
   auto previews = std::make_shared<std::vector<MainViewRegionPreview>>();
   juce::String signature = "track\n" + activeSelector;
   std::map<juce::String, RegionPreviewCacheEntry> nextCache;
@@ -1388,7 +1518,8 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
   const auto addPreview = [&](juce::ARAPlaybackRegion *region,
                               const juce::String &regionKey,
                               const juce::String &regionName, bool isActive,
-                              bool pinned, juce::Colour outlineColour) {
+                              bool pinned, juce::Colour outlineColour,
+                              const DocumentNoteRegion *indexRegion) {
     // regionKey is the region selector (which window); edits are owned by
     // the modification, so the Project is looked up by the modification key.
     const double start = std::max(0.0, region->getStartInPlaybackTime());
@@ -1435,8 +1566,8 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
       cacheEntry.endSeconds = end;
       cacheEntry.startInModificationSeconds = startInModification;
       if (project != nullptr)
-        cacheEntry.preview =
-            buildRegionPreview(*project, start, end, startInModification);
+        cacheEntry.preview = buildRegionPreview(*project, start, end,
+                                                startInModification, indexRegion);
     }
 
     auto &preview = cacheEntry.preview;
@@ -1475,7 +1606,8 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
         region->getRegionSequence() != activeSequence)
       continue;
     addPreview(region, entries[i].key, entries[i].name,
-               entries[i].key == activeSelector, false, {});
+               entries[i].key == activeSelector, false, {},
+               findIndexRegion(documentNoteIndex.get(), entries[i].key));
   }
 
   // Pinned tracks: every clip, drawn as notes outlined in the track colour.
@@ -1502,7 +1634,7 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
              sequence->getPlaybackRegions<juce::ARAPlaybackRegion>())
           if (region != nullptr && region->getAudioModification() != nullptr)
             addPreview(region, pitchnetRegionSelector(*region), {}, false, true,
-                       outline);
+                       outline, nullptr);
       }
   }
 
@@ -1512,6 +1644,68 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
     return;
   lastPublishedPreviewSignature = signature;
   mainView->updateRegionPreviews(std::move(previews));
+}
+
+// N1 (D-340): publish the note index only when what it enumerates changed. The
+// entries hold Note pointers, so an edit that moves a note's pitch is visible
+// through them without a republication; membership, frames and counts are what
+// this signature watches.
+void PitchNetAudioProcessorEditor::publishDocumentNoteIndex(
+    DocumentNoteIndexPtr index) {
+  juce::String signature;
+  if (index == nullptr) {
+    signature = "none";
+  } else {
+    signature << index->trackKey << "\t" << index->totalNotes << "\t"
+              << index->projectNotes << "\t"
+              << static_cast<int>(index->outsideNotes.size()) << "\t"
+              << index->regionCount();
+    for (const auto &region : index->regions)
+      signature << "\n"
+                << region.key << "\t" << region.modificationKey << "\t"
+                << juce::String(region.sourceStartSeconds, 6) << "\t"
+                << juce::String(region.sourceEndSeconds, 6) << "\t"
+                << (region.analyzed ? "A" : "-") << "\t"
+                << region.notesInWindow << "\t" << region.savedNotes << "\t"
+                << juce::String::toHexString(static_cast<juce::int64>(
+                       reinterpret_cast<std::uintptr_t>(region.project)));
+    juce::int64 frames = 0;
+    for (const auto &ref : index->notes)
+      frames += static_cast<juce::int64>(ref.firstFrame) * 31 + ref.lastFrame;
+    signature << "\nf" << juce::String(frames);
+  }
+
+  if (signature == lastPublishedNoteIndexSignature)
+    return;
+  lastPublishedNoteIndexSignature = signature;
+  if (mainView != nullptr)
+    mainView->updateDocumentNoteIndex(std::move(index));
+}
+
+// The host-stored project archive is read once per modification (a JSON parse
+// of a song-length project is not something to repeat 8 times a second). -1
+// means it could not be read, never "zero notes".
+int PitchNetAudioProcessorEditor::savedNoteCountForModification(
+    PitchNetAudioModification *modification) {
+  if (modification == nullptr)
+    return -1;
+  const auto key = pitchnetModificationKey(*modification);
+  const auto cached = savedNoteCountsByModification.find(key);
+  if (cached != savedNoteCountsByModification.end())
+    return cached->second;
+
+  int count = -1;
+  juce::MemoryBlock archive;
+  if (modification->copyProjectArchive(archive) && archive.getSize() > 0) {
+    const auto json = juce::JSON::parse(juce::String::fromUTF8(
+        static_cast<const char *>(archive.getData()),
+        static_cast<int>(archive.getSize())));
+    if (auto *object = json.getDynamicObject())
+      if (auto *notes = object->getProperty("notes").getArray())
+        count = static_cast<int>(notes->size());
+  }
+  savedNoteCountsByModification[key] = count;
+  return count;
 }
 
 void PitchNetAudioProcessorEditor::activateAraRegionByKey(

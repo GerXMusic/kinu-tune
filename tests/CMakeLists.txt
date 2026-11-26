@@ -47,6 +47,9 @@ set(PITCHNET_TEST_SOURCES
     MidiGuideRegionScopeTests.cpp
     # R2: los fantasmas viven en tiempo host y se dibujan con el offset actual.
     MidiGuideGhostTests.cpp
+    # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
+    # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
+    NoteIndexTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp

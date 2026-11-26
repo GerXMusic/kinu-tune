@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Audio/Engine/HostTempoMap.h"
+#include "../Models/DocumentNoteIndex.h"
 #include "RegionPreview.h"
 #include <functional>
 #include <memory>
@@ -125,6 +126,14 @@ public:
    * project, as in standalone mode.
    */
   virtual void updateRegionPreviews(MainViewRegionPreviewList previews) = 0;
+  /**
+   * N1 (D-340): read-only, document-level index of the track's notes (every
+   * item, pointing at the real Note objects). Published by the plug-in when a
+   * modification revision, the active region or the canvas edit serial
+   * changes; null outside track mode. The view must not retain Note pointers
+   * past the next publication.
+   */
+  virtual void updateDocumentNoteIndex(DocumentNoteIndexPtr index) = 0;
   /**
    * Called with a region key when the user clicks inside an inactive region on
    * the canvas (empty space or one of its notes). Unlike a host selection

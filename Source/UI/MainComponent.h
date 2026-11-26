@@ -226,6 +226,7 @@ public:
     onTrackColourModeChanged = std::move(callback);
   }
   void updateRegionPreviews(MainViewRegionPreviewList previews) override;
+  void updateDocumentNoteIndex(DocumentNoteIndexPtr index) override;
   void setTrackViewModeAvailable(bool available) override;
   bool isTrackViewMode() const override {
     return pianoRollView.isTrackViewMode();
@@ -782,6 +783,11 @@ private:
   // D-310: the host tempo map snapshot. Null means "no usable host map"; the
   // cached BPM above is then the fallback, exactly as before.
   std::shared_ptr<const HostTempoMap> hostTempoMap;
+
+  // N1 (D-340): document-level index of every note of the track, published by
+  // the plug-in (points at the real Note objects; this view never copies or
+  // edits them). Null in clip mode or outside ARA.
+  DocumentNoteIndexPtr documentNoteIndex;
 
   // D-311: MIDI guides (song level, quarters in the project; ghosts in project
   // seconds for the canvas).

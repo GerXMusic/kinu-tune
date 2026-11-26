@@ -2133,7 +2133,7 @@ void MainComponent::pollMcpControl()
     const auto command = request.getProperty("command", "").toString();
     const bool allowedWithoutProject =
         command == "ui_state" || command == "paint_history" ||
-        command == "reset_ui_trace";
+        command == "reset_ui_trace" || command == "notes_debug";
     if (project == nullptr && !allowedWithoutProject)
       response->setProperty("error", "El editor no tiene un proyecto analizado.");
     else if (command == "list_notes")
@@ -2363,6 +2363,106 @@ void MainComponent::pollMcpControl()
         }
         response->setProperty("ok", true);
       }
+    }
+    else if (command == "notes_debug")
+    {
+      // N1 (D-340): the document index track mode is drawn from, published
+      // read-only and from the same enumeration: regions -> real notes ->
+      // source. Counts are per region window, deduplicated per track, and the
+      // notes of a project no window shows are listed apart instead of being
+      // dropped.
+      const auto &index = documentNoteIndex;
+      juce::Array<juce::var> regionsArray;
+      juce::Array<juce::var> sourcesArray;
+      juce::Array<juce::var> notesArray;
+      juce::Array<juce::var> outsideArray;
+
+      if (index != nullptr)
+      {
+        for (const auto &region : index->regions)
+        {
+          auto object = new juce::DynamicObject();
+          object->setProperty("key", region.key);
+          object->setProperty("name", region.name);
+          object->setProperty("modification", region.modificationKey);
+          object->setProperty("source", region.sourceKey);
+          object->setProperty("host_start", region.hostStartSeconds);
+          object->setProperty("host_end", region.hostEndSeconds);
+          object->setProperty("source_start", region.sourceStartSeconds);
+          object->setProperty("source_end", region.sourceEndSeconds);
+          object->setProperty("offset", region.offsetSeconds);
+          object->setProperty("analyzed", region.analyzed);
+          object->setProperty("project_notes", region.projectNotes);
+          object->setProperty("saved_notes", region.savedNotes);
+          object->setProperty("notes_in_window", region.notesInWindow);
+          regionsArray.add(juce::var(object));
+        }
+        for (const auto &source : index->sources)
+        {
+          auto object = new juce::DynamicObject();
+          object->setProperty("source", source.sourceKey);
+          object->setProperty("regions", source.regions);
+          object->setProperty("project_notes", source.projectNotes);
+          object->setProperty("visible_notes", source.visibleNotes);
+          object->setProperty("outside_notes", source.outsideNotes);
+          object->setProperty("analyzed", source.analyzed);
+          sourcesArray.add(juce::var(object));
+        }
+        for (const auto &ref : index->notes)
+        {
+          auto object = new juce::DynamicObject();
+          object->setProperty("region_index", ref.regionIndex);
+          if (ref.regionIndex >= 0 &&
+              ref.regionIndex < index->regionCount())
+          {
+            const auto &region =
+                index->regions[static_cast<size_t>(ref.regionIndex)];
+            object->setProperty("region", region.key);
+            object->setProperty("modification", region.modificationKey);
+            object->setProperty("source", region.sourceKey);
+          }
+          object->setProperty("start_frame", ref.firstFrame);
+          object->setProperty("end_frame", ref.lastFrame);
+          if (ref.note != nullptr)
+          {
+            object->setProperty("midi", ref.note->getMidiNote());
+            object->setProperty("adjusted_midi",
+                                ref.note->getAdjustedMidiNote());
+            object->setProperty("selected", ref.note->isSelected());
+          }
+          notesArray.add(juce::var(object));
+        }
+        for (const auto &ref : index->outsideNotes)
+        {
+          auto object = new juce::DynamicObject();
+          object->setProperty("start_frame", ref.firstFrame);
+          object->setProperty("end_frame", ref.lastFrame);
+          if (ref.note != nullptr)
+            object->setProperty("midi", ref.note->getMidiNote());
+          outsideArray.add(juce::var(object));
+        }
+      }
+
+      response->setProperty("track_view", isTrackViewMode());
+      response->setProperty("has_index", index != nullptr);
+      response->setProperty("track_key",
+                            index != nullptr ? index->trackKey : juce::String());
+      response->setProperty("region_count",
+                            index != nullptr ? index->regionCount() : 0);
+      response->setProperty("total_notes",
+                            index != nullptr ? index->totalNotes : 0);
+      response->setProperty("project_notes",
+                            index != nullptr ? index->projectNotes : 0);
+      response->setProperty(
+          "outside_notes",
+          index != nullptr
+              ? static_cast<int>(index->outsideNotes.size())
+              : 0);
+      response->setProperty("regions", juce::var(regionsArray));
+      response->setProperty("sources", juce::var(sourcesArray));
+      response->setProperty("notes", juce::var(notesArray));
+      response->setProperty("outside", juce::var(outsideArray));
+      response->setProperty("ok", true);
     }
     else if (command == "grid_debug")
     {
@@ -7390,6 +7490,12 @@ void MainComponent::setTrackViewModeAvailable(bool available) {
 void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {
   pianoRoll.setRegionPreviews(previews);
   pianoRollView.setRegionPreviews(std::move(previews));
+}
+
+void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
+  // Read-only: the index only supplies enumeration and pointers for the local
+  // channel (N1) and, from N2 on, the document selection.
+  documentNoteIndex = std::move(index);
 }
 
 void MainComponent::updateTrackList(
