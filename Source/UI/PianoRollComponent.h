@@ -294,6 +294,19 @@ public:
   std::shared_ptr<const HostTempoMap> getHostTempoMap() const {
     return hostTempoMap;
   }
+
+  // D-311: MIDI guide ghosts, already in project seconds (the axis the notes
+  // are drawn in). Read-only layer: no hit-test, no edit. The caller rebuilds
+  // the vector from the selected guide and the active tempo map.
+  struct MidiGuideGhost
+  {
+    double startSeconds = 0.0;
+    double endSeconds = 0.0;
+    float pitch = 60.0f;
+    juce::String label;
+  };
+  void setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts);
+  bool hasMidiGuideGhosts() const { return !midiGuideGhosts.empty(); }
   void setTimelineGridDivision(TimelineGridDivision division);
   void setTimelineSnapCycle(bool enabled);
 
@@ -487,6 +500,8 @@ private:
   bool lastSweepNeutral = false;
   bool lastSweepActive = false;
   void drawPitchCurves(juce::Graphics &g);
+  // D-311: read-only guide layer, drawn below the notes.
+  void drawMidiGuideGhosts(juce::Graphics &g);
   void drawBypassSourceCurve(juce::Graphics &g);
   bool bypassView = false;
   void drawPianoKeys(juce::Graphics &g);
@@ -724,6 +739,8 @@ private:
   double &timelineTempoBpm = viewState.timelineTempoBpm;
   // D-310: host tempo map snapshot (null = constant-BPM fallback).
   std::shared_ptr<const HostTempoMap> hostTempoMap;
+  // D-311: MIDI guide ghosts (read-only overlay under the notes).
+  std::vector<MidiGuideGhost> midiGuideGhosts;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
   bool &timelineSnapCycle = viewState.timelineSnapCycle;
   bool &cycleEditEnabled = viewState.cycleEditEnabled;

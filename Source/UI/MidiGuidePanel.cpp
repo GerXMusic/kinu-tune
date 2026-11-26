@@ -4,42 +4,55 @@
 MidiGuidePanel::MidiGuidePanel()
 {
     importButton.setButtonText(TR("midi.import"));
-    importButton.setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
-    importButton.onClick = [this] {
+    importButton.setColour(juce::TextButton::buttonColourId,
+                           APP_COLOR_SURFACE_RAISED);
+    importButton.onClick = [this]
+    {
         if (onImportRequested)
-            return onImportRequested();
-        auto chooser = std::make_shared<juce::FileChooser>(
-            TR("midi.import"), juce::File(), "*.mid;*.midi");
-        chooser->launchAsync(juce::FileBrowserComponent::openMode |
-                                 juce::FileBrowserComponent::canSelectFiles,
-                             [this, chooser](const juce::FileChooser& fc) {
-                                 const auto file = fc.getResult();
-                                 if (file.existsAsFile())
-                                 {
-                                     guides.addIfNotAlreadyThere(file.getFileName());
-                                     selected = guides.size() - 1;
-                                     repaint();
-                                 }
-                             });
+            onImportRequested();
     };
     addAndMakeVisible(importButton);
 
+    applyButton.setButtonText(TR("midi.apply"));
+    applyButton.setColour(juce::TextButton::buttonColourId,
+                          APP_COLOR_SURFACE_RAISED);
+    applyButton.onClick = [this]
+    {
+        if (onApplyRequested)
+            onApplyRequested();
+    };
+    addAndMakeVisible(applyButton);
+
     removeButton.setButtonText(TR("midi.remove"));
-    removeButton.setColour(juce::TextButton::buttonColourId, APP_COLOR_SURFACE_RAISED);
-    removeButton.onClick = [this] {
-        if (selected >= 0 && selected < guides.size())
-        {
-            guides.remove(selected);
-            selected = juce::jmin(selected, guides.size() - 1);
-            repaint();
-        }
+    removeButton.setColour(juce::TextButton::buttonColourId,
+                           APP_COLOR_SURFACE_RAISED);
+    removeButton.onClick = [this]
+    {
+        if (onRemoveRequested)
+            onRemoveRequested();
     };
     addAndMakeVisible(removeButton);
+
+    ghostsButton.setButtonText(TR("midi.ghosts"));
+    ghostsButton.setColour(juce::ToggleButton::textColourId,
+                           APP_COLOR_TEXT_PRIMARY);
+    ghostsButton.setToggleState(true, juce::dontSendNotification);
+    ghostsButton.onClick = [this]
+    {
+        if (onGhostsToggled)
+            onGhostsToggled(ghostsButton.getToggleState());
+    };
+    addAndMakeVisible(ghostsButton);
 
     hint.setFont(AppFont::getFont(12.5f));
     hint.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     hint.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(hint);
+
+    status.setFont(AppFont::getFont(12.5f));
+    status.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
+    status.setJustificationType(juce::Justification::topLeft);
+    addAndMakeVisible(status);
 
     refreshLocalisedText();
 }
@@ -47,8 +60,37 @@ MidiGuidePanel::MidiGuidePanel()
 void MidiGuidePanel::refreshLocalisedText()
 {
     importButton.setButtonText(TR("midi.import"));
+    applyButton.setButtonText(TR("midi.apply"));
     removeButton.setButtonText(TR("midi.remove"));
+    ghostsButton.setButtonText(TR("midi.ghosts"));
     hint.setText(TR("midi.hint"), juce::dontSendNotification);
+}
+
+void MidiGuidePanel::setGuides(const juce::StringArray& labels,
+                               const juce::StringArray& ids, int selectedIndex)
+{
+    guides = labels;
+    guideIds = ids;
+    selected = juce::jlimit(-1, juce::jmax(-1, guides.size() - 1),
+                            selectedIndex);
+    applyButton.setEnabled(selected >= 0);
+    removeButton.setEnabled(selected >= 0);
+    repaint();
+}
+
+void MidiGuidePanel::setStatusText(const juce::String& text)
+{
+    status.setText(text, juce::dontSendNotification);
+}
+
+void MidiGuidePanel::setGhostsVisible(bool visible)
+{
+    ghostsButton.setToggleState(visible, juce::dontSendNotification);
+}
+
+void MidiGuidePanel::setApplyEnabled(bool enabled)
+{
+    applyButton.setEnabled(enabled && selected >= 0);
 }
 
 void MidiGuidePanel::paint(juce::Graphics& g)
@@ -69,11 +111,14 @@ void MidiGuidePanel::paint(juce::Graphics& g)
         return;
     }
 
+    const int rowHeight = 30;
     for (int i = 0; i < guides.size(); ++i)
     {
         auto row = juce::Rectangle<int>(listBounds.getX() + 4,
-                                        listBounds.getY() + 4 + i * 30,
-                                        listBounds.getWidth() - 8, 28);
+                                        listBounds.getY() + 4 + i * rowHeight,
+                                        listBounds.getWidth() - 8, rowHeight - 2);
+        if (row.getBottom() > listBounds.getBottom())
+            break;
         if (i == selected)
         {
             g.setColour(APP_COLOR_RAIL_ACTIVE);
@@ -87,15 +132,43 @@ void MidiGuidePanel::paint(juce::Graphics& g)
     }
 }
 
+void MidiGuidePanel::mouseDown(const juce::MouseEvent& e)
+{
+    if (!listBounds.contains(e.getPosition()))
+        return;
+
+    const int rowHeight = 30;
+    const int index = (e.getPosition().y - listBounds.getY() - 4) / rowHeight;
+    if (index < 0 || index >= guides.size())
+        return;
+    if (index == selected)
+        return;
+
+    selected = index;
+    applyButton.setEnabled(true);
+    removeButton.setEnabled(true);
+    repaint();
+    if (onSelectionChanged)
+        onSelectionChanged(selected);
+}
+
 void MidiGuidePanel::resized()
 {
     auto area = getLocalBounds().reduced(12, 10);
     auto buttons = area.removeFromTop(30);
     importButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2 - 3));
     buttons.removeFromLeft(6);
-    removeButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2));
+    removeButton.setBounds(buttons.removeFromLeft(buttons.getWidth()));
+
+    area.removeFromTop(6);
+    auto secondRow = area.removeFromTop(30);
+    applyButton.setBounds(secondRow.removeFromLeft(secondRow.getWidth() / 2 - 3));
+    secondRow.removeFromLeft(6);
+    ghostsButton.setBounds(secondRow);
 
     area.removeFromTop(10);
-    hint.setBounds(area.removeFromBottom(56));
+    hint.setBounds(area.removeFromBottom(52));
+    status.setBounds(area.removeFromBottom(44));
+    area.removeFromBottom(4);
     listBounds = area;
 }

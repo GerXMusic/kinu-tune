@@ -302,6 +302,32 @@ juce::var ProjectSerializer::toJson(const Project& project,
     }
     obj->setProperty("notes", notesArray);
 
+    // D-311: materialized MIDI guides. Additive key: an old build that rewrites
+    // the project loses them, exactly like any other unknown key, and a project
+    // without guides loads with an empty vector. FORMAT_VERSION stays 5.
+    juce::Array<juce::var> guidesArray;
+    for (const auto& guide : project.getMidiGuides()) {
+        auto* guideObj = new juce::DynamicObject();
+        guideObj->setProperty("id", juce::String(guide.id));
+        guideObj->setProperty("label", juce::String(guide.label));
+        guideObj->setProperty("kind", juce::String(guide.kind));
+        guideObj->setProperty("importedAt", juce::String(guide.importedAt));
+        juce::Array<juce::var> guideNotes;
+        guideNotes.ensureStorageAllocated(
+            static_cast<int>(guide.notes.size()));
+        for (const auto& note : guide.notes) {
+            juce::Array<juce::var> entry;
+            entry.add(note.startQuarter);
+            entry.add(note.endQuarter);
+            entry.add(static_cast<double>(note.pitch));
+            entry.add(static_cast<double>(note.velocity));
+            guideNotes.add(juce::var(entry));
+        }
+        guideObj->setProperty("notes", juce::var(guideNotes));
+        guidesArray.add(juce::var(guideObj));
+    }
+    obj->setProperty("midiGuides", guidesArray);
+
     if (includePitchData)
         obj->setProperty("pitchData", pitchDataToJson(project.getAudioData()));
     if (includeAnalysisCache) {
@@ -386,8 +412,49 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
 
     // Load the stored region key before resolving inheritance.
     project.setUseProjectKey(false);
-    // Global parameters
-    project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
+
+    // D-311: MIDI guides (absent in older projects -> empty).
+    project.getMidiGuides().clear();
+    if (auto* guides = json.getProperty("midiGuides", juce::var()).getArray()) {
+        for (const auto& guideVar : *guides) {
+            if (!guideVar.isObject())
+                continue;
+            GuideSource guide;
+            guide.id = guideVar.getProperty("id", "").toString().toStdString();
+            guide.label =
+                guideVar.getProperty("label", "").toString().toStdString();
+            guide.kind =
+                guideVar.getProperty("kind", "file").toString().toStdString();
+            guide.importedAt =
+                guideVar.getProperty("importedAt", "").toString().toStdString();
+            if (auto* guideNotes =
+                    guideVar.getProperty("notes", juce::var()).getArray()) {
+                for (const auto& entryVar : *guideNotes) {
+                    if (auto* values = entryVar.getArray()) {
+                        if (values->size() < 3)
+                            continue;
+                        GuideNote note;
+                        note.startQuarter =
+                            static_cast<double>((*values)[0]);
+                        note.endQuarter = static_cast<double>((*values)[1]);
+                        note.pitch =
+                            static_cast<float>(static_cast<double>((*values)[2]));
+                        note.velocity =
+                            values->size() > 3
+                                ? static_cast<float>(
+                                      static_cast<double>((*values)[3]))
+                                : 0.0f;
+                        if (note.endQuarter > note.startQuarter)
+                            guide.notes.push_back(note);
+                    }
+                }
+            }
+            guide.normalise();
+            project.getMidiGuides().push_back(std::move(guide));
+        }
+    }
+
+    // Global parameters    project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     project.setBypassProcessing(

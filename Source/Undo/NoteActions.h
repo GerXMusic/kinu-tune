@@ -372,6 +372,74 @@ private:
 };
 
 /**
+ * D-312: applies a MIDI guide to a set of notes as ONE undo step ("Apply MIDI
+ * guide"). Only the centre moves: pitchOffset and deltaPitch (vibrato) are
+ * touched nowhere here, so undo/redo restores exactly the recorded pair
+ * (midiNote + correction reference) per note.
+ */
+class MidiGuideApplyAction : public UndoableAction
+{
+public:
+    MidiGuideApplyAction(std::vector<Note *> notes,
+                         std::vector<float> oldMidis,
+                         std::vector<float> newMidis,
+                         std::vector<float> oldSources,
+                         std::vector<float> newSources,
+                         std::function<void(const std::vector<Note *> &)> onNotesChanged,
+                         juce::String actionName = "Apply MIDI guide")
+        : notes(std::move(notes)), oldMidis(std::move(oldMidis)),
+          newMidis(std::move(newMidis)), oldSources(std::move(oldSources)),
+          newSources(std::move(newSources)),
+          onNotesChanged(std::move(onNotesChanged)),
+          name(std::move(actionName)) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size() &&
+                           i < oldSources.size();
+             ++i)
+        {
+            auto *note = notes[i];
+            if (!note)
+                continue;
+            NotePitch::restore(*note, oldMidis[i], oldSources[i]);
+            note->markDirty();
+            note->markSynthDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < newMidis.size() &&
+                           i < newSources.size();
+             ++i)
+        {
+            auto *note = notes[i];
+            if (!note)
+                continue;
+            NotePitch::restore(*note, newMidis[i], newSources[i]);
+            note->markDirty();
+            note->markSynthDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    juce::String getName() const override { return name; }
+
+private:
+    std::vector<Note *> notes;
+    std::vector<float> oldMidis;
+    std::vector<float> newMidis;
+    std::vector<float> oldSources;
+    std::vector<float> newSources;
+    std::function<void(const std::vector<Note *> &)> onNotesChanged;
+    juce::String name;
+};
+
+/**
  * Action for splitting a note into two.
  */
 class NoteSplitAction : public UndoableAction

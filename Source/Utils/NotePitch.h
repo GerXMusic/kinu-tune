@@ -67,4 +67,17 @@ inline void setSungPitch(Note &note, float midi)
 {
     note.setMidiNote(midi);
 }
+
+// D-312: the MIDI guide sets the note's centre (its base pitch) to the guide
+// note and nothing else. Vibrato lives in deltaPitch and the manual visible
+// offset in pitchOffset: both stay exactly as they were, which is what makes a
+// guide apply audible only as a pitch move. Returns the new reference, for the
+// undo record.
+inline float applyGuideTarget(Note &note, const Project &project,
+                              float guideMidi)
+{
+    const float from = note.getMidiNote();
+    const float sourceBefore = note.getLastNonMacroMidiNote();
+    return applyEdit(note, project, sourceBefore, from, guideMidi);
+}
 } // namespace NotePitch

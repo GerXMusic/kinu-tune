@@ -10,6 +10,7 @@
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/IO/MidiExporter.h"
+#include "../Audio/IO/MidiGuideImporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/NotePitch.h"
@@ -872,19 +873,26 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     if (id == "engine")
       pianoRoll.setEngineViewActive(visible);
+    // D-311: the drawer list and the ghosts are rebuilt when the user opens
+    // the guides panel, so an imported project shows them without extra work.
+    if (id == "midi" && visible)
+    {
+      syncLiveMidiGuides();
+      refreshMidiGuideUi();
+    }
   };
   workspace.setRailPanelAvailable("tracks", false); // ARA only
   workspace.getSideRail().onSettingsClicked = [this] { showSettings(); };
   midiGuidePanel.onImportRequested = [this]
   {
-    if (midiGuideFileChooser == nullptr)
-      midiGuideFileChooser = std::make_unique<juce::FileChooser>(
-          TR("midi.import"), juce::File(), "*.mid;*.midi");
-    midiGuideFileChooser->launchAsync(
-        juce::FileBrowserComponent::openMode |
-            juce::FileBrowserComponent::canSelectFiles,
-        [](const juce::FileChooser&) {});
+    importMidiGuideFromFile();
   };
+  midiGuidePanel.onApplyRequested = [this] { applyMidiGuide(); };
+  midiGuidePanel.onRemoveRequested = [this] { removeSelectedMidiGuide(); };
+  midiGuidePanel.onGhostsToggled = [this](bool visible)
+  { setMidiGuideGhostsVisible(visible); };
+  midiGuidePanel.onSelectionChanged = [this](int index)
+  { setMidiGuideSelected(index); };
   railHarmonyPanel.getCurrentProject = [this] { return getProject(); };
   railHarmonyPanel.onHarmonyRequested =
       [this](HarmonyUtils::Interval interval, bool up)
@@ -6436,7 +6444,362 @@ void MainComponent::updateHostTempoMap(
 
   hostTempoMap = std::move(tempoMap);
   pianoRoll.setHostTempoMap(hostTempoMap);
+  // The ghosts are placed through the tempo map, so a new map moves them.
+  refreshMidiGuideUi();
 }
+
+namespace
+{
+// The tempo map the guide math must use: the host's when ARA published a real
+// one, otherwise the constant fallback the editor already shows.
+const HostTempoMap &activeTempoMapForGuide(
+    const std::shared_ptr<const HostTempoMap> &hostTempoMap,
+    const HostTempoMap &fallback)
+{
+  return (hostTempoMap != nullptr && hostTempoMap->isValid()) ? *hostTempoMap
+                                                              : fallback;
+}
+} // namespace
+
+void MainComponent::importMidiGuideFromFile()
+{
+  if (midiGuideFileChooser == nullptr)
+    midiGuideFileChooser = std::make_unique<juce::FileChooser>(
+        TR("midi.import"), juce::File(), "*.mid;*.midi");
+
+  midiGuideFileChooser->launchAsync(
+      juce::FileBrowserComponent::openMode |
+          juce::FileBrowserComponent::canSelectFiles,
+      [this](const juce::FileChooser &chooser)
+      {
+        const auto file = chooser.getResult();
+        if (!file.existsAsFile())
+          return;
+
+        const auto imported = MidiGuideImporter::importMidiFile(file);
+        if (!imported.ok)
+        {
+          midiGuidePanel.setStatusText(imported.error);
+          return;
+        }
+
+        auto *project = getProject();
+        if (project == nullptr)
+        {
+          midiGuidePanel.setStatusText("no project");
+          return;
+        }
+
+        auto guides = project->getMidiGuides();
+        int index = -1;
+        for (size_t i = 0; i < guides.size(); ++i)
+        {
+          if (guides[i].id == imported.source.id)
+          {
+            guides[i] = imported.source;
+            index = static_cast<int>(i);
+            break;
+          }
+        }
+        if (index < 0)
+        {
+          guides.push_back(imported.source);
+          index = static_cast<int>(guides.size()) - 1;
+        }
+        project->setMidiGuides(std::move(guides));
+        selectedMidiGuide = index;
+
+        juce::String status;
+        status << imported.source.notes.size() << " notes";
+        if (imported.droppedNotes > 0)
+          status << " (" << imported.droppedNotes << " dropped)";
+        midiGuidePanel.setStatusText(status);
+
+        refreshMidiGuideUi();
+      });
+}
+
+void MainComponent::removeSelectedMidiGuide()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+  auto guides = project->getMidiGuides();
+  if (selectedMidiGuide < 0 ||
+      selectedMidiGuide >= static_cast<int>(guides.size()))
+    return;
+
+  guides.erase(guides.begin() + selectedMidiGuide);
+  project->setMidiGuides(std::move(guides));
+  selectedMidiGuide =
+      guides.empty() ? -1 : juce::jmin(selectedMidiGuide,
+                                       static_cast<int>(guides.size()) - 1);
+  midiGuidePanel.setStatusText({});
+  refreshMidiGuideUi();
+}
+
+void MainComponent::setMidiGuideSelected(int index)
+{
+  if (index == selectedMidiGuide)
+    return;
+  selectedMidiGuide = index;
+  refreshMidiGuideUi();
+}
+
+void MainComponent::setMidiGuideGhostsVisible(bool visible)
+{
+  if (showMidiGuideGhosts == visible)
+    return;
+  showMidiGuideGhosts = visible;
+  refreshMidiGuideUi();
+}
+
+std::vector<PianoRollComponent::MidiGuideGhost>
+MainComponent::buildMidiGuideGhosts(const GuideSource &guide) const
+{
+  std::vector<PianoRollComponent::MidiGuideGhost> ghosts;
+  if (guide.notes.empty())
+    return ghosts;
+
+  const HostTempoMap fallback = HostTempoMap::constant(
+      cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
+  const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
+
+  MidiGuideMapping mapping;
+  mapping.tempoMap = &tempo;
+  // Project 0 s on the host timeline. Same offset CoordinateMapper publishes.
+  mapping.timelineDisplayOffsetSeconds = pianoRoll.projectToTimeline(0.0);
+  mapping.sampleRate = SAMPLE_RATE;
+  mapping.hopSize = HOP_SIZE;
+
+  ghosts.reserve(guide.notes.size());
+  for (const auto &note : guide.notes)
+  {
+    PianoRollComponent::MidiGuideGhost ghost;
+    ghost.startSeconds = mapping.projectSecondsForQuarter(note.startQuarter);
+    ghost.endSeconds = mapping.projectSecondsForQuarter(note.endQuarter);
+    ghost.pitch = note.pitch;
+    ghost.label = juce::MidiMessage::getMidiNoteName(
+        juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+                     static_cast<int>(std::lround(note.pitch))),
+        true, true, 3);
+    if (ghost.endSeconds <= ghost.startSeconds)
+      continue;
+    ghosts.push_back(ghost);
+  }
+  return ghosts;
+}
+
+void MainComponent::syncLiveMidiGuides()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+
+  const auto liveDirectory = PlatformPaths::getConfigDirectory()
+                                 .getChildFile("guides")
+                                 .getChildFile("live");
+  int rejected = 0;
+  auto liveGuides = MidiGuideImporter::readLiveGuides(liveDirectory, &rejected);
+
+  if (!liveGuides.empty())
+  {
+    auto guides = project->getMidiGuides();
+    bool changed = false;
+    for (auto &live : liveGuides)
+    {
+      const auto existing =
+          std::find_if(guides.begin(), guides.end(),
+                       [&live](const GuideSource &guide)
+                       { return guide.id == live.id; });
+      if (existing == guides.end())
+      {
+        guides.push_back(std::move(live));
+        changed = true;
+      }
+      else if (existing->notes.size() != live.notes.size())
+      {
+        *existing = std::move(live);
+        changed = true;
+      }
+    }
+    if (changed)
+    {
+      // Materialized on purpose: the render never reads the live file (D-311).
+      project->setMidiGuides(std::move(guides));
+      if (selectedMidiGuide < 0)
+        selectedMidiGuide = 0;
+    }
+  }
+
+  if (rejected > 0)
+    midiGuidePanel.setStatusText(juce::String(rejected) + " guide(s) rejected");
+}
+
+void MainComponent::refreshMidiGuideUi()
+{
+  auto *project = getProject();
+
+  juce::StringArray labels;
+  juce::StringArray ids;
+  if (project != nullptr)
+  {
+    const auto &guides = project->getMidiGuides();
+    for (size_t i = 0; i < guides.size(); ++i)
+    {
+      juce::String label = guides[i].label.empty()
+                               ? juce::String("MIDI")
+                               : juce::String(guides[i].label.c_str());
+      label << "  ·  " << static_cast<int>(guides[i].notes.size());
+      labels.add(label);
+      ids.add(juce::String(guides[i].id.c_str()));
+    }
+    if (!guides.empty() && selectedMidiGuide < 0)
+      selectedMidiGuide = 0;
+    if (selectedMidiGuide >= static_cast<int>(guides.size()))
+      selectedMidiGuide = guides.empty() ? -1
+                                         : static_cast<int>(guides.size()) - 1;
+  }
+  else
+  {
+    selectedMidiGuide = -1;
+  }
+
+  midiGuidePanel.setGuides(labels, ids, selectedMidiGuide);
+  midiGuidePanel.setGhostsVisible(showMidiGuideGhosts);
+
+  std::vector<PianoRollComponent::MidiGuideGhost> ghosts;
+  if (project != nullptr && showMidiGuideGhosts && selectedMidiGuide >= 0 &&
+      selectedMidiGuide < static_cast<int>(project->getMidiGuides().size()))
+    ghosts = buildMidiGuideGhosts(
+        project->getMidiGuides()[static_cast<size_t>(selectedMidiGuide)]);
+  pianoRoll.setMidiGuideGhosts(std::move(ghosts));
+}
+
+void MainComponent::applyMidiGuide()
+{
+  auto *project = getProject();
+  if (project == nullptr)
+    return;
+
+  const auto &guides = project->getMidiGuides();
+  if (selectedMidiGuide < 0 ||
+      selectedMidiGuide >= static_cast<int>(guides.size()))
+  {
+    midiGuidePanel.setStatusText(TR("midi.empty"));
+    return;
+  }
+  const auto &guide = guides[static_cast<size_t>(selectedMidiGuide)];
+  if (guide.notes.empty())
+    return;
+
+  const HostTempoMap fallback = HostTempoMap::constant(
+      cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
+  const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
+
+  MidiGuideMapping mapping;
+  mapping.tempoMap = &tempo;
+  mapping.timelineDisplayOffsetSeconds = pianoRoll.projectToTimeline(0.0);
+  mapping.sampleRate = SAMPLE_RATE;
+  mapping.hopSize = HOP_SIZE;
+
+  // Guide notes on the timeline (the matcher never sees quarters).
+  std::vector<MidiGuideMatcher::GuideSlot> slots;
+  slots.reserve(guide.notes.size());
+  for (size_t i = 0; i < guide.notes.size(); ++i)
+  {
+    const auto &note = guide.notes[i];
+    MidiGuideMatcher::GuideSlot slot;
+    slot.guideIndex = static_cast<int>(i);
+    slot.startSeconds = mapping.timelineSecondsForQuarter(note.startQuarter);
+    slot.endSeconds = mapping.timelineSecondsForQuarter(note.endQuarter);
+    slot.pitch = static_cast<double>(note.pitch);
+    if (slot.endSeconds <= slot.startSeconds)
+      continue;
+    slots.push_back(slot);
+  }
+
+  // Audio notes on the same axis. Muted notes are skipped: applying a guide to
+  // something that does not sound would be invisible state.
+  std::vector<MidiGuideMatcher::AudioNote> audio;
+  auto &notes = project->getNotes();
+  audio.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i)
+  {
+    const auto &note = notes[i];
+    if (note.isRest() || note.isMuted())
+      continue;
+    MidiGuideMatcher::AudioNote entry;
+    entry.index = static_cast<int>(i);
+    entry.startSeconds =
+        static_cast<double>(note.getStartFrame()) * HOP_SIZE / SAMPLE_RATE +
+        mapping.timelineDisplayOffsetSeconds;
+    entry.endSeconds =
+        static_cast<double>(note.getEndFrame()) * HOP_SIZE / SAMPLE_RATE +
+        mapping.timelineDisplayOffsetSeconds;
+    entry.centerMidi = static_cast<double>(note.getAdjustedMidiNote());
+    if (entry.endSeconds <= entry.startSeconds)
+      continue;
+    audio.push_back(entry);
+  }
+
+  const auto matches = MidiGuideMatcher::match(audio, slots);
+
+  int matched = 0;
+  if (!matches.empty())
+  {
+    std::vector<Note *> targetNotes;
+    std::vector<float> oldMidis, newMidis, oldSources, newSources;
+    targetNotes.reserve(matches.size());
+
+    for (const auto &match : matches)
+    {
+      auto &note = notes[static_cast<size_t>(match.audioIndex)];
+      const auto &slot = slots[static_cast<size_t>(match.guideIndex)];
+
+      const float oldMidi = note.getMidiNote();
+      const float oldSource = note.getLastNonMacroMidiNote();
+      const float target = static_cast<float>(slot.pitch);
+      // D-312: only the centre moves. sourceAfterEdit keeps the Correct Pitch
+      // reference consistent, exactly like a drag; deltaPitch and pitchOffset
+      // are never touched here.
+      const float newSource = NotePitch::sourceAfterEdit(
+          *project, note, oldSource, oldMidi, target);
+
+      targetNotes.push_back(&note);
+      oldMidis.push_back(oldMidi);
+      newMidis.push_back(target);
+      oldSources.push_back(oldSource);
+      newSources.push_back(newSource);
+    }
+
+    matched = static_cast<int>(targetNotes.size());
+    auto action = std::make_unique<MidiGuideApplyAction>(
+        std::move(targetNotes), std::move(oldMidis), std::move(newMidis),
+        std::move(oldSources), std::move(newSources),
+        [this](const std::vector<Note *> &)
+        {
+          pianoRoll.repaint();
+          pianoRollView.repaint();
+        },
+        juce::String(TR("midi.apply")) + " MIDI");
+    action->redo();
+    if (undoManager)
+      undoManager->addAction(std::move(action));
+
+    markRenderDirty();
+    notifyProjectDataChanged();
+    // D-247: every path that marks the audio dirty must ask for the render.
+    if (isPluginMode() && onPitchEditFinished)
+      onPitchEditFinished();
+  }
+
+  juce::String status;
+  status << matched << "/" << static_cast<int>(audio.size()) << " "
+         << (matched == 1 ? "note" : "notes");
+  midiGuidePanel.setStatusText(status);
+}
+
 
 void MainComponent::updateHostLoopRange(double startSeconds, double endSeconds,
                                         bool enabled, bool hasRange)

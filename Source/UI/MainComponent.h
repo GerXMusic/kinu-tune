@@ -290,6 +290,20 @@ public:
                                int denominator) override;
   void updateHostTempoMap(
       std::shared_ptr<const HostTempoMap> tempoMap) override;
+
+  // D-311: MIDI guides. The drawer drives these; MainComponent owns the state
+  // (which guide is selected, whether the ghosts show) and applies through the
+  // normal note-edit path (NotePitch + undo + render).
+  void importMidiGuideFromFile();
+  void applyMidiGuide();
+  void removeSelectedMidiGuide();
+  void setMidiGuideSelected(int index);
+  void setMidiGuideGhostsVisible(bool visible);
+  // Rebuilds the drawer list and the ghost layer from the project + tempo map.
+  void refreshMidiGuideUi();
+  // Materializes any guide_*.json the REAPER script left in the config folder
+  // (same source_id replaces its own guide). D-314: files, never sockets.
+  void syncLiveMidiGuides();
   void updateHostLoopRange(double startSeconds, double endSeconds,
                            bool enabled, bool hasRange) override;
   void notifyHostStopped() override; // Called when host stops playback
@@ -768,6 +782,13 @@ private:
   // D-310: the host tempo map snapshot. Null means "no usable host map"; the
   // cached BPM above is then the fallback, exactly as before.
   std::shared_ptr<const HostTempoMap> hostTempoMap;
+
+  // D-311: MIDI guides (song level, quarters in the project; ghosts in project
+  // seconds for the canvas).
+  std::vector<PianoRollComponent::MidiGuideGhost>
+  buildMidiGuideGhosts(const GuideSource &guide) const;
+  int selectedMidiGuide = -1;
+  bool showMidiGuideGhosts = true;
 
   bool hasCachedHostLoopRange = false;
   double cachedHostLoopStartSeconds = 0.0;

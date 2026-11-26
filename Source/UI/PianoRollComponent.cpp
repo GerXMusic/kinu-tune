@@ -21,6 +21,7 @@
 #include "../Undo/NoteMuteAction.h"
 #include "../Undo/NoteDeleteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
+#include "Components/AppFont.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
@@ -591,6 +592,7 @@ void PianoRollComponent::paint(juce::Graphics &g)
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g, false, true);
+    drawMidiGuideGhosts(g);
     drawRegionPreviews(g);
     drawInactiveRegionEdits(g, mainArea);
     drawPinnedTrackNotes(g, mainArea);
@@ -3649,6 +3651,73 @@ void PianoRollComponent::setHostTempoMap(
   // D-310 step 1 publishes the snapshot only: the grid still uses the constant
   // BPM (its own phase), and the MIDI guide reads this map to place ghosts.
   // No repaint here on purpose: nothing on screen depends on it yet.
+}
+
+void PianoRollComponent::setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts)
+{
+  if (ghosts.size() == midiGuideGhosts.size())
+  {
+    bool same = true;
+    for (size_t i = 0; i < ghosts.size() && same; ++i)
+    {
+      const auto& a = ghosts[i];
+      const auto& b = midiGuideGhosts[i];
+      same = std::abs(a.startSeconds - b.startSeconds) < 1.0e-6 &&
+             std::abs(a.endSeconds - b.endSeconds) < 1.0e-6 &&
+             std::abs(a.pitch - b.pitch) < 1.0e-6 && a.label == b.label;
+    }
+    if (same)
+      return;
+  }
+
+  midiGuideGhosts = std::move(ghosts);
+  repaint();
+}
+
+void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
+{
+  if (midiGuideGhosts.empty())
+    return;
+
+  // Read-only layer: dashed cyan blocks under the notes. Deliberately not the
+  // grey source curve retired in D-305: this is the imported reference.
+  const juce::Colour ghostColour(0xFF35C4CF);
+  const double visibleStart = xToTime(0.0f);
+  const double visibleEnd = xToTime(static_cast<float>(getWidth()));
+
+  const float dashLengths[] = {4.0f, 3.0f};
+  juce::PathStrokeType stroke(1.2f);
+
+  for (const auto &ghost : midiGuideGhosts)
+  {
+    if (ghost.endSeconds < visibleStart || ghost.startSeconds > visibleEnd)
+      continue;
+
+    const float x = timeToX(ghost.startSeconds);
+    const float right = timeToX(ghost.endSeconds);
+    const float width = juce::jmax(2.0f, right - x);
+    auto rect = juce::Rectangle<float>(x, midiToY(ghost.pitch), width,
+                                       juce::jmax(6.0f, pixelsPerSemitone));
+    rect = rect.reduced(0.0f, 1.0f);
+
+    g.setColour(ghostColour.withAlpha(0.10f));
+    g.fillRoundedRectangle(rect, 3.0f);
+
+    juce::Path outline;
+    outline.addRoundedRectangle(rect, 3.0f);
+    juce::Path dashed;
+    stroke.createDashedStroke(dashed, outline, dashLengths, 2);
+    g.setColour(ghostColour.withAlpha(0.85f));
+    g.fillPath(dashed);
+
+    if (width > 26.0f)
+    {
+      g.setColour(ghostColour.withAlpha(0.9f));
+      g.setFont(AppFont::getFont(juce::jmin(11.0f, pixelsPerSemitone * 0.9f)));
+      g.drawText(ghost.label, rect.withTrimmedLeft(3.0f).toNearestInt(),
+                 juce::Justification::centredLeft, false);
+    }
+  }
 }
 
 void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division)

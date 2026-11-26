@@ -32,7 +32,11 @@ set(PITCHNET_TEST_SOURCES
     HostSyncTempoTests.cpp
     # D-310: el tempo map del host (quarters <-> segundos, compases).
     HostTempoMapTests.cpp
-    NoteEngineTests.cpp
+    # D-311/D-312: la guia MIDI (coordenadas, emparejamiento, importacion y
+    # persistencia).
+    MidiGuideTests.cpp
+    MidiGuideImportTests.cpp
+    MidiGuideApplyTests.cpp    NoteEngineTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp

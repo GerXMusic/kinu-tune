@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "Note.h"
+#include "MidiGuide.h"
 #include <optional>
 #include <vector>
 #include <memory>
@@ -184,6 +185,16 @@ public:
     const std::vector<Note> &getNotes() const { return notes; }
     void addNote(Note note);
     void clearNotes() { notes.clear(); }
+
+    // D-311: MIDI guides materialized in the project. Song-level, stored in
+    // quarters, never read during render. Additive JSON key "midiGuides".
+    std::vector<GuideSource> &getMidiGuides() { return midiGuides; }
+    const std::vector<GuideSource> &getMidiGuides() const { return midiGuides; }
+    void setMidiGuides(std::vector<GuideSource> guides)
+    {
+        midiGuides = std::move(guides);
+        modified = true;
+    }
 
     Note *getNoteAtFrame(int frame);
     std::vector<Note *> getNotesInRange(int startFrame, int endFrame);
@@ -406,6 +417,8 @@ private:
 
     AudioData audioData;
     std::vector<Note> notes;
+    // D-311: materialized MIDI guides (quarters, song level).
+    std::vector<GuideSource> midiGuides;
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
