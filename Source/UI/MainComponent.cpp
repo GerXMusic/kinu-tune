@@ -2202,6 +2202,65 @@ void MainComponent::pollMcpControl()
       response->setProperty("bypass", project->isBypassProcessing());
       response->setProperty("ok", true);
     }
+    else if (command == "midi_guides")
+    {
+      // D-311/D-314: read-only view of the guide state, so the guide path can
+      // be checked from the outside (no keyboard/mouse scripting, D-126).
+      juce::Array<juce::var> guideArray;
+      const auto &guides = project->getMidiGuides();
+      for (int i = 0; i < static_cast<int>(guides.size()); ++i)
+      {
+        auto guideObject = new juce::DynamicObject();
+        guideObject->setProperty("index", i);
+        guideObject->setProperty("id", juce::String(guides[i].id));
+        guideObject->setProperty("label", juce::String(guides[i].label));
+        guideObject->setProperty("kind", juce::String(guides[i].kind));
+        guideObject->setProperty("notes",
+                                 static_cast<int>(guides[i].notes.size()));
+        if (!guides[i].notes.empty())
+        {
+          guideObject->setProperty("first_start_quarter",
+                                   guides[i].notes.front().startQuarter);
+          guideObject->setProperty("first_pitch",
+                                   static_cast<double>(guides[i].notes.front().pitch));
+        }
+        guideArray.add(juce::var(guideObject));
+      }
+      response->setProperty("guides", juce::var(guideArray));
+      response->setProperty("selected", selectedMidiGuide);
+      response->setProperty("ghosts_visible", showMidiGuideGhosts);
+      response->setProperty("ghost_count",
+                            static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
+      response->setProperty("host_tempo_map",
+                            hostTempoMap != nullptr && hostTempoMap->isValid()
+                                ? juce::String(hostTempoMap->describe().c_str())
+                                : juce::String("none"));
+      response->setProperty("ok", true);
+    }
+    else if (command == "sync_midi_guides")
+    {
+      syncLiveMidiGuides();
+      refreshMidiGuideUi();
+      response->setProperty(
+          "guides",
+          static_cast<int>(project->getMidiGuides().size()));
+      response->setProperty(
+          "ghost_count",
+          static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
+      response->setProperty("ok", true);
+    }
+    else if (command == "apply_midi_guide")
+    {
+      applyMidiGuide();
+      response->setProperty("status", midiGuidePanel.getStatusText());
+      response->setProperty("ok", true);
+    }
+    else if (command == "show_rail_panel")
+    {
+      const auto panelId = request.getProperty("panel", "midi").toString();
+      workspace.showRailPanel(panelId, true);
+      response->setProperty("ok", true);
+    }
     else if (command == "list_note_modulators")
     {
       // D-208: read-only raw modulator state per note, same order and index

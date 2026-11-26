@@ -28,6 +28,7 @@ public:
     void setGuides(const juce::StringArray& labels, const juce::StringArray& ids,
                    int selectedIndex);
     void setStatusText(const juce::String& text);
+    juce::String getStatusText() const { return status.getText(); }
     void setGhostsVisible(bool visible);
     void setApplyEnabled(bool enabled);
     int getSelectedIndex() const { return selected; }

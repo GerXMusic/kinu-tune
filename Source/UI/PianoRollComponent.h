@@ -307,6 +307,7 @@ public:
   };
   void setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts);
   bool hasMidiGuideGhosts() const { return !midiGuideGhosts.empty(); }
+  size_t getMidiGuideGhostCount() const { return midiGuideGhosts.size(); }
   void setTimelineGridDivision(TimelineGridDivision division);
   void setTimelineSnapCycle(bool enabled);
 
