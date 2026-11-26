@@ -229,6 +229,33 @@ void testUndoRedo() {
 }
 
 // --- 7: JSON nuevo y migracion del viejo ---------------------------------
+void testOldFormulaEquivalence() {
+  // La formula vieja con un comun distinto de 0: base = centro - (L+R)/2 y
+  // delta = L(1-p) + R p. La migracion tilt=(L-R)/2 debe dar la MISMA curva.
+  const float oldLeft = 1.5f;
+  const float oldRight = -0.5f;
+  const float migratedTilt = (oldLeft - oldRight) * 0.5f; // 1.0
+  Project project = makeProject();
+  Note &note = onlyNote(project);
+  note.setTilt(migratedTilt);
+  rebuild(project);
+  const auto composed = project.getAdjustedF0();
+
+  const float midi = 60.0f;
+  const float oldBase = midi - (oldLeft + oldRight) * 0.5f; // 59.5
+  float worst = 0.0f;
+  for (int i = 0; i < kFrames; ++i) {
+    const float p = static_cast<float>(i) / static_cast<float>(kFrames - 1);
+    const float oldMidi = oldBase + oldLeft * (1.0f - p) + oldRight * p;
+    worst = std::max(worst, std::abs(cents(composed[static_cast<size_t>(i)]) -
+                                     cents(midiToFreq(oldMidi))));
+  }
+  std::printf("D-308 equivalencia formula vieja (L %.2f / R %.2f -> tilt %.2f): "
+              "max diff %.6f c\n",
+              oldLeft, oldRight, migratedTilt, worst);
+  CHECK(worst <= 1.0e-3f);
+}
+
 void testJson() {
   {
     Project project = makeProject();
@@ -258,7 +285,8 @@ void testJson() {
   {
     Project project = makeProject();
     Note &note = onlyNote(project);
-    note.setTilt(1.25f);
+    // La formula vieja con comun distinto de 0 se migra a (L-R)/2 = 1.0.
+    note.setTilt(1.0f);
     rebuild(project);
     const auto expected = project.getAdjustedF0();
 
@@ -273,8 +301,8 @@ void testJson() {
         obj->removeProperty("tilt");
         obj->removeProperty("tiltFineLeft");
         obj->removeProperty("tiltFineRight");
-        obj->setProperty("tiltLeft", 1.25);
-        obj->setProperty("tiltRight", -1.25);
+        obj->setProperty("tiltLeft", 1.5);
+        obj->setProperty("tiltRight", -0.5);
       }
     }
 
@@ -289,7 +317,7 @@ void testJson() {
     std::printf("D-308 JSON viejo (tiltLeft/tiltRight): migrado a %.4f / "
                 "%.4f / %.4f\n",
                 old.getTilt(), old.getTiltFineLeft(), old.getTiltFineRight());
-    CHECK(near(old.getTilt(), 1.25f));
+    CHECK(near(old.getTilt(), 1.0f));
     CHECK(near(old.getTiltFineLeft(), 0.0f));
     CHECK(near(old.getTiltFineRight(), 0.0f));
 
@@ -399,6 +427,7 @@ int main() {
   testFineLeftAndRight();
   testIndependenceAndBody();
   testUndoRedo();
+  testOldFormulaEquivalence();
   testJson();
   testReset();
   testSplitInclined(1.0f, "sin vibrato");
