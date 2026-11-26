@@ -9,6 +9,7 @@
 //   conmutar), asi que el aviso no bloquea.
 
 #include "../Source/UI/EnginePanel.h"
+#include "../Source/UI/EngineColours.h"
 #include "../Source/Utils/Localization.h"
 #include "TestAssert.h"
 
@@ -33,6 +34,41 @@ int main()
 
     EnginePanel panel(EditorUiMode::Advanced);
     panel.setSize(300, 640);
+
+    // D-309: puntos de color por motor y "Seguir global" con el color global.
+    panel.setSynthesisEngine(SynthesisEngineType::Psola);
+    const auto vocoderDot = panel.getEngineRowColour(0);
+    const auto psolaDot = panel.getEngineRowColour(1);
+    const auto globalDot = panel.getBlockRowColour(0);
+    const auto blockPsolaDot = panel.getBlockRowColour(2);
+    CHECK(vocoderDot.has_value());
+    CHECK(*vocoderDot == engineColours::forEngine(SynthesisEngineType::Vocoder));
+    CHECK(psolaDot.has_value());
+    CHECK(*psolaDot == engineColours::forEngine(SynthesisEngineType::Psola));
+    CHECK(globalDot.has_value());
+    CHECK(*globalDot == engineColours::forEngine(SynthesisEngineType::Psola));
+    CHECK(blockPsolaDot.has_value());
+    CHECK(*blockPsolaDot == engineColours::forEngine(SynthesisEngineType::Psola));
+
+    panel.setSynthesisEngine(SynthesisEngineType::Pitchcore);
+    CHECK(panel.getBlockRowColour(0).has_value());
+    CHECK(*panel.getBlockRowColour(0) ==
+          engineColours::forEngine(SynthesisEngineType::Pitchcore));
+
+    // D-309: sin seleccion explicita el selector de bloque queda deshabilitado
+    // y no cae a "todas las notas".
+    panel.setNoteEngine(std::nullopt);
+    CHECK(!panel.isBlockSelectorEnabled());
+    CHECK(panel.getSelectedBlockRow() == -1);
+    panel.setEngineEditingEnabled(false);
+    panel.setEngineEditingEnabled(true);
+    CHECK(!panel.isBlockSelectorEnabled()); // sigue sin seleccion
+
+    // Con una nota seleccionada vuelve a responder.
+    panel.setNoteEngine(NoteEngine::Inherit);
+    CHECK(panel.isBlockSelectorEnabled());
+    CHECK(panel.getSelectedBlockRow() == 0);
+    CHECK(!anyDialogOnDesktop());
 
     // Aviso de motor: numero y listas dentro del panel, sin dialogo.
     const juce::String notice =

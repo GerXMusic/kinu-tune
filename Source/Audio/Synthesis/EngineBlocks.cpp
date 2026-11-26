@@ -288,6 +288,64 @@ EngineEditPlan planEngineEdits(const std::vector<Note> &notes,
     return plan;
 }
 
+VisualBlockMap buildVisualBlocks(const std::vector<Note> &notes,
+                                 SynthesisEngineType globalEngine,
+                                 const juce::AudioBuffer<float> &source,
+                                 int sampleRate, int hopSize) {
+    VisualBlockMap map;
+    map.blockOfNote.assign(notes.size(), -1);
+
+    std::vector<size_t> order;
+    order.reserve(notes.size());
+    for (size_t i = 0; i < notes.size(); ++i)
+        if (!notes[i].isRest())
+            order.push_back(i);
+    if (order.empty())
+        return map;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return notes[a].getStartFrame() < notes[b].getStartFrame();
+    });
+
+    auto startBlock = [&](size_t position) {
+        VisualBlock block;
+        block.index = static_cast<int>(map.blocks.size());
+        block.engine = effectiveEngine(notes[order[position]], globalEngine);
+        block.firstNote = static_cast<int>(order[position]);
+        return block;
+    };
+    VisualBlock current = startBlock(0);
+    current.noteIndices.push_back(static_cast<int>(order[0]));
+    size_t firstPosition = 0;
+    for (size_t i = 1; i < order.size(); ++i) {
+        const bool samePhrase = !canChangeEngineAfter(
+            notes[order[i - 1]], notes[order[i]], source, sampleRate, hopSize);
+        if (samePhrase) {
+            current.noteIndices.push_back(static_cast<int>(order[i]));
+            continue;
+        }
+        current.startFrame = notes[order[firstPosition]].getStartFrame();
+        current.endFrame = notes[order[i - 1]].getEndFrame();
+        current.lastNote = static_cast<int>(order[i - 1]);
+        if (current.endFrame > current.startFrame) {
+            for (const int index : current.noteIndices)
+                map.blockOfNote[static_cast<size_t>(index)] = current.index;
+            map.blocks.push_back(std::move(current));
+        }
+        firstPosition = i;
+        current = startBlock(i);
+        current.noteIndices.push_back(static_cast<int>(order[i]));
+    }
+    current.startFrame = notes[order[firstPosition]].getStartFrame();
+    current.endFrame = notes[order.back()].getEndFrame();
+    current.lastNote = static_cast<int>(order.back());
+    if (current.endFrame > current.startFrame) {
+        for (const int index : current.noteIndices)
+            map.blockOfNote[static_cast<size_t>(index)] = current.index;
+        map.blocks.push_back(std::move(current));
+    }
+    return map;
+}
+
 BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
                                     int anchorIndex, NoteEngine requested,
                                     SynthesisEngineType globalEngine,
@@ -302,51 +360,23 @@ BlockEngineEdit planBlockEngineEdit(const std::vector<Note> &notes,
     if (anchor.isRest())
         return plan;
 
-    int lastEnd = 0;
-    for (const auto &note : notes)
-        if (!note.isRest())
-            lastEnd = std::max(lastEnd, note.getEndFrame());
-    if (lastEnd <= 0)
-        return plan;
-    (void)lastEnd;
-
     // D-258: the unit is the silence-delimited phrase that contains the anchor
     // (D-129), not the engine run: two phrases with the same engine share an
     // engine block, and choosing an engine may not reach across silence.
-    std::vector<size_t> order;
-    order.reserve(notes.size());
-    for (size_t i = 0; i < notes.size(); ++i)
-        if (!notes[i].isRest())
-            order.push_back(i);
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        return notes[a].getStartFrame() < notes[b].getStartFrame();
-    });
-    auto position = order.size();
-    for (size_t i = 0; i < order.size(); ++i)
-        if (order[i] == static_cast<size_t>(anchorIndex)) {
-            position = i;
-            break;
-        }
-    if (position >= order.size())
+    // D-309: the phrase is the same map the engine drawer paints, so the
+    // gesture and the colours cannot disagree.
+    const auto map = buildVisualBlocks(notes, globalEngine, source, sampleRate,
+                                       hopSize);
+    const int blockIndex = map.blockForNote(anchorIndex);
+    if (blockIndex < 0)
         return plan;
-
-    size_t first = position;
-    size_t last = position;
-    while (first > 0 &&
-           !canChangeEngineAfter(notes[order[first - 1]], notes[order[first]],
-                                 source, sampleRate, hopSize))
-        --first;
-    while (last + 1 < order.size() &&
-           !canChangeEngineAfter(notes[order[last]], notes[order[last + 1]],
-                                 source, sampleRate, hopSize))
-        ++last;
+    const auto &block = map.blocks[static_cast<size_t>(blockIndex)];
 
     SynthesisEngineType wanted = globalEngine;
     if (const auto mapped = noteEngineToSynthesisEngine(requested))
         wanted = *mapped;
 
-    for (size_t i = first; i <= last; ++i) {
-        const int index = static_cast<int>(order[i]);
+    for (const int index : block.noteIndices) {
         const auto &note = notes[static_cast<size_t>(index)];
 
         plan.blockNotes.push_back(index);

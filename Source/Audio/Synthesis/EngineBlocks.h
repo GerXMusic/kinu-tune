@@ -143,6 +143,58 @@ struct BlockEngineEdit {
 };
 
 /**
+ * D-309: one visual engine block, the unit the engine drawer paints.
+ *
+ * It is the D-258 phrase: the run of non-rest notes joined by gaps that have
+ * no usable silence (D-129). This is deliberately NOT the renderer's `Block`:
+ * two phrases with the same engine share one render block, but they are two
+ * visual blocks, so a colour never claims that the silence between them was
+ * crossed.
+ */
+struct VisualBlock {
+    /// Position in the map's `blocks`, so a note can name its block cheaply.
+    int index = -1;
+    /// Engine the renderer will use for the phrase (the first note's effective
+    /// engine; the rest of the phrase inherits it, D-125/D-129).
+    SynthesisEngineType engine = SynthesisEngineType::Psola;
+    /// Indices into the note vector, not positions in the phrase.
+    int firstNote = -1;
+    int lastNote = -1;
+    /// Timeline span of the phrase: first note's start to last note's end.
+    int startFrame = 0;
+    int endFrame = 0; // exclusive
+    /// Every note of the phrase, in start-frame order.
+    std::vector<int> noteIndices;
+};
+
+/// Note -> visual block lookup plus the blocks themselves, built once per
+/// fingerprint by PianoRollComponent (D-309).
+struct VisualBlockMap {
+    std::vector<VisualBlock> blocks;
+    /// One entry per note; -1 for rests and for notes outside every phrase.
+    std::vector<int> blockOfNote;
+
+    /// Block of @p noteIndex, or -1 when it belongs to none.
+    int blockForNote(int noteIndex) const
+    {
+        if (noteIndex < 0 || noteIndex >= static_cast<int>(blockOfNote.size()))
+            return -1;
+        return blockOfNote[static_cast<size_t>(noteIndex)];
+    }
+};
+
+/**
+ * D-309: groups the non-rest notes into silence-delimited phrases (the same
+ * predicate `planBlockEngineEdit` uses) and resolves each phrase's engine.
+ * Rests are skipped and never own a block. `blockOfNote` is filled for every
+ * note index so painting is a lookup, not a search.
+ */
+VisualBlockMap buildVisualBlocks(const std::vector<Note> &notes,
+                                 SynthesisEngineType globalEngine,
+                                 const juce::AudioBuffer<float> &source,
+                                 int sampleRate, int hopSize);
+
+/**
  * Works out the block-wide engine change for the note at @p anchorIndex.
  * Returns an empty plan when the anchor is invalid, a rest, or outside every
  * block. See D-258.

@@ -30,6 +30,7 @@
 #include "PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
 #include "Components/CanvasPopupMenu.h"
+#include "EngineColours.h"
 #include "BinaryData.h"
 #include <array>
 #include <algorithm>
@@ -1564,6 +1565,22 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
                                         previewPlaybackStartFrame,
                                         previewPlaybackEndFrame,
                                         previewPlaybackCurrentTime);
+  // D-309: the engine drawer pushes the visual block map and the blocks of the
+  // explicit selection; the renderer only looks them up per note.
+  if (engineViewActive)
+  {
+    const auto &map = ensureEngineBlockMap();
+    noteRenderer->setEngineBlockView(true, &map,
+                                     getActiveEngineBlockIndices());
+  }
+  else
+  {
+    noteRenderer->setEngineBlockView(false, nullptr, {});
+  }
+  // D-309: inactive regions never paint engine borders, but they must not
+  // draw the white sweep line either while the engine drawer is open.
+  if (previewNoteRenderer)
+    previewNoteRenderer->setEngineBlockView(engineViewActive, nullptr, {});
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
 
@@ -1630,6 +1647,230 @@ void PianoRollComponent::drawBypassSourceCurve(juce::Graphics &g)
   }
   g.setColour(juce::Colour(0xFF9A9A9A));
   g.strokePath(path, juce::PathStrokeType(1.5f));
+}
+
+void PianoRollComponent::setEngineViewActive(bool active)
+{
+  if (engineViewActive == active)
+    return;
+  engineViewActive = active;
+  if (engineViewActive)
+    ensureEngineBlockMap(); // build before the first paint, not inside it
+  repaint();
+}
+
+void PianoRollComponent::setGlobalSynthesisEngine(SynthesisEngineType engine)
+{
+  if (globalSynthesisEngine == engine)
+    return;
+  globalSynthesisEngine = engine;
+  engineBlockCache.valid = false; // the fingerprint also covers it
+  if (engineViewActive)
+  {
+    ensureEngineBlockMap();
+    repaint();
+  }
+}
+
+juce::uint64 PianoRollComponent::computeEngineBlockFingerprint() const
+{
+  if (project == nullptr)
+    return 0;
+  // FNV-1a over the cheap fields: times, stored engines, rest/deleted, the
+  // global engine and the source buffer. Silence is never scanned here; only
+  // when this changes.
+  juce::uint64 hash = 1469598103934665603ull;
+  auto mix = [&hash](juce::uint64 value)
+  {
+    hash ^= value;
+    hash *= 1099511628211ull;
+  };
+  const auto &notes = project->getNotes();
+  mix(static_cast<juce::uint64>(notes.size()));
+  mix(static_cast<juce::uint64>(static_cast<int>(globalSynthesisEngine)));
+  const auto &audio = project->getAudioData();
+  const auto &source = audio.originalWaveform.getNumSamples() > 0
+                           ? audio.originalWaveform
+                           : audio.waveform;
+  mix(static_cast<juce::uint64>(source.getNumSamples()));
+  mix(static_cast<juce::uint64>(
+      reinterpret_cast<juce::pointer_sized_int>(source.getReadPointer(0))));
+  mix(static_cast<juce::uint64>(static_cast<int>(audio.sampleRate)));
+  for (const auto &note : notes)
+  {
+    mix(static_cast<juce::uint64>(note.getStartFrame()));
+    mix(static_cast<juce::uint64>(note.getEndFrame()));
+    mix(static_cast<juce::uint64>(note.getSrcStartFrame()));
+    mix(static_cast<juce::uint64>(note.getSrcEndFrame()));
+    mix(static_cast<juce::uint64>(static_cast<int>(note.getEngine()) + 1));
+    mix(note.isRest() ? 1u : 0u);
+    mix(note.isDeleted() ? 1u : 0u);
+  }
+  return hash;
+}
+
+void PianoRollComponent::rebuildEngineBlockMap()
+{
+  engineBlockCache.valid = true;
+  engineBlockCache.fingerprint = computeEngineBlockFingerprint();
+  engineBlockCache.notePointers.clear();
+  engineBlockCache.map.blocks.clear();
+  engineBlockCache.map.blockOfNote.clear();
+  if (project == nullptr)
+    return;
+
+  auto &notes = project->getNotes();
+  engineBlockCache.notePointers.reserve(notes.size());
+  for (auto &note : notes)
+    engineBlockCache.notePointers.push_back(&note);
+
+  const auto &audio = project->getAudioData();
+  const auto &source = audio.originalWaveform.getNumSamples() > 0
+                           ? audio.originalWaveform
+                           : audio.waveform;
+  engineBlockCache.map = engineBlocks::buildVisualBlocks(
+      notes, globalSynthesisEngine, source,
+      static_cast<int>(audio.sampleRate + 0.5), HOP_SIZE);
+  ++engineBlockBuildCount;
+}
+
+const engineBlocks::VisualBlockMap &PianoRollComponent::ensureEngineBlockMap()
+{
+  if (project == nullptr)
+  {
+    engineBlockCache = EngineBlockCache{};
+    return engineBlockCache.map;
+  }
+  const auto fingerprint = computeEngineBlockFingerprint();
+  if (!engineBlockCache.valid ||
+      fingerprint != engineBlockCache.fingerprint)
+    rebuildEngineBlockMap();
+  return engineBlockCache.map;
+}
+
+std::optional<SynthesisEngineType>
+PianoRollComponent::getNoteBlockEngine(const Note &note)
+{
+  if (project == nullptr || note.isRest())
+    return std::nullopt;
+  const auto &map = ensureEngineBlockMap();
+  const auto *first = project->getNotes().data();
+  const auto *last = first + project->getNotes().size();
+  if (&note < first || &note >= last)
+    return std::nullopt;
+  const int index = static_cast<int>(&note - first);
+  const int blockIndex = map.blockForNote(index);
+  if (blockIndex < 0)
+    return std::nullopt;
+  return map.blocks[static_cast<size_t>(blockIndex)].engine;
+}
+
+std::vector<int> PianoRollComponent::getActiveEngineBlockIndices()
+{
+  std::vector<int> blocks;
+  if (project == nullptr)
+    return blocks;
+  const auto &map = ensureEngineBlockMap();
+  auto *first = project->getNotes().data();
+  for (Note *note : getSelectedNotes())
+  {
+    if (note == nullptr || note->isRest())
+      continue;
+    const int index = static_cast<int>(note - first);
+    const int blockIndex = map.blockForNote(index);
+    if (blockIndex >= 0 &&
+        std::find(blocks.begin(), blocks.end(), blockIndex) == blocks.end())
+      blocks.push_back(blockIndex);
+  }
+  return blocks;
+}
+
+bool PianoRollComponent::hasExplicitEngineSelection() const
+{
+  if (project == nullptr)
+    return false;
+  for (const auto &note : project->getNotes())
+    if (note.isSelected() && !note.isRest() && !note.isDeleted())
+      return true;
+  return false;
+}
+
+std::vector<Note *> PianoRollComponent::getActiveEngineBlockNotes()
+{
+  std::vector<Note *> result;
+  if (project == nullptr)
+    return result;
+  const auto &map = ensureEngineBlockMap();
+  for (Note *note : getSelectedNotes())
+  {
+    if (note == nullptr || note->isRest())
+      continue;
+    const auto *first = project->getNotes().data();
+    const int index = static_cast<int>(note - first);
+    const int blockIndex = map.blockForNote(index);
+    if (blockIndex < 0)
+      continue;
+    for (const int noteIndex :
+         map.blocks[static_cast<size_t>(blockIndex)].noteIndices)
+    {
+      Note *candidate = &project->getNotes()[static_cast<size_t>(noteIndex)];
+      if (std::find(result.begin(), result.end(), candidate) == result.end())
+        result.push_back(candidate);
+    }
+  }
+  return result;
+}
+
+void PianoRollComponent::setSweepState(bool active, int startFrame,
+                                       int endFrame, int remaining)
+{
+  int sweepStart = startFrame;
+  int sweepEnd = endFrame;
+  std::optional<juce::Colour> sweepColour;
+  bool neutral = false;
+  if (active && engineViewActive && project != nullptr &&
+      sweepEnd > sweepStart)
+  {
+    // Expand the dirty range to the first/last note of every visual block it
+    // touches. One block sweeps in its engine colour; several (or none) use
+    // the neutral colour, still as a border light, never the white line.
+    const auto &map = ensureEngineBlockMap();
+    std::vector<int> touched;
+    for (const auto &block : map.blocks)
+      if (block.startFrame < sweepEnd && block.endFrame > sweepStart)
+        touched.push_back(block.index);
+    if (!touched.empty())
+    {
+      int firstFrame = std::numeric_limits<int>::max();
+      int lastFrame = std::numeric_limits<int>::min();
+      for (const int blockIndex : touched)
+      {
+        const auto &block = map.blocks[static_cast<size_t>(blockIndex)];
+        firstFrame = std::min(firstFrame, block.startFrame);
+        lastFrame = std::max(lastFrame, block.endFrame);
+      }
+      sweepStart = firstFrame;
+      sweepEnd = lastFrame;
+      if (touched.size() == 1)
+        sweepColour = engineColours::forEngine(
+            map.blocks[static_cast<size_t>(touched.front())].engine);
+      else
+        neutral = true;
+    }
+  }
+
+  lastSweepStartFrame = sweepStart;
+  lastSweepEndFrame = sweepEnd;
+  lastSweepNeutral = neutral;
+
+  if (noteRenderer)
+  {
+    noteRenderer->setSweepState(active, sweepStart, sweepEnd, remaining);
+    noteRenderer->setSweepBorderColour(sweepColour);
+  }
+  if (previewNoteRenderer)
+    previewNoteRenderer->setSweepState(active, startFrame, endFrame,
+                                       remaining);
 }
 
 void PianoRollComponent::setBypassView(bool active)
@@ -3177,6 +3418,8 @@ void PianoRollComponent::setProject(Project *proj)
   liveRecordingSampleRate = 0.0;
   project = proj;
   hoveredNote = nullptr;
+  // D-309: the visual block map belongs to the previous document.
+  engineBlockCache = EngineBlockCache{};
   setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =
       project != nullptr ? project->getScaleMode() : ScaleMode::Chromatic;

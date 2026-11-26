@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
@@ -200,13 +201,44 @@ public:
   void setProject(Project *proj);
   // P1b fase 6: estado del barrido por primitivas, para no arrastrar la cola
   // hasta el renderer. Se reenvia a los dos renderers de notas.
-  void setSweepState(bool active, int startFrame, int endFrame, int remaining)
+  // D-309: con el cajon Motor abierto el rango se expande a la primera y la
+  // ultima nota del bloque visual afectado y el barrido enciende bordes.
+  void setSweepState(bool active, int startFrame, int endFrame, int remaining);
+
+  // D-309: engine drawer view. Closed = the editor keeps its usual look and the
+  // white sweep; open = every non-rest note gets its block's engine border and
+  // the sweep lights those borders instead of drawing a white line.
+  void setEngineViewActive(bool active);
+  bool isEngineViewActive() const { return engineViewActive; }
+  void setGlobalSynthesisEngine(SynthesisEngineType engine);
+  SynthesisEngineType getGlobalSynthesisEngine() const
   {
-    if (noteRenderer)
-      noteRenderer->setSweepState(active, startFrame, endFrame, remaining);
-    if (previewNoteRenderer)
-      previewNoteRenderer->setSweepState(active, startFrame, endFrame,
-                                         remaining);
+    return globalSynthesisEngine;
+  }
+  /// Engine the renderer will use for the visual block that contains @p note,
+  /// or nothing when the note is a rest / outside every phrase.
+  std::optional<SynthesisEngineType> getNoteBlockEngine(const Note &note);
+  /// Notes of the visual block(s) of the explicit selection; empty when
+  /// nothing is selected (the block picker then stays disabled).
+  std::vector<Note *> getActiveEngineBlockNotes();
+  std::vector<int> getActiveEngineBlockIndices();
+  bool hasExplicitEngineSelection() const;
+  /// D-309 measurement: how many times the visual map was rebuilt. The cache
+  /// is reused while the fingerprint (times, engines, rest/deleted, global
+  /// engine, source) does not change.
+  int getEngineBlockBuildCount() const { return engineBlockBuildCount; }
+  // D-309 measurement: the range the last sweep was expanded to and whether it
+  // resolved to the neutral colour (several blocks).
+  int getSweepStartFrame() const { return lastSweepStartFrame; }
+  int getSweepEndFrame() const { return lastSweepEndFrame; }
+  bool isSweepNeutral() const { return lastSweepNeutral; }
+  /// D-180/D-309 measurement only: clears the paint counters so a test can
+  /// measure the steady state without the first paint's one-off cost.
+  void resetPaintStats()
+  {
+    paintCount = 0;
+    lastPaintDurationMs = 0.0;
+    maxPaintDurationMs = 0.0;
   }
   void beginLiveRecordingWaveform(double sampleRate,
                                   double timelineOffsetSeconds);
@@ -425,6 +457,25 @@ private:
   void drawTimeline(juce::Graphics &g);
   void drawLoopTimeline(juce::Graphics &g);
   void drawNotes(juce::Graphics &g, NoteRenderPass pass);
+  // D-309: visual engine blocks (D-258 phrases), rebuilt only when the cheap
+  // fingerprint changes. Called from paint and from the public queries.
+  const engineBlocks::VisualBlockMap &ensureEngineBlockMap();
+  juce::uint64 computeEngineBlockFingerprint() const;
+  void rebuildEngineBlockMap();
+  struct EngineBlockCache
+  {
+    bool valid = false;
+    juce::uint64 fingerprint = 0;
+    engineBlocks::VisualBlockMap map;
+    std::vector<Note *> notePointers;
+  };
+  EngineBlockCache engineBlockCache;
+  SynthesisEngineType globalSynthesisEngine = SynthesisEngineType::Psola;
+  bool engineViewActive = false;
+  int engineBlockBuildCount = 0;
+  int lastSweepStartFrame = 0;
+  int lastSweepEndFrame = 0;
+  bool lastSweepNeutral = false;
   void drawPitchCurves(juce::Graphics &g);
   void drawBypassSourceCurve(juce::Graphics &g);
   bool bypassView = false;

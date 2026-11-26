@@ -1,5 +1,6 @@
 #include "EnginePanel.h"
 #include "Components/AppFont.h"
+#include "EngineColours.h"
 
 namespace
 {
@@ -37,9 +38,26 @@ void EnginePanel::ChoiceList::setOptions(std::vector<juce::String> newLabels)
 {
     labels = std::move(newLabels);
     rowEnabled.assign(labels.size(), true);
+    rowColours.assign(labels.size(), std::nullopt);
     if (selected >= static_cast<int>(labels.size()))
         selected = -1;
     repaint();
+}
+
+void EnginePanel::ChoiceList::setRowColour(int index,
+                                           std::optional<juce::Colour> colour)
+{
+    if (index < 0 || index >= static_cast<int>(rowColours.size()))
+        return;
+    rowColours[static_cast<size_t>(index)] = colour;
+    repaint();
+}
+
+std::optional<juce::Colour> EnginePanel::ChoiceList::getRowColour(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(rowColours.size()))
+        return std::nullopt;
+    return rowColours[static_cast<size_t>(index)];
 }
 
 void EnginePanel::ChoiceList::setSelected(int index, bool notify)
@@ -121,11 +139,25 @@ void EnginePanel::ChoiceList::paint(juce::Graphics& g)
         const auto dot = juce::Rectangle<float>(
             static_cast<float>(row.getX() + 7), row.toFloat().getCentreY() - 5.0f, 10.0f,
             10.0f);
-        g.setColour(APP_COLOR_BORDER_HIGHLIGHT);
-        g.drawEllipse(dot, 1.2f);
+        const bool hasColour =
+            i < rowColours.size() && rowColours[i].has_value();
+        if (hasColour)
+        {
+            // D-309: engine colour dot. The radio centre stays neutral so the
+            // colour never reads as "selected" on its own.
+            g.setColour(*rowColours[i]);
+            g.fillEllipse(dot);
+            g.setColour(APP_COLOR_BORDER_HIGHLIGHT);
+            g.drawEllipse(dot, 0.8f);
+        }
+        else
+        {
+            g.setColour(APP_COLOR_BORDER_HIGHLIGHT);
+            g.drawEllipse(dot, 1.2f);
+        }
         if (isSelected)
         {
-            g.setColour(APP_COLOR_PRIMARY);
+            g.setColour(hasColour ? APP_COLOR_TEXT_PRIMARY : APP_COLOR_PRIMARY);
             g.fillEllipse(dot.reduced(2.2f));
         }
 
@@ -235,27 +267,48 @@ void EnginePanel::refreshLocalisedText()
                              TR("inspector.engine_psola"),
                              TR("inspector.engine_pitchcore")});
     engineChoices.setRowEnabled(0, aiAvailable);
+    applyEngineColours();
     resized();
     repaint();
 }
 
 void EnginePanel::setSynthesisEngine(SynthesisEngineType engine)
 {
+    globalEngine = engine;
     const int index = engine == SynthesisEngineType::Vocoder   ? 0
                       : engine == SynthesisEngineType::Pitchcore ? 2
                                                                  : 1;
     engineChoices.setSelected(index, false);
+    applyEngineColours();
+}
+
+void EnginePanel::applyEngineColours()
+{
+    // D-309: the project rows and the per-block rows use the same palette.
+    // "Seguir global" shows the global engine's colour; its radio dot is the
+    // neutral one painted by ChoiceList.
+    engineChoices.setRowColour(0, engineColours::forEngine(SynthesisEngineType::Vocoder));
+    engineChoices.setRowColour(1, engineColours::forEngine(SynthesisEngineType::Psola));
+    engineChoices.setRowColour(2, engineColours::forEngine(SynthesisEngineType::Pitchcore));
+    blockChoices.setRowColour(0, engineColours::forEngine(globalEngine));
+    blockChoices.setRowColour(1, engineColours::forEngine(SynthesisEngineType::Vocoder));
+    blockChoices.setRowColour(2, engineColours::forEngine(SynthesisEngineType::Psola));
+    blockChoices.setRowColour(3, engineColours::forEngine(SynthesisEngineType::Pitchcore));
 }
 
 void EnginePanel::setNoteEngine(std::optional<NoteEngine> engine)
 {
     if (!engine)
     {
+        blockAvailable = false;
         blockChoices.setSelected(-1, false);
+        blockChoices.setInteractionEnabled(false);
         blockChoices.setEnabled(false);
         return;
     }
+    blockAvailable = true;
     blockChoices.setEnabled(true);
+    blockChoices.setInteractionEnabled(engineEditingEnabled);
     const int index = *engine == NoteEngine::Vocoder    ? 1
                       : *engine == NoteEngine::Psola     ? 2
                       : *engine == NoteEngine::Pitchcore ? 3
@@ -311,7 +364,9 @@ void EnginePanel::setEngineEditingEnabled(bool enabled)
         return;
     engineEditingEnabled = enabled;
     engineChoices.setInteractionEnabled(enabled);
-    blockChoices.setInteractionEnabled(enabled);
+    // D-309: without an explicit selection the block picker stays disabled
+    // even when playback stops.
+    blockChoices.setInteractionEnabled(enabled && blockAvailable);
     // D-288: el rail dice por que no se puede, sin dialogo modal (D-263).
     applyNotice();
 }
@@ -321,7 +376,7 @@ void EnginePanel::applyNotice()
     const juce::String message =
         engineEditingEnabled
             ? pendingBlockNotice
-            : juce::String("Para cambiar de motor, para la reproducción.");
+            : juce::String("Para cambiar de motor, para la reproducciï¿½n.");
     blockNotice.setText(message, juce::dontSendNotification);
     blockNotice.setVisible(message.isNotEmpty());
     resized();

@@ -596,6 +596,91 @@ void testCountOutOfBenefitRange() {
     CHECK(count == 1);
 }
 
+// D-309: el mapa visual agrupa por silencio de D-258, no por motor.
+void testVisualBlocksGroupBySilence() {
+    // Sin silencio, dos motores distintos siguen siendo una sola frase.
+    auto source = makeSource({});
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+        makeNote(12, 20, NoteEngine::Pitchcore),
+        makeNote(20, 28, NoteEngine::Inherit),
+    };
+    auto map = engineBlocks::buildVisualBlocks(
+        notes, SynthesisEngineType::Psola, source, kSampleRate, kHop);
+    CHECK(map.blocks.size() == 1);
+    CHECK(map.blocks.front().noteIndices.size() == 3);
+    CHECK(map.blocks.front().engine == SynthesisEngineType::Psola);
+    CHECK(map.blocks.front().firstNote == 0);
+    CHECK(map.blocks.front().lastNote == 2);
+    CHECK(map.blocks.front().startFrame == 4);
+    CHECK(map.blocks.front().endFrame == 28);
+    CHECK(map.blockForNote(0) == 0);
+    CHECK(map.blockForNote(2) == 0);
+
+    // Silencio de 30 ms entre las dos: dos frases visuales aunque el motor sea
+    // el mismo (el bloque del renderer las fusionaria).
+    const int silentStart = 12 * kHop + 800;
+    const int silentEnd = silentStart + kSampleRate * 40 / 1000;
+    source = makeSource({{silentStart, silentEnd}});
+    std::vector<Note> separated{
+        makeNote(4, 12, NoteEngine::Psola),
+        makeNote(22, 30, NoteEngine::Psola),
+    };
+    map = engineBlocks::buildVisualBlocks(
+        separated, SynthesisEngineType::Psola, source, kSampleRate, kHop);
+    CHECK(map.blocks.size() == 2);
+    CHECK(map.blockForNote(0) == 0);
+    CHECK(map.blockForNote(1) == 1);
+    CHECK(map.blocks[0].endFrame == 12);
+    CHECK(map.blocks[1].startFrame == 22);
+}
+
+// D-309: una nota rest no es bloque y no corta la frase por si sola (lo hace
+// el silencio del audio); las notas del bloque llevan el motor de la primera.
+void testVisualBlocksSkipRestsAndResolveFirstEngine() {
+    const int silentStart = 12 * kHop + 800;
+    const int silentEnd = silentStart + kSampleRate * 40 / 1000;
+    auto source = makeSource({{silentStart, silentEnd}});
+    Note rest(12, 22, 0.0f);
+    rest.setRest(true);
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+        rest,
+        makeNote(22, 30, NoteEngine::Inherit),
+    };
+    const auto map = engineBlocks::buildVisualBlocks(
+        notes, SynthesisEngineType::Vocoder, source, kSampleRate, kHop);
+    CHECK(map.blocks.size() == 2);
+    CHECK(map.blockForNote(1) == -1);
+    CHECK(map.blocks[0].noteIndices.size() == 1);
+    CHECK(map.blocks[1].noteIndices.size() == 1);
+    // La primera nota de cada frase manda; Inherit resuelve al global.
+    CHECK(map.blocks[0].engine == SynthesisEngineType::Psola);
+    CHECK(map.blocks[1].engine == SynthesisEngineType::Vocoder);
+}
+
+// D-309: el gesto de bloque y el color no pueden discrepar.
+void testVisualBlockMatchesTheGesture() {
+    const int silentStart = 12 * kHop + 800;
+    const int silentEnd = silentStart + kSampleRate * 40 / 1000;
+    auto source = makeSource({{silentStart, silentEnd}});
+    std::vector<Note> notes{
+        makeNote(4, 12, NoteEngine::Psola),
+        makeNote(22, 30, NoteEngine::Pitchcore),
+    };
+    const auto map = engineBlocks::buildVisualBlocks(
+        notes, SynthesisEngineType::Psola, source, kSampleRate, kHop);
+    for (int anchor = 0; anchor < 2; ++anchor) {
+        const auto plan = engineBlocks::planBlockEngineEdit(
+            notes, anchor, NoteEngine::Vocoder, SynthesisEngineType::Psola,
+            source, kSampleRate, kHop);
+        const int blockIndex = map.blockForNote(anchor);
+        CHECK(blockIndex >= 0);
+        CHECK(plan.blockNotes ==
+              map.blocks[static_cast<size_t>(blockIndex)].noteIndices);
+    }
+}
+
 }  // namespace
 
 int main() {    testFindSilenceRunNeedsTwentyMilliseconds();
@@ -622,6 +707,9 @@ int main() {    testFindSilenceRunNeedsTwentyMilliseconds();
     testBlocksToCommitSelectsWholeBlocks();
     testCommitRangesUseTheWholeBlockForEveryEngine();
     testCountOutOfBenefitRange();
+    testVisualBlocksGroupBySilence();
+    testVisualBlocksSkipRestsAndResolveFirstEngine();
+    testVisualBlockMatchesTheGesture();
 
     std::cout << "EngineBlocksTests: all checks passed\n";
     return 0;

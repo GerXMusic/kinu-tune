@@ -46,6 +46,24 @@ public:
     void setEngineEditingEnabled(bool enabled);
     bool isEngineEditingEnabled() const { return engineEditingEnabled; }
 
+    // D-309: la fila de cada motor lleva un punto de su color. "Seguir global"
+    // usa el color del motor global; el punto del radio queda neutro.
+    std::optional<juce::Colour> getEngineRowColour(int row) const
+    {
+        return engineChoices.getRowColour(row);
+    }
+    std::optional<juce::Colour> getBlockRowColour(int row) const
+    {
+        return blockChoices.getRowColour(row);
+    }
+    // D-309: sin seleccion explicita el selector de bloque no responde y no
+    // puede caer a "todas las notas".
+    bool isBlockSelectorEnabled() const
+    {
+        return blockAvailable && engineEditingEnabled;
+    }
+    int getSelectedBlockRow() const { return blockChoices.getSelected(); }
+
     // Tarea 1 (2026-11-22): comprobacion del alineado del cajon. Devuelve los
     // rectangulos de todos los controles y si los rotulos van a la izquierda.
     juce::Array<juce::Rectangle<int>> getAlignedControlBounds() const;
@@ -63,6 +81,10 @@ private:
         void setOptions(std::vector<juce::String> labels);
         void setSelected(int index, bool notify);
         void setRowEnabled(int index, bool enabled);
+        // D-309: colour dot of a row (engine colour, or the global engine's
+        // colour for "Seguir global"). Empty = the old neutral dot.
+        void setRowColour(int index, std::optional<juce::Colour> colour);
+        std::optional<juce::Colour> getRowColour(int index) const;
         // D-288: con el transporte sonando no se puede cambiar de motor (un
         // cambio es un re-render de todo el proyecto y publicaria una mezcla de
         // dos motores; medido en vivo: 10 notas en Pitchcore y el resto en
@@ -81,6 +103,7 @@ private:
         int rowAt(juce::Point<int> p) const;
         std::vector<juce::String> labels;
         std::vector<bool> rowEnabled;
+        std::vector<std::optional<juce::Colour>> rowColours;
         int selected = -1;
         int hovered = -1;
         bool interactionEnabled = true;
@@ -89,6 +112,7 @@ private:
     void timerCallback() override;
     void applyModeVisibility();
     void applyNotice();
+    void applyEngineColours();
 
     EditorUiMode editorMode = EditorUiMode::Basic;
     bool aiAvailable = true;
@@ -118,6 +142,9 @@ private:
     // D-288
     bool engineEditingEnabled = true;
     juce::String pendingBlockNotice;
+    // D-309
+    SynthesisEngineType globalEngine = SynthesisEngineType::Psola;
+    bool blockAvailable = false;
 
     LocalisationWatcher languageWatcher{[this] {
         refreshLocalisedText();

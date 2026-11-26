@@ -8,6 +8,7 @@
 #include "States/SplitHandler.h"
 #include "VisualWaveformEnvelope.h"
 #include "../Components/AppFont.h"
+#include "../EngineColours.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/ScaleUtils.h"
 #include "../../Utils/UI/Theme.h"
@@ -72,8 +73,10 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     return;
 
   // P1b fase 6: barrido del bloque en render. Un borde brillante recorre el
-  // bloque pendiente, en Overlay para quedar por encima de los blobs.
-  if (pass == Pass::Overlay && sweepActive)
+  // bloque pendiente, en Overlay para quedar por encima de los blobs. D-309:
+  // con el cajon Motor abierto no hay linea blanca; el barrido enciende los
+  // bordes de motor, que viven en el pase Body.
+  if (pass == Pass::Overlay && sweepActive && !engineBlockView)
   {
     const double sampleRate = project->getAudioData().sampleRate;
     if (sampleRate > 0.0)
@@ -117,6 +120,33 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   const float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
   const double scrollX = coordMapper->getScrollX();
   const int pitchReferenceHz = project->getPitchReferenceHz();
+
+  // D-309: where the border sweep currently is, in canvas pixels. The range
+  // was already expanded by PianoRollComponent to the first and last note of
+  // the affected visual block.
+  bool engineSweepActive = false;
+  float engineSweepBarX = 0.0f;
+  if (engineBlockView && sweepActive)
+  {
+    const double sampleRate = project->getAudioData().sampleRate;
+    if (sampleRate > 0.0)
+    {
+      const double startSeconds =
+          static_cast<double>(sweepStartFrame) * HOP_SIZE / sampleRate;
+      const double endSeconds =
+          static_cast<double>(sweepEndFrame) * HOP_SIZE / sampleRate;
+      const double viewStart = coordMapper->getViewStartSeconds();
+      const float x0 = static_cast<float>(
+          (startSeconds - viewStart) * pixelsPerSecond - scrollX);
+      const float x1 = static_cast<float>(
+          (endSeconds - viewStart) * pixelsPerSecond - scrollX);
+      const float width = x1 > x0 ? x1 - x0 : 0.0f;
+      const double elapsed =
+          (juce::Time::getMillisecondCounterHiRes() - sweepStartMs) * 0.001;
+      engineSweepBarX = x0 + width * sweep::phaseAt(elapsed);
+      engineSweepActive = true;
+    }
+  }
 
   // Pre-allocated scratch buffers to avoid per-note heap allocations
   std::vector<float> waveValues;
@@ -292,6 +322,23 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     const float h = pixelsPerSemitone;
     const float renderedWidth = std::max(w, 4.0f);
 
+    // D-309: visual block of this note, from the map PianoRollComponent built
+    // once per fingerprint. The block of a selected note is drawn thicker.
+    const int noteIndex =
+        static_cast<int>(&note - project->getNotes().data());
+    const engineBlocks::VisualBlock *visualBlock = nullptr;
+    if (engineBlockView && engineBlockMap != nullptr)
+    {
+      const int blockIndex = engineBlockMap->blockForNote(noteIndex);
+      if (blockIndex >= 0)
+        visualBlock =
+            &engineBlockMap->blocks[static_cast<size_t>(blockIndex)];
+    }
+    const bool blockActive =
+        visualBlock != nullptr &&
+        std::find(activeEngineBlocks.begin(), activeEngineBlocks.end(),
+                  visualBlock->index) != activeEngineBlocks.end();
+
     // Position at grid cell center for MIDI note, then offset by pitch adjustment
     const float noteMidi =
         originalPitchView ? note.getOriginalMidiNote() : note.getMidiNote();
@@ -449,6 +496,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                                 waveHeight * 0.5f);
             wavePath.closeSubPath();
             hasWave = true;
+            bodyShape = wavePath;
           }
         }
 
@@ -499,11 +547,6 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           g.strokePath(wavePath, juce::PathStrokeType(selected ? 1.5f : 1.0f,
                                                       juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
-          if (outlineColour.has_value())
-          {
-            g.setColour(*outlineColour);
-            g.strokePath(wavePath, juce::PathStrokeType(1.2f));
-          }
         }
         else
         {
@@ -511,17 +554,13 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           // of an empty rectangle.
           const auto bar = segmentBounds.withSizeKeepingCentre(
               renderedWidth, std::min(segmentBounds.getHeight(), 8.0f));
+          bodyShape.addRoundedRectangle(bar, 3.0f);
           setNoteGradientFill(g, bar, bar.getCentreY(), noteColours);
           g.fillRoundedRectangle(bar, 3.0f);
           noFill.reset();
           g.setColour(selected ? juce::Colours::white.withAlpha(0.96f)
                                : juce::Colour(0xFF1E4C7Au).withAlpha(0.95f));
           g.drawRoundedRectangle(bar, 3.0f, selected ? 1.5f : 1.0f);
-          if (outlineColour.has_value())
-          {
-            g.setColour(*outlineColour);
-            g.drawRoundedRectangle(bar, 3.0f, 1.2f);
-          }
         }
       }
       else if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
@@ -713,7 +752,61 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
       }
 
       noFill.reset();
-      if (outlineColour.has_value() && !bodyShape.isEmpty())
+      if (engineBlockView && engineBlockMap != nullptr && !greyscale &&
+          !bodyShape.isEmpty())
+      {
+        // D-309: border in the block's engine colour, following the real
+        // silhouette. A dark thin underline keeps the bright colour readable
+        // on the steel-blue body; a selected note gets a white outer halo
+        // without losing the engine colour.
+        const auto engine = visualBlock != nullptr
+                                ? visualBlock->engine
+                                : SynthesisEngineType::Psola;
+        const auto colour = engineColours::forEngine(engine);
+        const float borderWidth = blockActive ? 2.2f : 1.2f;
+
+        if (note.isSelected())
+        {
+          g.setColour(juce::Colours::white.withAlpha(0.88f));
+          g.strokePath(bodyShape,
+                       juce::PathStrokeType(blockActive ? 4.8f : 4.2f,
+                                            juce::PathStrokeType::curved,
+                                            juce::PathStrokeType::rounded));
+        }
+        g.setColour(engineColours::underlineFor(engine));
+        g.strokePath(bodyShape,
+                     juce::PathStrokeType(borderWidth + 1.0f,
+                                          juce::PathStrokeType::curved,
+                                          juce::PathStrokeType::rounded));
+        g.setColour(blockActive ? colour.brighter(0.30f) : colour);
+        g.strokePath(bodyShape,
+                     juce::PathStrokeType(borderWidth,
+                                          juce::PathStrokeType::curved,
+                                          juce::PathStrokeType::rounded));
+
+        // Render sweep: the border lights up from the first to the last note
+        // of the block as the phase crosses it. One block uses its engine
+        // colour; several blocks (or none resolved) use the neutral one.
+        const bool inSweepRange =
+            note.getEndFrame() >= sweepStartFrame &&
+            note.getStartFrame() <= sweepEndFrame;
+        const bool sweepLit =
+            engineSweepActive && inSweepRange &&
+            (x + renderedWidth * 0.5f) <= engineSweepBarX;
+        if (sweepLit)
+        {
+          const auto sweepColour =
+              sweepBorderColour.value_or(engineColours::neutralSweep());
+          g.setColour(sweepColour.withAlpha(0.18f));
+          g.fillPath(bodyShape);
+          g.setColour(sweepColour);
+          g.strokePath(bodyShape,
+                       juce::PathStrokeType(blockActive ? 3.6f : 2.8f,
+                                            juce::PathStrokeType::curved,
+                                            juce::PathStrokeType::rounded));
+        }
+      }
+      else if (outlineColour.has_value() && !bodyShape.isEmpty())
       {
         g.setColour(*outlineColour);
         g.strokePath(bodyShape, juce::PathStrokeType(1.0f));

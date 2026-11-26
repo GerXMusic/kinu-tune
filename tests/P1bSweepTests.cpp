@@ -124,6 +124,30 @@ void testWiring() {
   CHECK(pianoRoll.find("setSweepState(") != std::string::npos);
 }
 
+// D-309: con el cajon Motor abierto no hay linea blanca; el rango sucio se
+// expande a la primera/ultima nota del bloque visual y varios bloques dan un
+// barrido neutro. El estado sigue saliendo de sweep::fromQueue.
+void testEngineViewSweepWiring() {
+  const std::string noteRendererBody =
+      readFile(std::string(P1B_SOURCE_DIR) + "/UI/PianoRoll/NoteRenderer.cpp");
+  // La linea blanca del Overlay queda condicionada a la vista de motores.
+  CHECK(noteRendererBody.find(
+            "pass == Pass::Overlay && sweepActive && !engineBlockView") !=
+        std::string::npos);
+  CHECK(noteRendererBody.find("engineSweepBarX") != std::string::npos);
+
+  const std::string pianoRoll =
+      readFile(std::string(P1B_SOURCE_DIR) + "/UI/PianoRollComponent.cpp");
+  const std::string sweep =
+      windowAfter(pianoRoll, "void PianoRollComponent::setSweepState(", 2600);
+  CHECK(!sweep.empty());
+  // Expansion al bloque visual y color neutro cuando toca varios.
+  CHECK(sweep.find("block.startFrame < sweepEnd") != std::string::npos);
+  CHECK(sweep.find("sweepStart = firstFrame") != std::string::npos);
+  CHECK(sweep.find("neutral = true") != std::string::npos);
+  CHECK(sweep.find("engineColours::forEngine") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -134,6 +158,7 @@ int main() {
   testRemainingCount();
   testPhaseCycles();
   testWiring();
+  testEngineViewSweepWiring();
   std::cout << "P1b fase 6 passed\n";
   return 0;
 }

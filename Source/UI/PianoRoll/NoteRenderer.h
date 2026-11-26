@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "../../JuceHeader.h"
+#include "../../Audio/Synthesis/EngineBlocks.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
 
@@ -81,6 +82,27 @@ public:
     wasSweepActive = active;
   }
 
+  // D-309: engine drawer open. Every non-rest note gets a 1-1.5 px border in
+  // the colour of its visual block (the D-258 silence-delimited phrase); the
+  // block of a selected note is drawn thicker and brighter. The map belongs to
+  // PianoRollComponent and outlives the paint.
+  void setEngineBlockView(bool active,
+                          const engineBlocks::VisualBlockMap *map,
+                          std::vector<int> blocksOfSelection)
+  {
+    engineBlockView = active;
+    engineBlockMap = active ? map : nullptr;
+    activeEngineBlocks = std::move(blocksOfSelection);
+  }
+
+  // D-309: colour of the border sweep, already resolved by PianoRollComponent
+  // (one visual block -> its engine colour; several blocks -> neutral). An
+  // empty optional while the engine view is open means the neutral sweep.
+  void setSweepBorderColour(std::optional<juce::Colour> colour)
+  {
+    sweepBorderColour = colour;
+  }
+
   void draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             int componentWidth);
 
@@ -109,6 +131,11 @@ private:
   int sweepEndFrame = 0;
   int sweepRemaining = 0;
   double sweepStartMs = 0.0;
+  // D-309
+  bool engineBlockView = false;
+  const engineBlocks::VisualBlockMap *engineBlockMap = nullptr;
+  std::vector<int> activeEngineBlocks;
+  std::optional<juce::Colour> sweepBorderColour;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NoteRenderer)
 };

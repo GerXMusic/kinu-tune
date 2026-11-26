@@ -224,6 +224,32 @@ void testTimingMoveKeepsEnginePlan() {
   CHECK(blockIndexOf(moved, 330) == 1);
 }
 
+void testVisualBlockMatchesTheGesture() {
+  // D-309: the engine drawer's visual block and the block gesture are the same
+  // phrase. Changing any note of it reaches exactly the same note set.
+  Project project = makeProject();
+  const auto &source = sourceOf(project);
+  auto &notes = project.getNotes();
+  const auto map = engineBlocks::buildVisualBlocks(
+      notes, SynthesisEngineType::Psola, source, kSampleRate, kHop);
+  CHECK(map.blocks.size() == 2);
+  CHECK(map.blockForNote(0) == map.blockForNote(1));
+  CHECK(map.blockForNote(1) == map.blockForNote(2));
+  CHECK(map.blockForNote(3) != map.blockForNote(2));
+
+  for (int anchor = 0; anchor < 4; ++anchor) {
+    const auto plan = engineBlocks::planBlockEngineEdit(
+        notes, anchor, NoteEngine::Vocoder, SynthesisEngineType::Psola, source,
+        kSampleRate, kHop);
+    const int blockIndex = map.blockForNote(anchor);
+    CHECK(blockIndex >= 0);
+    const auto &block = map.blocks[static_cast<size_t>(blockIndex)];
+    CHECK(plan.blockNotes == block.noteIndices);
+  }
+  std::printf("D-309 bloque visual: %d bloque(s), gesto identico\n",
+              static_cast<int>(map.blocks.size()));
+}
+
 }  // namespace
 
 int main() {
@@ -232,6 +258,7 @@ int main() {
   testClassicReportsOutOfBenefitRange();
   testOtherBlockUntouched();
   testTimingMoveKeepsEnginePlan();
+  testVisualBlockMatchesTheGesture();
   std::printf("BlockEngineTests: motor por bloque OK\n");
   return 0;
 }

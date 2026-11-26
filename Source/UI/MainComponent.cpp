@@ -865,6 +865,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
                          &railHarmonyPanel, 300);
   workspace.addRailPanel("midi", "panel.midi_guides", GuiIcon::MidiGuide,
                          &midiGuidePanel, 300);
+  // D-309: the engine drawer owns the block colours; while it is closed the
+  // canvas keeps its usual look and the white sweep.
+  workspace.onRailPanelVisibilityChanged =
+      [this](const juce::String &id, bool visible)
+  {
+    if (id == "engine")
+      pianoRoll.setEngineViewActive(visible);
+  };
   workspace.setRailPanelAvailable("tracks", false); // ARA only
   workspace.getSideRail().onSettingsClicked = [this] { showSettings(); };
   midiGuidePanel.onImportRequested = [this]
@@ -969,6 +977,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
     notifyProjectDataChanged();
+    // D-309: "Seguir global" changes colour with the project engine.
+    pianoRoll.repaint();
   };
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
 
@@ -998,6 +1008,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
                              : type == SynthesisEngineType::Pitchcore ? "Pitchcore"
                                                                       : "Classic");
     enginePanel.setSynthesisEngine(type);
+    // D-309: repaint the block colours whose note is still "Inherit".
+    pianoRoll.repaint();
   };
   enginePanel.getNoteEngine = [this] { return getSelectionNoteEngine(); };
   enginePanel.onNoteEngineChanged = [this](NoteEngine engine)
@@ -5009,6 +5021,12 @@ void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
 void MainComponent::onNoteSelected(Note *note)
 {
   parameterPanel.setSelectedNote(note);
+  // D-309: the engine drawer reflects the selection immediately, not on its
+  // 4 Hz timer. Without an explicit selection the block picker is disabled.
+  enginePanel.setNoteEngine(note != nullptr && !note->isRest()
+                                ? std::optional<NoteEngine>(note->getEngine())
+                                : std::nullopt);
+  pianoRoll.repaint();
 }
 
 void MainComponent::onPitchEdited()
@@ -5023,16 +5041,19 @@ std::optional<NoteEngine> MainComponent::getSelectionNoteEngine() const
   auto *project = getProject();
   if (project == nullptr)
     return std::nullopt;
-  const auto targets = pianoRoll.getInspectorTargets();
-  if (targets.empty() || targets.front() == nullptr)
-    return std::nullopt;
-  return targets.front()->getEngine();
+  // D-309: only an explicit selection. The inspector's "all notes" fallback
+  // must never reach the block picker (it would change every phrase).
+  for (auto *note : pianoRoll.getSelectedNotes())
+    if (note != nullptr && !note->isRest() && !note->isDeleted())
+      return note->getEngine();
+  return std::nullopt;
 }
 
 int MainComponent::applyNoteEngineToSelection(NoteEngine engine)
 {
   std::vector<int> selection;
-  const auto targets = pianoRoll.getInspectorTargets();
+  // D-309: same rule as the picker: explicit notes only.
+  const auto targets = pianoRoll.getSelectedNotes();
   selection.reserve(targets.size());
   auto *project = getProject();
   if (project == nullptr)
@@ -5219,6 +5240,9 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   }
 
   variAudioInspector.refresh();
+  // D-309: the colours follow the new engines immediately.
+  pianoRoll.repaint();
+  enginePanel.setNoteEngine(getSelectionNoteEngine());
   // D-258: inside a block there is no usable silence by definition, so a
   // block-wide gesture cannot be refused by D-129.
   return 0;
@@ -5330,6 +5354,12 @@ void MainComponent::refreshEditorChrome()
 
   const auto engine = settingsManager != nullptr ? settingsManager->getSynthesisEngineType()
                                                  : defaultSynthesisEngineType();
+  // D-309: the canvas paints "Seguir global" with the engine it will render.
+  const std::optional<SynthesisEngineType> documentEngine =
+      project != nullptr ? project->getSynthesisEngine()
+                         : std::optional<SynthesisEngineType>{};
+  pianoRoll.setGlobalSynthesisEngine(
+      pitchnet::displayedSynthesisEngine(documentEngine, engine));
   toolbar.setEngineSummary(engine == SynthesisEngineType::Vocoder   ? "Neural"
                            : engine == SynthesisEngineType::Pitchcore ? "Pitchcore"
                                                                       : "Classic");

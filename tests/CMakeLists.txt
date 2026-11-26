@@ -240,6 +240,13 @@ target_link_libraries(EnginePanelTests PRIVATE pitchnet_ui)
 target_compile_features(EnginePanelTests PRIVATE cxx_std_17)
 add_test(NAME EnginePanelTests COMMAND EnginePanelTests)
 
+# D-309: colores de motor por bloque visual, bloque activo, cache, barrido de
+# borde y presupuesto de pintado.
+add_executable(EngineBlockViewTests EngineBlockViewTests.cpp)
+target_link_libraries(EngineBlockViewTests PRIVATE pitchnet_ui)
+target_compile_features(EngineBlockViewTests PRIVATE cxx_std_17)
+add_test(NAME EngineBlockViewTests COMMAND EngineBlockViewTests)
+
 # Tarea A/B (2026-11-22): el reset borra la transicion (D-225) y la cola de la
 # ultima nota vuelve a la fuente. Usa el camino de produccion del reset.
 add_executable(NoteTransitionResetTests NoteTransitionResetTests.cpp)
