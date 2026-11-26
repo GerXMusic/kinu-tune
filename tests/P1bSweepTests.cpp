@@ -135,6 +135,20 @@ void testEngineViewSweepWiring() {
             "pass == Pass::Overlay && sweepActive && !engineBlockView") !=
         std::string::npos);
   CHECK(noteRendererBody.find("engineSweepBarX") != std::string::npos);
+  // El barrido de borde se calcula en coordenadas de mundo, como la nota; el
+  // scroll lo aplica el Graphics, no la barra.
+  const std::string engineSweep = windowAfter(
+      noteRendererBody, "D-309: where the border sweep", 1200);
+  CHECK(!engineSweep.empty());
+  CHECK(engineSweep.find("startSeconds * pixelsPerSecond") != std::string::npos);
+  CHECK(engineSweep.find("viewStart") == std::string::npos);
+
+  // La animacion necesita el tick de 60 Hz: la cadena de render solo repinta
+  // en los bordes y el barrido se quedaba en el primer frame (fase 0).
+  const std::string mainSource =
+      readFile(std::string(P1B_SOURCE_DIR) + "/UI/MainComponent.cpp");
+  CHECK(mainSource.find("if (pianoRoll.isSweepActive())") != std::string::npos);
+  CHECK(mainSource.find("pianoRoll.repaint();") != std::string::npos);
 
   const std::string pianoRoll =
       readFile(std::string(P1B_SOURCE_DIR) + "/UI/PianoRollComponent.cpp");

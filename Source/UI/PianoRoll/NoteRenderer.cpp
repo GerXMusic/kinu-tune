@@ -135,11 +135,13 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           static_cast<double>(sweepStartFrame) * HOP_SIZE / sampleRate;
       const double endSeconds =
           static_cast<double>(sweepEndFrame) * HOP_SIZE / sampleRate;
-      const double viewStart = coordMapper->getViewStartSeconds();
-      const float x0 = static_cast<float>(
-          (startSeconds - viewStart) * pixelsPerSecond - scrollX);
-      const float x1 = static_cast<float>(
-          (endSeconds - viewStart) * pixelsPerSecond - scrollX);
+      // World coordinates, same space as the note x below. Subtracting the
+      // scroll here put the bar off-canvas as soon as the view was scrolled,
+      // so no border ever lit up.
+      const float x0 =
+          static_cast<float>(startSeconds * pixelsPerSecond);
+      const float x1 =
+          static_cast<float>(endSeconds * pixelsPerSecond);
       const float width = x1 > x0 ? x1 - x0 : 0.0f;
       const double elapsed =
           (juce::Time::getMillisecondCounterHiRes() - sweepStartMs) * 0.001;

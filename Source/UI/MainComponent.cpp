@@ -3091,6 +3091,11 @@ void MainComponent::timerCallback()
 
   pollMcpControl();
   serviceEditRender();
+  // D-309: the border sweep is an animation, not a state change. The render
+  // chain only repaints at its edges, so the left-to-right lighting needs the
+  // 60 Hz tick while the sweep is active.
+  if (pianoRoll.isSweepActive())
+    pianoRoll.repaint();
   rescueStalledRender();
   catchUpStaleAudio();
   dispatchPendingDragAudition();

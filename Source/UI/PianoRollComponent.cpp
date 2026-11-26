@@ -1862,6 +1862,7 @@ void PianoRollComponent::setSweepState(bool active, int startFrame,
   lastSweepStartFrame = sweepStart;
   lastSweepEndFrame = sweepEnd;
   lastSweepNeutral = neutral;
+  lastSweepActive = active;
 
   if (noteRenderer)
   {

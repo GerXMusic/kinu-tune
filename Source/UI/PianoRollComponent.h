@@ -232,6 +232,7 @@ public:
   int getSweepStartFrame() const { return lastSweepStartFrame; }
   int getSweepEndFrame() const { return lastSweepEndFrame; }
   bool isSweepNeutral() const { return lastSweepNeutral; }
+  bool isSweepActive() const { return lastSweepActive; }
   /// D-180/D-309 measurement only: clears the paint counters so a test can
   /// measure the steady state without the first paint's one-off cost.
   void resetPaintStats()
@@ -476,6 +477,7 @@ private:
   int lastSweepStartFrame = 0;
   int lastSweepEndFrame = 0;
   bool lastSweepNeutral = false;
+  bool lastSweepActive = false;
   void drawPitchCurves(juce::Graphics &g);
   void drawBypassSourceCurve(juce::Graphics &g);
   bool bypassView = false;

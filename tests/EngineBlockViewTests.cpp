@@ -253,6 +253,7 @@ void testSweepRangeAndNeutral() {
 
   // Un punto dentro de la frase A se expande a su primera/ultima nota.
   pianoRoll.setSweepState(true, kA1 + 3, kA1 + 4, 1);
+  CHECK(pianoRoll.isSweepActive());
   CHECK(pianoRoll.getSweepStartFrame() == kA0);
   CHECK(pianoRoll.getSweepEndFrame() == kAEnd);
   CHECK(!pianoRoll.isSweepNeutral());
@@ -262,6 +263,9 @@ void testSweepRangeAndNeutral() {
   CHECK(pianoRoll.getSweepStartFrame() == kA0);
   CHECK(pianoRoll.getSweepEndFrame() == kBEnd);
   CHECK(pianoRoll.isSweepNeutral());
+  CHECK(pianoRoll.isSweepActive());
+  pianoRoll.setSweepState(false, 0, 0, 0);
+  CHECK(!pianoRoll.isSweepActive());
   std::printf("D-309 barrido: A [%d,%d) neutro=%d\n",
               pianoRoll.getSweepStartFrame(), pianoRoll.getSweepEndFrame(),
               pianoRoll.isSweepNeutral() ? 1 : 0);
