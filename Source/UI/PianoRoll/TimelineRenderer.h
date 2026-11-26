@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include "../../Audio/Engine/HostTempoMap.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
 
@@ -17,6 +18,10 @@ public:
   struct TimelineParams
   {
     TimelineDisplayMode displayMode;
+    // R3 (D-316): el mapa del host sustituye a la constante cuando es valido.
+    const HostTempoMap *tempoMap = nullptr;
+    double gridQuarterNotes = 1.0;
+    // Fallback constante (sin mapa utilizable).
     int beatNumerator;
     double beatSeconds;
     double barSeconds;
@@ -26,6 +31,8 @@ public:
   struct LoopParams
   {
     TimelineDisplayMode displayMode;
+    const HostTempoMap *tempoMap = nullptr;
+    double gridQuarterNotes = 1.0;
     int beatNumerator;
     double beatSeconds;
     double barSeconds;

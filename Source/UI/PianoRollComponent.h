@@ -308,6 +308,8 @@ public:
     return midiGuideGhosts;
   }
   void setTimelineGridDivision(TimelineGridDivision division);
+  // R3: the current grid division in quarter notes (1.0 = quarter).
+  double getTimelineGridQuarterNotes() const;
   void setTimelineSnapCycle(bool enabled);
 
   // Enable/disable cycle (loop) range editing on the timeline strip.

@@ -1,4 +1,5 @@
 #include "TimelineRenderer.h"
+#include "TempoGridView.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/TimecodeFont.h"
 #include "../../Utils/UI/Theme.h"
@@ -46,6 +47,45 @@ void TimelineRenderer::drawTimeline(juce::Graphics &g, const TimelineParams &par
 
   if (params.displayMode == TimelineDisplayMode::Beats)
   {
+    if (params.tempoMap != nullptr && params.tempoMap->isValid())
+    {
+      // Bar numbers come from the host map, not from a global beats-per-bar:
+      // a 4/4 that turns into 3/4 numbers correctly on both sides.
+      const double offset = coordMapper->getTimelineDisplayOffset();
+      const double hostStart =
+          coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
+      const double hostEnd = coordMapper->projectToTimeline(
+          (scrollX + timelineArea.getWidth()) / pixelsPerSecond);
+      constexpr double kMinLabelSpacingPx = 28.0;
+      const TempoGridPlan plan =
+          planTempoGridBars(*params.tempoMap, hostStart, hostEnd,
+                            pixelsPerSecond, kMinLabelSpacingPx);
+      for (const auto &line : tempoGridLines(*params.tempoMap, hostStart,
+                                            hostEnd, params.gridQuarterNotes,
+                                            plan))
+      {
+        const double time = line.hostSeconds - offset;
+        const float x = static_cast<float>(pianoKeysWidth) +
+                        static_cast<float>(time * pixelsPerSecond) -
+                        static_cast<float>(scrollX);
+        if (x < pianoKeysWidth || x > timelineArea.getRight())
+          continue;
+
+        g.setColour(markerColour);
+        g.drawVerticalLine(static_cast<int>(x), 0.0f,
+                           static_cast<float>(timelineHeight - 1));
+
+        if (line.barNumber >= 1)
+        {
+          g.setColour(markerTextColour);
+          g.drawText(juce::String(line.barNumber), static_cast<int>(x) + 3, 2,
+                     64, timelineHeight - 4, juce::Justification::centredLeft,
+                     false);
+        }
+      }
+      return;
+    }
+
     const double beatSeconds = params.beatSeconds;
     const double barSeconds = params.barSeconds;
     if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
@@ -236,51 +276,91 @@ void TimelineRenderer::drawLoopTimeline(juce::Graphics &g, const LoopParams &par
       static_cast<float>((scrollX + loopArea.getWidth()) / pixelsPerSecond));
   if (params.displayMode == TimelineDisplayMode::Beats)
   {
-    const double beatSeconds = params.beatSeconds;
-    const double barSeconds = params.barSeconds;
-    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
+    if (params.tempoMap != nullptr && params.tempoMap->isValid())
     {
-      const int beatsPerBar = juce::jmax(1, params.beatNumerator);
-      const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
-      int beatStep = 1;
-      while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
-        beatStep *= 2;
-
-      // Beat indices are HOST timeline positions; the view is in project time.
-      const double viewStartTimeline =
+      // Gutter ticks follow the host map (beats of each signature); the grid
+      // division only adds subdivisions when they fit.
+      const double offset = coordMapper->getTimelineDisplayOffset();
+      const double hostStart =
           coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
-      const double viewEndTimeline = coordMapper->projectToTimeline(
+      const double hostEnd = coordMapper->projectToTimeline(
           (scrollX + loopArea.getWidth()) / pixelsPerSecond);
-      const int firstBeat = std::max(
-          0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
-      const int lastBeat =
-          static_cast<int>(std::ceil(viewEndTimeline / beatSeconds)) + beatStep;
+      constexpr double kMinTickSpacingPx = 6.0;
+      const TempoGridPlan plan =
+          planTempoGrid(*params.tempoMap, hostStart, hostEnd,
+                        params.gridQuarterNotes, pixelsPerSecond,
+                        kMinTickSpacingPx);
 
-      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
+      for (const auto &line : tempoGridLines(*params.tempoMap, hostStart,
+                                            hostEnd, params.gridQuarterNotes,
+                                            plan))
       {
-        // Where this host beat falls in project time - i.e. over which part
-        // of the audio the DAW's bar line actually sits.
-        const double time = coordMapper->timelineToProject(
-            static_cast<double>(beatIndex) * beatSeconds);
-        if (time > duration + beatSeconds)
-          break;
-        if (time < coordMapper->getViewStartSeconds() - beatSeconds)
-          continue;
-
-        const float x =
-            pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
-            static_cast<float>(scrollX);
+        const double time = line.hostSeconds - offset;
+        const float x = static_cast<float>(pianoKeysWidth) +
+                        static_cast<float>(time * pixelsPerSecond) -
+                        static_cast<float>(scrollX);
         if (x < pianoKeysWidth || x > loopArea.getRight())
           continue;
 
-        const bool isBarLine = (beatIndex % beatsPerBar) == 0;
-        const float tickTop = isBarLine
-                                  ? static_cast<float>(timelineHeight)
-                                  : static_cast<float>(timelineHeight) +
-                                        static_cast<float>(loopTimelineHeight) * 0.5f;
+        const bool isBarLine =
+            line.kind == HostTempoMap::GridLineKind::Bar;
+        const float tickTop =
+            isBarLine ? static_cast<float>(timelineHeight)
+                      : static_cast<float>(timelineHeight) +
+                            static_cast<float>(loopTimelineHeight) * 0.5f;
         g.setColour(markerColour);
         g.drawVerticalLine(static_cast<int>(x), tickTop,
                            static_cast<float>(headerHeight - 1));
+      }
+    }
+    else
+    {
+      const double beatSeconds = params.beatSeconds;
+      const double barSeconds = params.barSeconds;
+      if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
+      {
+        const int beatsPerBar = juce::jmax(1, params.beatNumerator);
+        const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
+        int beatStep = 1;
+        while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
+          beatStep *= 2;
+
+        // Beat indices are HOST timeline positions; the view is in project time.
+        const double viewStartTimeline =
+            coordMapper->projectToTimeline(scrollX / pixelsPerSecond);
+        const double viewEndTimeline = coordMapper->projectToTimeline(
+            (scrollX + loopArea.getWidth()) / pixelsPerSecond);
+        const int firstBeat = std::max(
+            0, static_cast<int>(std::floor(viewStartTimeline / beatSeconds)));
+        const int lastBeat =
+            static_cast<int>(std::ceil(viewEndTimeline / beatSeconds)) + beatStep;
+
+        for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
+        {
+          // Where this host beat falls in project time - i.e. over which part
+          // of the audio the DAW's bar line actually sits.
+          const double time = coordMapper->timelineToProject(
+              static_cast<double>(beatIndex) * beatSeconds);
+          if (time > duration + beatSeconds)
+            break;
+          if (time < coordMapper->getViewStartSeconds() - beatSeconds)
+            continue;
+
+          const float x =
+              pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) -
+              static_cast<float>(scrollX);
+          if (x < pianoKeysWidth || x > loopArea.getRight())
+            continue;
+
+          const bool isBarLine = (beatIndex % beatsPerBar) == 0;
+          const float tickTop = isBarLine
+                                    ? static_cast<float>(timelineHeight)
+                                    : static_cast<float>(timelineHeight) +
+                                          static_cast<float>(loopTimelineHeight) * 0.5f;
+          g.setColour(markerColour);
+          g.drawVerticalLine(static_cast<int>(x), tickTop,
+                             static_cast<float>(headerHeight - 1));
+        }
       }
     }
   }

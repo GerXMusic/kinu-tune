@@ -1,5 +1,6 @@
 #include "GridRenderer.h"
 #include "PianoRollViewHelpers.h"
+#include "TempoGridView.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
 
@@ -126,7 +127,49 @@ void GridRenderer::draw(juce::Graphics &g, const Params &params)
 
   if (params.timelineDisplayMode == TimelineDisplayMode::Beats)
   {
-    if (params.gridSeconds > 1.0e-6 && params.beatSeconds > 1.0e-6 &&
+    const bool hasMap = params.tempoMap != nullptr && params.tempoMap->isValid() &&
+                        params.gridQuarterNotes > 0.0;
+    if (hasMap)
+    {
+      // The host map decides where bars and beats are: project -> host ->
+      // quarters to iterate, then quarter -> host -> project -> x.
+      const double offset = coordMapper->getTimelineDisplayOffset();
+      const double hostStart =
+          coordMapper->projectToTimeline(visibleStartX / pixelsPerSecond);
+      const double hostEnd =
+          coordMapper->projectToTimeline(visibleEndX / pixelsPerSecond);
+      constexpr double kMinLineSpacingPx = 4.0;
+      const TempoGridPlan plan =
+          planTempoGrid(*params.tempoMap, hostStart, hostEnd,
+                        params.gridQuarterNotes, pixelsPerSecond,
+                        kMinLineSpacingPx);
+      for (const auto &line : tempoGridLines(*params.tempoMap, hostStart,
+                                             hostEnd, params.gridQuarterNotes,
+                                             plan))
+      {
+        const float x = static_cast<float>((line.hostSeconds - offset) *
+                                           pixelsPerSecond);
+        if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
+          continue;
+
+        switch (line.kind)
+        {
+        case HostTempoMap::GridLineKind::Bar:
+          g.setColour(APP_COLOR_GRID_BAR);
+          g.fillRect(x - 0.5f, visibleTopY, 2.0f, visibleBottomY - visibleTopY);
+          break;
+        case HostTempoMap::GridLineKind::Beat:
+          g.setColour(APP_COLOR_GRID);
+          g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+          break;
+        case HostTempoMap::GridLineKind::Subdivision:
+          g.setColour(APP_COLOR_GRID.darker(0.10f));
+          g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+          break;
+        }
+      }
+    }
+    else if (params.gridSeconds > 1.0e-6 && params.beatSeconds > 1.0e-6 &&
         params.barSeconds > 1.0e-6)
     {
       // Grid lines sit on HOST beats, like the ruler above them; the canvas

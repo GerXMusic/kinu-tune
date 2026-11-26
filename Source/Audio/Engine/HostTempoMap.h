@@ -3,6 +3,7 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,48 @@ public:
 
     const std::vector<TempoEntry>& getTempoEntries() const { return tempoEntries; }
     const std::vector<BarSignature>& getBarSignatures() const { return barSignatures; }
+
+    // R3 (D-316): one pass over bars and grid lines, so the grid, the ruler
+    // and the local channel all see the same lines.
+    enum class GridLineKind
+    {
+        Bar,
+        Beat,
+        Subdivision
+    };
+
+    struct BarInfo
+    {
+        double startQuarter = 0.0;
+        double endQuarter = 0.0;
+        int barIndex = 0;   // 0-based; can be negative before bar 1.
+        int barNumber = 1;  // What the ruler shows: barIndex + 1.
+        int numerator = 4;
+        int denominator = 4;
+    };
+
+    struct GridLineInfo
+    {
+        double quarter = 0.0;
+        int barIndex = 0;
+        int barNumber = 1;
+        int beatInBar = 0; // 0 = bar line.
+        GridLineKind kind = GridLineKind::Beat;
+    };
+
+    // Bars that overlap [qStart,qEnd], in order, walked from the first
+    // signature (bar 1). A range before bar 1 walks backwards with the first
+    // bar length. Returns the number of bars visited.
+    int forEachBar(double qStart, double qEnd,
+                   const std::function<void(const BarInfo&)>& callback) const;
+
+    // Grid lines every `gridQuarters`, anchored to each bar start (never to
+    // time zero): line 0 of a bar is the bar line, lines on whole beats are
+    // Beat, the rest Subdivision. A grid coarser than the bar stops at the bar
+    // line. Returns the number of lines emitted.
+    int forEachGridLine(
+        double qStart, double qEnd, double gridQuarters,
+        const std::function<void(const GridLineInfo&)>& callback) const;
 
     // Quarter notes -> seconds. Extrapolates beyond the first/last entry.
     double timeForQuarter(double quarter) const;

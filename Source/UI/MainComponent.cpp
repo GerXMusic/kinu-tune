@@ -13,6 +13,7 @@
 #include "../Audio/IO/MidiGuideImporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/MidiGuideRegionScope.h"
+#include "PianoRoll/TempoGridView.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/NotePitch.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -2361,6 +2362,70 @@ void MainComponent::pollMcpControl()
         }
         response->setProperty("ok", true);
       }
+    }
+    else if (command == "grid_debug")
+    {
+      // R3 (D-316): the vertical lines the canvas actually draws in the
+      // visible window, published read-only. Same iteration as GridRenderer
+      // (TempoGridView), so the probe compares the drawing, not a copy of it.
+      const HostTempoMap fallback = HostTempoMap::constant(
+          cachedHostTempoBpm, cachedHostBeatNumerator,
+          cachedHostBeatDenominator);
+      const HostTempoMap &map =
+          (hostTempoMap != nullptr && hostTempoMap->isValid()) ? *hostTempoMap
+                                                               : fallback;
+
+      const double hostStart = pianoRoll.getHostScrollSeconds();
+      const double pixelsPerSecond = pianoRoll.getPixelsPerSecond();
+      const double hostEnd =
+          hostStart +
+          static_cast<double>(pianoRoll.getVisibleContentWidth()) /
+              std::max(1.0, pixelsPerSecond);
+      const double gridQuarter = pianoRoll.getTimelineGridQuarterNotes();
+      // Same threshold as GridRenderer so the levels agree.
+      constexpr double kMinLineSpacingPx = 4.0;
+      const TempoGridPlan plan =
+          planTempoGrid(map, hostStart, hostEnd, gridQuarter, pixelsPerSecond,
+                        kMinLineSpacingPx);
+
+      juce::Array<juce::var> barsHost;
+      juce::Array<juce::var> beatsHost;
+      juce::Array<juce::var> barNumbers;
+      for (const auto &line :
+           tempoGridLines(map, hostStart, hostEnd, gridQuarter, plan))
+      {
+        if (line.kind == HostTempoMap::GridLineKind::Bar)
+        {
+          barsHost.add(line.hostSeconds);
+          barNumbers.add(line.barNumber);
+        }
+        else
+        {
+          beatsHost.add(line.hostSeconds);
+        }
+      }
+
+      const char *levelName = "subdivision";
+      if (plan.level == TempoGridLevel::Beat)
+        levelName = "beat";
+      else if (plan.level == TempoGridLevel::Bar)
+        levelName = "bar";
+
+      response->setProperty(
+          "source", hostTempoMap != nullptr && hostTempoMap->isValid()
+                        ? juce::String("host")
+                        : juce::String("fallback"));
+      response->setProperty("grid_quarter", gridQuarter);
+      response->setProperty("grid_level", juce::String(levelName));
+      response->setProperty("bar_stride", plan.barStride);
+      response->setProperty("window_host_start", hostStart);
+      response->setProperty("window_host_end", hostEnd);
+      response->setProperty("map_describe",
+                            juce::String(map.describe().c_str()));
+      response->setProperty("bars_host", juce::var(barsHost));
+      response->setProperty("beats_host", juce::var(beatsHost));
+      response->setProperty("bar_numbers", juce::var(barNumbers));
+      response->setProperty("ok", true);
     }
     else if (command == "sync_midi_guides")
     {

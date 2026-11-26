@@ -12,6 +12,15 @@ namespace
 constexpr double kQuarterEpsilon = 1.0e-9;
 
 bool isFinitePositive(double v) { return std::isfinite(v) && v > 0.0; }
+
+bool isWholeMultiple(double value, double step)
+{
+    if (!(step > 0.0))
+        return false;
+    const double ratio = value / step;
+    const double nearest = std::floor(ratio + 0.5);
+    return std::abs(ratio - nearest) < 1.0e-7;
+}
 } // namespace
 
 HostTempoMap HostTempoMap::fromEntries(std::vector<TempoEntry> entries,
@@ -282,6 +291,107 @@ int HostTempoMap::barIndexAtQuarter(double quarter) const
         if (index > 1000000)
             return index;
     }
+}
+
+int HostTempoMap::forEachBar(
+    double qStart, double qEnd,
+    const std::function<void(const BarInfo&)>& callback) const
+{
+    if (!valid || barSignatures.empty() || !callback)
+        return 0;
+    if (qEnd < qStart)
+        std::swap(qStart, qEnd);
+
+    // Start on the bar that contains qStart (barStartQuarter/barIndexAtQuarter
+    // already handle bars before bar 1 with the first signature's length).
+    int index = barIndexAtQuarter(qStart);
+    double start = barStartQuarter(index);
+
+    int visited = 0;
+    constexpr int kMaxBars = 200000;
+    while (start <= qEnd + kQuarterEpsilon && visited < kMaxBars)
+    {
+        const auto& signature = signatureAtQuarter(start + kQuarterEpsilon);
+        const double length = barQuartersFor(signature);
+        if (!(length > 0.0))
+            break;
+
+        BarInfo info;
+        info.startQuarter = start;
+        info.endQuarter = start + length;
+        info.barIndex = index;
+        info.barNumber = index + 1;
+        info.numerator = signature.numerator;
+        info.denominator = signature.denominator;
+
+        if (info.endQuarter > qStart + kQuarterEpsilon)
+            callback(info);
+        ++visited;
+
+        start += length;
+        ++index;
+    }
+    return visited;
+}
+
+int HostTempoMap::forEachGridLine(
+    double qStart, double qEnd, double gridQuarters,
+    const std::function<void(const GridLineInfo&)>& callback) const
+{
+    if (!valid || !callback || !isFinitePositive(gridQuarters))
+        return 0;
+
+    int count = 0;
+    constexpr int kMaxLines = 200000;
+    forEachBar(qStart, qEnd, [&](const BarInfo& bar) {
+        const double barLength = bar.endQuarter - bar.startQuarter;
+        if (!(barLength > 0.0))
+            return;
+
+        BarSignature signature;
+        signature.quarter = bar.startQuarter;
+        signature.numerator = bar.numerator;
+        signature.denominator = bar.denominator;
+        const double beatQuarters = beatQuartersFor(signature);
+
+        for (int k = 0; count < kMaxLines; ++k)
+        {
+            const double offset = static_cast<double>(k) * gridQuarters;
+            const bool isBarLine = (k == 0);
+            if (!isBarLine && offset >= barLength - kQuarterEpsilon)
+                break;
+
+            const double quarter = bar.startQuarter + offset;
+            if (quarter > qEnd + kQuarterEpsilon)
+                break;
+
+            GridLineInfo line;
+            line.quarter = quarter;
+            line.barIndex = bar.barIndex;
+            line.barNumber = bar.barNumber;
+            if (isBarLine)
+            {
+                line.beatInBar = 0;
+                line.kind = GridLineKind::Bar;
+            }
+            else if (isWholeMultiple(offset, beatQuarters))
+            {
+                line.beatInBar =
+                    static_cast<int>(std::floor(offset / beatQuarters + 0.5));
+                line.kind = GridLineKind::Beat;
+            }
+            else
+            {
+                line.beatInBar =
+                    static_cast<int>(std::floor(offset / beatQuarters));
+                line.kind = GridLineKind::Subdivision;
+            }
+
+            callback(line);
+            ++count;
+        }
+    });
+    return count;
 }
 
 bool HostTempoMap::isConstant() const

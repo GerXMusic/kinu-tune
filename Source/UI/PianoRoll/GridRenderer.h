@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include "../../Audio/Engine/HostTempoMap.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
 
@@ -20,7 +21,12 @@ public:
     int scaleRootNote;
     float pitchAxisOffsetSemitones;
     TimelineDisplayMode timelineDisplayMode;
+    // R3 (D-316): the host map, when valid, replaces the constant tempo for
+    // the vertical grid; gridQuarterNotes is the user's grid division.
+    const HostTempoMap *tempoMap = nullptr;
+    double gridQuarterNotes = 1.0;
     // Pre-computed timing values from the component (depend on tempo + signature).
+    // Still the fallback when there is no usable host map.
     double gridSeconds;
     double beatSeconds;
     double barSeconds;

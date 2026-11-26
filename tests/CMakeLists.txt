@@ -32,6 +32,8 @@ set(PITCHNET_TEST_SOURCES
     HostSyncTempoTests.cpp
     # D-310: el tempo map del host (quarters <-> segundos, compases).
     HostTempoMapTests.cpp
+    # R3: la grilla y la regla siguen el mapa del host (compases reales).
+    TempoGridTests.cpp
     # D-311/D-312: la guia MIDI (coordenadas, emparejamiento, importacion y
     # persistencia).
     MidiGuideTests.cpp
@@ -95,6 +97,10 @@ endforeach()
 # The capture state machine belongs to the plug-in rather than pitchnet_core.
 target_sources(NonAraLifecycleTests PRIVATE
     ../Source/Plugin/NonAraCaptureController.cpp)
+
+# R3: la grilla comparte la iteracion con el renderer (TempoGridView.cpp vive
+# en la capa UI), asi que el test enlaza tambien pitchnet_ui.
+target_link_libraries(TempoGridTests PRIVATE pitchnet_ui)
 
 # TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
 target_compile_definitions(TimingAudioTests PRIVATE

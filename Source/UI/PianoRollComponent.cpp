@@ -797,6 +797,10 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
   params.pitchAxisOffsetSemitones =
       ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
   params.timelineDisplayMode = timelineDisplayMode;
+  params.tempoMap = hostTempoMap != nullptr && hostTempoMap->isValid()
+                        ? hostTempoMap.get()
+                        : nullptr;
+  params.gridQuarterNotes = getTimelineGridQuarterNotes();
   params.gridSeconds = getTimelineGridSeconds();
   params.beatSeconds = getTimelineBeatSeconds();
   params.barSeconds = getTimelineBarSeconds();
@@ -1508,6 +1512,10 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g)
 {
   TimelineRenderer::TimelineParams params;
   params.displayMode = timelineDisplayMode;
+  params.tempoMap = hostTempoMap != nullptr && hostTempoMap->isValid()
+                        ? hostTempoMap.get()
+                        : nullptr;
+  params.gridQuarterNotes = getTimelineGridQuarterNotes();
   params.beatNumerator = timelineBeatNumerator;
   params.beatSeconds = getTimelineBeatSeconds();
   params.barSeconds = getTimelineBarSeconds();
@@ -1519,6 +1527,10 @@ void PianoRollComponent::drawLoopTimeline(juce::Graphics &g)
 {
   TimelineRenderer::LoopParams params;
   params.displayMode = timelineDisplayMode;
+  params.tempoMap = hostTempoMap != nullptr && hostTempoMap->isValid()
+                        ? hostTempoMap.get()
+                        : nullptr;
+  params.gridQuarterNotes = getTimelineGridQuarterNotes();
   params.beatNumerator = timelineBeatNumerator;
   params.beatSeconds = getTimelineBeatSeconds();
   params.barSeconds = getTimelineBarSeconds();
@@ -1977,6 +1989,11 @@ double PianoRollComponent::getTimelineGridSeconds() const
 {
   const double quarterNotes = gridDivisionToQuarterNotes(timelineGridDivision);
   return getTimelineQuarterNoteSeconds() * quarterNotes;
+}
+
+double PianoRollComponent::getTimelineGridQuarterNotes() const
+{
+  return gridDivisionToQuarterNotes(timelineGridDivision);
 }
 
 bool PianoRollComponent::shouldSnapCycleToGrid() const
@@ -3652,9 +3669,9 @@ void PianoRollComponent::setHostTempoMap(
     return;
 
   hostTempoMap = std::move(tempoMap);
-  // D-310 step 1 publishes the snapshot only: the grid still uses the constant
-  // BPM (its own phase), and the MIDI guide reads this map to place ghosts.
-  // No repaint here on purpose: nothing on screen depends on it yet.
+  // R3 (D-316): the grid and the ruler now read this map, so a new snapshot
+  // must be drawn at once.
+  repaint();
 }
 
 void PianoRollComponent::setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts)
