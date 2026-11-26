@@ -221,10 +221,11 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::PitchDrift:
             return juce::String(juce::roundToInt(value)) + " %";
         case Param::Formant:
+            return (value > 0.0 ? "+" : "") + juce::String(value, 1) + " st";
         case Param::Tilt:
         case Param::TiltLeft:
         case Param::TiltRight:
-            return (value > 0.0 ? "+" : "") + juce::String(value, 1) + " st";
+            return (value > 0.0 ? "+" : "") + juce::String(value, 2) + " st";
         case Param::Volume:
             return value <= -59.9 ? juce::String::fromUTF8("-\xe2\x88\x9e dB")
                                   : (value > 0.0 ? "+" : "") + juce::String(value, 1) + " dB";
@@ -316,9 +317,9 @@ VariAudioInspector::VariAudioInspector()
     // (left half / right half).
     // D-308: el rango util del inspector es -2..+2 st (rara vez se inclina mas).
     // No se limita el modelo: un proyecto viejo con mas inclinacion se carga igual.
-    rows[6] = std::make_unique<ValueRow>(Param::Tilt, -2.0, 2.0, 0.0, 0.1);
-    rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -2.0, 2.0, 0.0, 0.1);
-    rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -2.0, 2.0, 0.0, 0.1);
+    rows[6] = std::make_unique<ValueRow>(Param::Tilt, -2.0, 2.0, 0.0, 0.01);
+    rows[7] = std::make_unique<ValueRow>(Param::TiltLeft, -2.0, 2.0, 0.0, 0.01);
+    rows[8] = std::make_unique<ValueRow>(Param::TiltRight, -2.0, 2.0, 0.0, 0.01);
     for (auto& row : rows)
     {
         auto* r = row.get();

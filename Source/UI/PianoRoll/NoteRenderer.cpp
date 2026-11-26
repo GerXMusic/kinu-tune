@@ -918,7 +918,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
                 ? note.getTiltFineLeft()
                 : note.getTiltFineRight();
         const juce::String prefix = tilt > 0.0f ? "+" : "";
-        label = prefix + juce::String(tilt, 1) + " st";
+        label = prefix + juce::String(tilt, 2) + " st";
       }
       else
       {
