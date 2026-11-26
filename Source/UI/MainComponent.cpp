@@ -2202,6 +2202,42 @@ void MainComponent::pollMcpControl()
       response->setProperty("bypass", project->isBypassProcessing());
       response->setProperty("ok", true);
     }
+    else if (command == "tempo_map")
+    {
+      // D-310 G1: sample the map the plugin actually uses, so it can be
+      // compared with the host's ruler point by point.
+      const HostTempoMap fallback = HostTempoMap::constant(
+          cachedHostTempoBpm, cachedHostBeatNumerator,
+          cachedHostBeatDenominator);
+      const HostTempoMap &map =
+          (hostTempoMap != nullptr && hostTempoMap->isValid())
+              ? *hostTempoMap
+              : fallback;
+
+      juce::Array<juce::var> quarters;
+      juce::Array<juce::var> seconds;
+      juce::Array<juce::var> bpms;
+      if (auto *requested = request.getProperty("quarters", juce::var()).getArray())
+      {
+        for (const auto &q : *requested)
+        {
+          const double quarter = static_cast<double>(q);
+          quarters.add(quarter);
+          seconds.add(map.timeForQuarter(quarter));
+          bpms.add(map.bpmAtQuarter(quarter));
+        }
+      }
+      response->setProperty("source",
+                            hostTempoMap != nullptr && hostTempoMap->isValid()
+                                ? juce::String("host")
+                                : juce::String("fallback"));
+      response->setProperty("describe",
+                            juce::String(map.describe().c_str()));
+      response->setProperty("quarters", juce::var(quarters));
+      response->setProperty("seconds", juce::var(seconds));
+      response->setProperty("bpm", juce::var(bpms));
+      response->setProperty("ok", true);
+    }
     else if (command == "midi_guides")
     {
       // D-311/D-314: read-only view of the guide state, so the guide path can
