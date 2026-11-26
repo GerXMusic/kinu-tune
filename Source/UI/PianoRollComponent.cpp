@@ -3420,6 +3420,10 @@ void PianoRollComponent::setProject(Project *proj)
   liveTimelineEndSeconds = 0.0;
   liveRecordingSampleRate = 0.0;
   project = proj;
+  // R2/D-313: the ghost list belongs to the previous document. A different
+  // project (or none) drops it; the same one keeps it because the painter
+  // re-maps host -> project on every frame.
+  midiGuideGhosts.bindProject(proj);
   hoveredNote = nullptr;
   // D-309: the visual block map belongs to the previous document.
   engineBlockCache = EngineBlockCache{};
@@ -3655,28 +3659,29 @@ void PianoRollComponent::setHostTempoMap(
 
 void PianoRollComponent::setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts)
 {
-  if (ghosts.size() == midiGuideGhosts.size())
+  const auto &current = midiGuideGhosts.all();
+  if (ghosts.size() == current.size())
   {
     bool same = true;
     for (size_t i = 0; i < ghosts.size() && same; ++i)
     {
       const auto& a = ghosts[i];
-      const auto& b = midiGuideGhosts[i];
-      same = std::abs(a.startSeconds - b.startSeconds) < 1.0e-6 &&
-             std::abs(a.endSeconds - b.endSeconds) < 1.0e-6 &&
+      const auto& b = current[i];
+      same = std::abs(a.startHostSeconds - b.startHostSeconds) < 1.0e-6 &&
+             std::abs(a.endHostSeconds - b.endHostSeconds) < 1.0e-6 &&
              std::abs(a.pitch - b.pitch) < 1.0e-6 && a.label == b.label;
     }
     if (same)
       return;
   }
 
-  midiGuideGhosts = std::move(ghosts);
+  midiGuideGhosts.set(std::move(ghosts));
   repaint();
 }
 
 void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
 {
-  if (midiGuideGhosts.empty())
+  if (midiGuideGhosts.empty() || coordMapper == nullptr)
     return;
 
   // Read-only layer: dashed cyan blocks under the notes. Deliberately not the
@@ -3688,13 +3693,21 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
   const float dashLengths[] = {4.0f, 3.0f};
   juce::PathStrokeType stroke(1.2f);
 
-  for (const auto &ghost : midiGuideGhosts)
+  for (const auto &ghost : midiGuideGhosts.all())
   {
-    if (ghost.endSeconds < visibleStart || ghost.startSeconds > visibleEnd)
+    // R2/D-313: host -> project here, with the offset the mapper publishes
+    // now. The ghost keeps its host instant whatever item is active, so
+    // selecting another item cannot leave the list where the old one put it.
+    const double startProject =
+        coordMapper->timelineToProject(ghost.startHostSeconds);
+    const double endProject =
+        coordMapper->timelineToProject(ghost.endHostSeconds);
+
+    if (endProject < visibleStart || startProject > visibleEnd)
       continue;
 
-    const float x = timeToX(ghost.startSeconds);
-    const float right = timeToX(ghost.endSeconds);
+    const float x = timeToX(startProject);
+    const float right = timeToX(endProject);
     const float width = juce::jmax(2.0f, right - x);
     auto rect = juce::Rectangle<float>(x, midiToY(ghost.pitch), width,
                                        juce::jmax(6.0f, pixelsPerSemitone));
@@ -3714,7 +3727,8 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
     {
       g.setColour(ghostColour.withAlpha(0.9f));
       g.setFont(AppFont::getFont(juce::jmin(11.0f, pixelsPerSemitone * 0.9f)));
-      g.drawText(ghost.label, rect.withTrimmedLeft(3.0f).toNearestInt(),
+      g.drawText(juce::String(ghost.label),
+                 rect.withTrimmedLeft(3.0f).toNearestInt(),
                  juce::Justification::centredLeft, false);
     }
   }

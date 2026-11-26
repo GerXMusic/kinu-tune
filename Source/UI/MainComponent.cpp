@@ -1682,6 +1682,10 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   auto *project = getProject();
   applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
+  // R2/D-313: the guide list and its ghosts are per project. Without this the
+  // new item drew the previous item's guide for as long as no other refresh
+  // ran (the ghost list itself is dropped by setProject).
+  refreshMidiGuideUi();
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
   if (project)
@@ -2319,6 +2323,13 @@ void MainComponent::pollMcpControl()
         response->setProperty("matched_outside_region", 0);
         response->setProperty("changes_in_region", 0);
         response->setProperty("audio_notes_in_region", 0);
+        // R2: the ghost list as the canvas holds it (host seconds), so the
+        // item-change check can read it without the UI (D-126).
+        const auto &ghosts = pianoRoll.getMidiGuideGhosts();
+        response->setProperty("ghost_count",
+                              static_cast<int>(ghosts.size()));
+        response->setProperty("ghost_host_first", ghosts.firstHostSeconds());
+        response->setProperty("ghost_host_last", ghosts.lastHostSeconds());
 
         if (hasGuide && !guides[static_cast<size_t>(selectedMidiGuide)]
                               .notes.empty())
@@ -6740,8 +6751,6 @@ MainComponent::buildMidiGuideGhosts(const GuideSource &guide) const
 
   MidiGuideMapping mapping;
   mapping.tempoMap = &tempo;
-  // Project 0 s on the host timeline. Same offset CoordinateMapper publishes.
-  mapping.timelineDisplayOffsetSeconds = pianoRoll.projectToTimeline(0.0);
   mapping.sampleRate = SAMPLE_RATE;
   mapping.hopSize = HOP_SIZE;
 
@@ -6749,14 +6758,18 @@ MainComponent::buildMidiGuideGhosts(const GuideSource &guide) const
   for (const auto &note : guide.notes)
   {
     PianoRollComponent::MidiGuideGhost ghost;
-    ghost.startSeconds = mapping.projectSecondsForQuarter(note.startQuarter);
-    ghost.endSeconds = mapping.projectSecondsForQuarter(note.endQuarter);
+    // R2/D-313: host seconds, not project seconds. The canvas applies the
+    // display offset while painting, so the list survives a region change.
+    ghost.startHostSeconds = mapping.timelineSecondsForQuarter(note.startQuarter);
+    ghost.endHostSeconds = mapping.timelineSecondsForQuarter(note.endQuarter);
     ghost.pitch = note.pitch;
-    ghost.label = juce::MidiMessage::getMidiNoteName(
-        juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-                     static_cast<int>(std::lround(note.pitch))),
-        true, true, 3);
-    if (ghost.endSeconds <= ghost.startSeconds)
+    ghost.label =
+        juce::MidiMessage::getMidiNoteName(
+            juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+                         static_cast<int>(std::lround(note.pitch))),
+            true, true, 3)
+            .toStdString();
+    if (ghost.endHostSeconds <= ghost.startHostSeconds)
       continue;
     ghosts.push_back(ghost);
   }

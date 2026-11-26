@@ -4,6 +4,7 @@
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/Engine/HostTempoMap.h"
 #include "../Models/Project.h"
+#include "../Models/MidiGuideGhosts.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
 #include "../Utils/TransformParams.h"
@@ -295,19 +296,17 @@ public:
     return hostTempoMap;
   }
 
-  // D-311: MIDI guide ghosts, already in project seconds (the axis the notes
-  // are drawn in). Read-only layer: no hit-test, no edit. The caller rebuilds
-  // the vector from the selected guide and the active tempo map.
-  struct MidiGuideGhost
-  {
-    double startSeconds = 0.0;
-    double endSeconds = 0.0;
-    float pitch = 60.0f;
-    juce::String label;
-  };
+  // D-311/R2: MIDI guide ghosts, in HOST seconds (MidiGuideGhosts.h). Read-only
+  // layer: no hit-test, no edit. The caller rebuilds the list from the selected
+  // guide and the active tempo map; the painter applies host -> project with
+  // the coordinate mapper, so changing the active item moves nothing.
+  using MidiGuideGhost = ::MidiGuideGhost;
   void setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts);
   bool hasMidiGuideGhosts() const { return !midiGuideGhosts.empty(); }
   size_t getMidiGuideGhostCount() const { return midiGuideGhosts.size(); }
+  const MidiGuideGhostLayer &getMidiGuideGhosts() const {
+    return midiGuideGhosts;
+  }
   void setTimelineGridDivision(TimelineGridDivision division);
   void setTimelineSnapCycle(bool enabled);
 
@@ -740,8 +739,9 @@ private:
   double &timelineTempoBpm = viewState.timelineTempoBpm;
   // D-310: host tempo map snapshot (null = constant-BPM fallback).
   std::shared_ptr<const HostTempoMap> hostTempoMap;
-  // D-311: MIDI guide ghosts (read-only overlay under the notes).
-  std::vector<MidiGuideGhost> midiGuideGhosts;
+  // D-311/R2: MIDI guide ghosts (read-only overlay under the notes), stored in
+  // host seconds; see MidiGuideGhosts.h.
+  MidiGuideGhostLayer midiGuideGhosts;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
   bool &timelineSnapCycle = viewState.timelineSnapCycle;
   bool &cycleEditEnabled = viewState.cycleEditEnabled;

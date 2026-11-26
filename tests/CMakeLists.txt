@@ -39,6 +39,8 @@ set(PITCHNET_TEST_SOURCES
     MidiGuideApplyTests.cpp    NoteEngineTests.cpp
     # R1: la guia solo edita el item activo (ventanas fuente/host).
     MidiGuideRegionScopeTests.cpp
+    # R2: los fantasmas viven en tiempo host y se dibujan con el offset actual.
+    MidiGuideGhostTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
