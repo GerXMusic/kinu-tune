@@ -63,6 +63,10 @@ set(PITCHNET_TEST_SOURCES
     # R11d (D-367): la clave de pista es el NOMBRE solo; mover, anadir o quitar
     # items no la cambia, y la clave `src:...|name:` de R11b se migra una vez.
     MidiGuideStoreTrackKeyTests.cpp
+    # R11f (D-370): una ruta de sidecar por pista (la vista del documento no
+    # nombra el fichero); cadenas de cambios de vista, dos vistas a la vez,
+    # consolidacion de varios vivos y guardado a mitad de cadena.
+    MidiGuideStoreViewChainTests.cpp
     # R8 (D-361): el plan de aplicacion por pista (SCOPE=A) resuelve que item y
     # nota recibe cada nota de guia, con motivos de skip, sin escribir nada.
     MidiGuideTrackPlanTests.cpp

@@ -194,18 +194,18 @@ ParsedGuideFile parseGuideFile(const juce::File &file)
     return parsed;
 }
 
-// ---- R11b (D-365) / R11d (D-367): legacy sidecar migration ------------
+// ---- R11b (D-365) / R11d (D-367) / R11f (D-370): sidecar migration ------
 //
 // Before R11b the track key started with "doc:" and carried the address of
 // the ARADocument, so every session wrote a NEW file under a NEW key; before
 // R11d it started with "src:" and carried the fingerprint of the track's live
-// items, so moving or adding one item did the same. Those files are the user's
-// guides; they are not deleted. A file is adopted when its track key names the
-// same track (the name after "name:", or the same ordinal when the host never
-// sent a name), it is rewritten under the canonical key and the superseded
-// file is renamed to "<file>.bak" so the old bytes stay for the user.
-
-constexpr const char *kLegacyKeyPrefix = "doc:";
+// items, so moving or adding one item did the same. R11d/R11e wrote the
+// canonical "name:X" key at a path that still hashed the document view, which
+// is what R11f removed. Those files are the user's guides; they are not
+// deleted. A file is adopted when its track key names the same track (the name
+// after "name:", or the same ordinal when the host never sent a name), it is
+// written under the canonical path and the adopted file is renamed to
+// "<file>.bak" so the old bytes stay for the user.
 
 // Name of the track a key belongs to. Accepts the canonical form ("name:X")
 // and the two forms older builds wrote ("doc:<address>|name:X",
@@ -236,24 +236,23 @@ juce::String ordinalPartOfTrackKey(const juce::String &trackKey)
     return trackKey.substring(at + marker.length());
 }
 
-// Forms no current build writes: safe to retire once consolidated. A canonical
-// key of another document is NOT retired here - it may still be the live file
-// of that document (D-367).
-bool keyIsSupersededForm(const juce::String &trackKey)
-{
-    return trackKey.startsWith(kLegacyKeyPrefix) ||
-           trackKey.contains("|name:") || trackKey.contains("|ordinal:");
-}
-
 bool keyNamesSameTrack(const juce::String &candidateKey,
                        const juce::String &wantedKey)
 {
     const auto wantedName = namePartOfTrackKey(wantedKey);
     if (wantedName.isNotEmpty())
         return namePartOfTrackKey(candidateKey) == wantedName;
-    return namePartOfTrackKey(candidateKey).isEmpty() &&
-           ordinalPartOfTrackKey(candidateKey) ==
-               ordinalPartOfTrackKey(wantedKey);
+
+    const auto wantedOrdinal = ordinalPartOfTrackKey(wantedKey);
+    if (wantedOrdinal.isNotEmpty())
+        return namePartOfTrackKey(candidateKey).isEmpty() &&
+               ordinalPartOfTrackKey(candidateKey) == wantedOrdinal;
+
+    // Every key trackKeyForTrack() produces carries a name or an ordinal, and so
+    // did every legacy form. A key with neither matches only itself: without
+    // this, two arbitrary keys would look like "the same track" and a save
+    // could retire another track's file.
+    return candidateKey == wantedKey;
 }
 
 // Merges by guide id: adopting two legacy files of the same track (the normal
@@ -320,21 +319,22 @@ juce::File defaultDirectory()
 
 juce::String projectKeyFromSources(std::vector<juce::String> sourceIds)
 {
-    // The document half of the sidecar name and key (TrackIdentity.h). It is
-    // fed the stable source identities - the host's source names - not the
-    // persistent IDs: measured in R11, the IDs changed on every reopen. Since
-    // R11d (D-367) the TRACK half is only the track name, so this fingerprint
-    // no longer follows the items of a track.
+    // The document VIEW of the sidecar (TrackIdentity.h). R11f (D-370) removed
+    // it from the file name: it is written inside the file as "which view
+    // wrote it last" and never chooses a path. It is fed the stable source
+    // identities - the host's source names - not the persistent IDs: measured
+    // in R11, the IDs changed on every reopen.
     return stableSourceFingerprint(std::move(sourceIds));
 }
 
-juce::File fileFor(const juce::File &directory, const juce::String &projectKey,
-                   const juce::String &trackKey)
+juce::File fileFor(const juce::File &directory, const juce::String &trackKey)
 {
-    if (directory == juce::File() || projectKey.isEmpty() || trackKey.isEmpty())
+    // R11f (D-370): the track key alone names the file. The document view used
+    // to be hashed in here, so every set of source names produced another path
+    // and the guide jumped files on a view change (R12: second change -> 0/0).
+    if (directory == juce::File() || trackKey.isEmpty())
         return {};
-    return directory.getChildFile("guide-" +
-                                 fnv1aHex(projectKey + "|" + trackKey) +
+    return directory.getChildFile("guide-" + fnv1aHex(trackKey) +
                                  kFileExtension);
 }
 } // namespace midiGuideDisk
@@ -350,22 +350,21 @@ juce::File MidiGuidePersistence::getDirectory() const
                                      : directory;
 }
 
-juce::File MidiGuidePersistence::fileFor(const juce::String &projectKey,
-                                         const juce::String &trackKey) const
+juce::File MidiGuidePersistence::fileFor(const juce::String &trackKey) const
 {
-    return midiGuideDisk::fileFor(getDirectory(), projectKey, trackKey);
+    return midiGuideDisk::fileFor(getDirectory(), trackKey);
 }
 
-bool MidiGuidePersistence::writeGuides(const juce::String &projectKey,
+bool MidiGuidePersistence::writeGuides(const juce::String &documentViewKey,
                                        const juce::String &trackKey,
                                        const std::vector<GuideSource> &guides,
                                        juce::String *error) const
 {
-    const auto target = fileFor(projectKey, trackKey);
+    const auto target = fileFor(trackKey);
     if (target == juce::File())
     {
         if (error != nullptr)
-            *error = "MIDI guide sidecar: empty document or track key";
+            *error = "MIDI guide sidecar: empty track key";
         return false;
     }
 
@@ -380,7 +379,9 @@ bool MidiGuidePersistence::writeGuides(const juce::String &projectKey,
     juce::String json;
     json << "{\n";
     json << "  \"format\": " << midiGuideDisk::kFormatVersion << ",\n";
-    json << "  \"projectKey\": " << quoted(projectKey) << ",\n";
+    // Informational only (D-370): which view of the document wrote the file
+    // last. load() never rejects a file because of it.
+    json << "  \"projectKey\": " << quoted(documentViewKey) << ",\n";
     json << "  \"trackKey\": " << quoted(trackKey) << ",\n";
     json << "  \"guides\": [";
     for (std::size_t i = 0; i < guides.size(); ++i)
@@ -434,14 +435,14 @@ bool MidiGuidePersistence::writeGuides(const juce::String &projectKey,
     return true;
 }
 
-// R11b (D-365) / R11d (D-367): one live file per track. After the new key has
-// been written, every sidecar of the same track written in a superseded key
-// form ("doc:" or "src:...|name:") is renamed to "<file>.bak": the user's bytes
-// stay on disk and no session can leave a second live key behind. A canonical
-// key that belongs to another document view is left alone - it may still be the
-// live file of that view.
-void MidiGuidePersistence::retireSupersededFiles(const juce::String &trackKey,
-                                                 const juce::File &keep) const
+// R11b (D-365) / R11d (D-367) / R11f (D-370): one live file per track. After
+// the new file has been written, every OTHER readable file that names the same
+// track is renamed to "<file>.bak": this covers the "doc:" and "src:...|name:"
+// key forms of older builds AND the canonical files R11d/R11e left at their old
+// per-view paths, which is the consolidation that leaves exactly one path per
+// track. The user's bytes stay on disk; nothing is deleted.
+void MidiGuidePersistence::retireOtherFilesOfTrack(const juce::String &trackKey,
+                                                   const juce::File &keep) const
 {
     const auto directory = getDirectory();
     for (const auto &file : guideFilesIn(directory))
@@ -451,30 +452,28 @@ void MidiGuidePersistence::retireSupersededFiles(const juce::String &trackKey,
         const auto parsed = parseGuideFile(file);
         if (!parsed.ok)
             continue; // not ours: never touch a file we cannot read
-        if (!keyIsSupersededForm(parsed.trackKey))
-            continue;
         if (!keyNamesSameTrack(parsed.trackKey, trackKey))
             continue;
         file.moveFileTo(backupPathFor(file));
     }
 }
 
-bool MidiGuidePersistence::save(const juce::String &projectKey,
+bool MidiGuidePersistence::save(const juce::String &documentViewKey,
                                 const juce::String &trackKey,
                                 const std::vector<GuideSource> &guides,
                                 juce::String *error)
 {
-    if (!writeGuides(projectKey, trackKey, guides, error))
+    if (!writeGuides(documentViewKey, trackKey, guides, error))
         return false;
-    retireSupersededFiles(trackKey, fileFor(projectKey, trackKey));
+    retireOtherFilesOfTrack(trackKey, fileFor(trackKey));
     return true;
 }
 
-MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
+MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &documentViewKey,
                                                const juce::String &trackKey) const
 {
     MidiGuideLoadResult result;
-    const auto target = fileFor(projectKey, trackKey);
+    const auto target = fileFor(trackKey);
     if (target == juce::File())
         return result;
 
@@ -491,8 +490,10 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
         const auto parsed = parseGuideFile(target);
         if (!parsed.ok)
             return reject(parsed.why);
-        if (parsed.projectKey != projectKey)
-            return reject("another project");
+        // R11f (D-370): the recorded document view is NOT validated. The file
+        // is the track's, every view of the document reads it, and the view
+        // that wrote it last is only context. The track key still is: a file of
+        // another track copied over this one keeps saying so.
         if (parsed.trackKey != trackKey)
             return reject("another track");
 
@@ -504,21 +505,20 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
         return result;
     }
 
-    // R11b (D-365) / R11d (D-367): no file for the key. Adopt the sidecars of
-    // this same track - the "doc:" files of R11 and earlier and the
-    // "src:...|name:" files of R11b/R11c, always; a canonical file of another
-    // document view only when it is the single candidate, because with several
-    // there is no way to tell which one is this document's. This is the
-    // one-time migration of the guides written by older builds; it runs only
-    // when the key has no file, so it can never overwrite a guide the key
-    // already owns.
+    // R11b (D-365) / R11d (D-367) / R11f (D-370): no file at this track's path.
+    // Adopt every readable file that names the same track - the "doc:" files of
+    // R11, the "src:...|name:" files of R11b/R11c and the canonical files of
+    // R11d/R11e that live at the old per-view paths - merge them by guide id,
+    // write the single canonical file and retire each adopted one to .bak. With
+    // one path per track there is no "which view is this" question left, so
+    // every candidate is the same track's history. This runs only when the path
+    // has no file, so it can never overwrite a guide the track already owns.
     struct Candidate
     {
         juce::File file;
         std::vector<GuideSource> guides;
     };
-    std::vector<Candidate> superseded;
-    std::vector<Candidate> canonical;
+    std::vector<Candidate> candidates;
     for (const auto &file : guideFilesIn(getDirectory()))
     {
         if (file == target)
@@ -528,33 +528,25 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
             continue;
         if (!keyNamesSameTrack(parsed.trackKey, trackKey))
             continue;
-        auto &into = keyIsSupersededForm(parsed.trackKey) ? superseded
-                                                          : canonical;
-        into.push_back({file, parsed.guides});
+        candidates.push_back({file, parsed.guides});
     }
 
-    std::vector<const Candidate *> chosen;
-    for (const auto &candidate : superseded)
-        chosen.push_back(&candidate);
-    if (superseded.empty() && canonical.size() == 1)
-        chosen.push_back(&canonical.front());
-
-    if (chosen.empty())
+    if (candidates.empty())
         return result; // Status::none: the caller migrates from the Project cache
 
     std::vector<GuideSource> adopted;
-    for (const auto *candidate : chosen)
-        mergeGuides(adopted, candidate->guides);
+    for (const auto &candidate : candidates)
+        mergeGuides(adopted, candidate.guides);
 
     juce::String error;
-    if (!writeGuides(projectKey, trackKey, adopted, &error))
+    if (!writeGuides(documentViewKey, trackKey, adopted, &error))
     {
         result.status = MidiGuideLoadResult::Status::rejected;
         result.message = "MIDI guide legacy migration failed: " + error;
         return result;
     }
-    for (const auto *candidate : chosen)
-        candidate->file.moveFileTo(backupPathFor(candidate->file));
+    for (const auto &candidate : candidates)
+        candidate.file.moveFileTo(backupPathFor(candidate.file));
 
     result.status = MidiGuideLoadResult::Status::loaded;
     result.guides = std::move(adopted);

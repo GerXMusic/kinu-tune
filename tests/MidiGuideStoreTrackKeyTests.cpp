@@ -13,8 +13,8 @@
 //  (a) mover 4 de 5 items deja la MISMA clave y los mismos 111 fantasmas;
 //  (b) anadir un item (el documento gana una fuente) tampoco la cambia;
 //  (c) quitar items hasta dejar 1 tampoco;
-//  (d) dos pistas con el mismo nombre en documentos distintos no se mezclan, y
-//      con varios candidatos el persistidor NO adivina (devuelve `none`);
+//  (d) dos pistas homonimas usan UNA ruta (D-370): el riesgo de compartir guia
+//      entre documentos queda documentado y no se crea fichero por vista;
 //  (e) renombrar la pista cambia la clave (riesgo documentado en D-367);
 //  (f) la clave de R11b (`src:...|name:`) se migra una vez y queda en `.bak`;
 //  (g) una pista sin nombre cae al ordinal, y ese ordinal puede cambiar.
@@ -164,8 +164,9 @@ void testMovingFourOfFiveItemsKeepsTheKeyAndTheGhosts()
 }
 
 // (b) Anadir un item: si trae un medio nuevo, el conjunto de fuentes del
-// documento cambia y con el la clave de documento (el nombre del fichero), pero
-// no la de pista. El unico candidato se adopta y la guia sigue ahi.
+// documento cambia y con el la vista (el projectKey, que solo se guarda dentro
+// del fichero), pero ni la clave de pista ni la ruta cambian (D-370). La guia
+// sigue ahi, en el MISMO fichero: no hay nada que migrar ni que retirar.
 void testAddingAnItemKeepsTheKeyAndTheGuide()
 {
     const auto directory = freshDirectory("add");
@@ -186,9 +187,9 @@ void testAddingAnItemKeepsTheKeyAndTheGuide()
     reopened.bindTrack(trackKey);
     CHECK(reopened.size() == 1);
     CHECK(ghostCount(reopened) == kLeadNotes);
-    // Un solo sidecar vivo: el anterior quedo en `.bak`, no borrado.
+    // Una sola ruta por pista: ni fichero nuevo ni `.bak` (D-370).
     CHECK(liveSidecars(directory) == 1);
-    CHECK(backupSidecars(directory) == 1);
+    CHECK(backupSidecars(directory) == 0);
 }
 
 // (c) Quitar items hasta dejar 1: la clave no cambia porque solo lleva el
@@ -229,12 +230,12 @@ void testRemovingItemsDownToOneKeepsTheKey()
     CHECK(backupSidecars(directory) == 0); // no hubo nada que migrar
 }
 
-// (d) Dos pistas con el mismo nombre en documentos distintos: la clave de pista
-// es la misma (solo el nombre), pero el documento esta en el nombre del fichero
-// y cada una lee la suya. Con varios candidatos y ninguno exacto, el
-// persistidor NO adivina: devuelve `none` y el store migra de la cache del
-// Project en vez de traer la guia de otro proyecto (riesgo de D-367).
-void testSameNameInTwoDocumentsDoesNotMix()
+// (d) Dos pistas con el mismo nombre: desde R11f (D-370) son la misma RUTA,
+// aunque esten en documentos distintos, porque el projectKey ya no nombra el
+// fichero. El riesgo -dos pistas homonimas en documentos distintos comparten
+// guia- queda documentado en D-370; lo que se sigue midiendo aqui es que la
+// clave de pista es solo el nombre y que no hay una ruta por vista.
+void testSameNameInTwoDocumentsUsesOnePath()
 {
     const auto directory = freshDirectory("documents");
     MidiGuidePersistence persistence(directory);
@@ -244,26 +245,27 @@ void testSameNameInTwoDocumentsDoesNotMix()
     const auto documentB =
         midiGuideDisk::projectKeyFromSources({"name:07-Bgv.wav"});
     CHECK(documentA != documentB);
-    CHECK(persistence.fileFor(documentA, trackKey) !=
-          persistence.fileFor(documentB, trackKey));
 
     CHECK(persistence.save(documentA, trackKey, {leadGuide("a")}));
+    const auto afterA = persistence.fileFor(trackKey);
     CHECK(persistence.save(documentB, trackKey, {leadGuide("b")}));
 
-    const auto fromA = persistence.load(documentA, trackKey);
+    // La segunda vista escribe en el MISMO fichero: no hay dos vivos.
+    CHECK(persistence.fileFor(trackKey) == afterA);
+    CHECK(liveSidecars(directory) == 1);
     const auto fromB = persistence.load(documentB, trackKey);
-    CHECK(fromA.usable() && fromB.usable());
-    CHECK(fromA.guides.size() == 1 && fromB.guides.size() == 1);
-    CHECK(fromA.guides.front().id == "a");
-    CHECK(fromB.guides.front().id == "b");
+    CHECK(fromB.usable());
+    CHECK(fromB.guides.size() == 1);
+    CHECK(fromB.guides.front().id == "b"); // gano el ultimo que escribio
 
-    // Tercer documento con la misma pista y sin fichero propio: hay dos
-    // candidatos canonicos y no se adopta ninguno.
+    // Y una vista nunca vista lee la misma guia en vez de devolver `none`.
     const auto documentC =
         midiGuideDisk::projectKeyFromSources({"name:other.wav"});
-    const auto unknown = persistence.load(documentC, trackKey);
-    CHECK(unknown.status == MidiGuideLoadResult::Status::none);
-    CHECK(liveSidecars(directory) == 2); // los dos de A y B, intactos
+    const auto fromC = persistence.load(documentC, trackKey);
+    CHECK(fromC.usable());
+    CHECK(fromC.guides.size() == 1);
+    CHECK(fromC.guides.front().id == "b");
+    CHECK(liveSidecars(directory) == 1); // sin fichero nuevo ni `.bak`
 
     // Dentro de UN documento, dos pistas homonimas son una sola clave: riesgo
     // aceptado y documentado (SCOPE=A: una pista por instancia del plugin).
@@ -283,7 +285,7 @@ void testRenamingTheTrackChangesTheKey()
     CHECK(before != after);
 
     CHECK(persistence.save(documentKey, before, {leadGuide()}));
-    const auto oldFile = persistence.fileFor(documentKey, before);
+    const auto oldFile = persistence.fileFor(before);
     CHECK(oldFile.existsAsFile());
 
     const auto renamed = persistence.load(documentKey, after);
@@ -304,7 +306,7 @@ void testSourceFingerprintKeyIsMigratedOnce()
 
     // El fichero vivo que dejo R11c en la maquina del usuario.
     const auto legacy = persistence.fileFor(
-        documentKey, "src:7221217c41993ac6|name:" + juce::String(kTrackName));
+        "src:7221217c41993ac6|name:" + juce::String(kTrackName));
     CHECK(persistence.save(documentKey,
                            "src:7221217c41993ac6|name:" +
                                juce::String(kTrackName),
@@ -317,7 +319,7 @@ void testSourceFingerprintKeyIsMigratedOnce()
     CHECK(loaded.guides.size() == 1);
     CHECK(loaded.guides.front().notes.size() ==
           static_cast<std::size_t>(kLeadNotes));
-    CHECK(persistence.fileFor(documentKey, trackKey).existsAsFile());
+    CHECK(persistence.fileFor(trackKey).existsAsFile());
     CHECK(!legacy.existsAsFile());
     CHECK(liveSidecars(directory) == 1);
     CHECK(backupSidecars(directory) == 1);
@@ -346,7 +348,7 @@ int main()
     testMovingFourOfFiveItemsKeepsTheKeyAndTheGhosts();
     testAddingAnItemKeepsTheKeyAndTheGuide();
     testRemovingItemsDownToOneKeepsTheKey();
-    testSameNameInTwoDocumentsDoesNotMix();
+    testSameNameInTwoDocumentsUsesOnePath();
     testRenamingTheTrackChangesTheKey();
     testSourceFingerprintKeyIsMigratedOnce();
     testNamelessTrackFallsBackToTheOrdinal();

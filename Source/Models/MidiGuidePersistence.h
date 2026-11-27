@@ -21,26 +21,39 @@
  * a SIDECAR file next to the user's application data, and the host archive
  * keeps carrying the old `midiGuides` copy for compatibility (one version).
  *
- * Identity (R11b D-365, R11d D-367): ARA exposes no host project path (no .rpp
- * name, no project folder), and it exposes no persistent file path either:
- * measured in R11, the audio source persistent IDs changed on every reopen and
- * produced three different document fingerprints for the same media. What
- * survives is the source NAME the host restores with the project. The document
- * key is the fingerprint of those names and the track key is the track NAME
- * alone (Models/TrackIdentity.h); no address, pointer or ordinal of the session
- * is part of either, and neither is the track's item list: adding, removing or
- * moving items must not rename the sidecar (SCOPE=A, G-B2 in R11c). Two
- * projects with different media never share a file; two tracks of one project
- * never share a file.
+ * Identity (R11b D-365, R11d D-367, R11f D-370): ARA exposes no host project
+ * path (no .rpp name, no project folder), and it exposes no persistent file
+ * path either: measured in R11, the audio source persistent IDs changed on
+ * every reopen and produced three different document fingerprints for the same
+ * media. What survives is the source NAME the host restores with the project.
+ * The track key is the track NAME alone (Models/TrackIdentity.h); no address,
+ * pointer or ordinal of the session is part of it, and neither is the track's
+ * item list: adding, removing or moving items must not rename the sidecar
+ * (SCOPE=A, G-B2 in R11c).
+ *
+ * ONE PATH PER TRACK (R11f, D-370): the FILE NAME is the track key and nothing
+ * else. It used to hash the document fingerprint (the set of source names of
+ * the document) together with the track key, so every view of the document -
+ * an item added, a source restored - hashed to a DIFFERENT path: the guide
+ * "jumped" from file to file and the second view change of R12 landed on an
+ * empty one (1/111 -> 0/0 measured on the B2 build E2C56ECF). The document
+ * fingerprint is still recorded INSIDE the file (which view wrote it last,
+ * useful for a support report) but it is neither part of the path nor
+ * validated on read: a guide belongs to a track, not to a view of a document.
+ * Two documents whose track has the same name share the file; that is the
+ * accepted risk of D-370 (two homonymous tracks in two different documents).
  *
  * Legacy migration: a sidecar written before R11b carries a track key that
  * starts with "doc:" (the ARADocument address) and one written before R11d
  * starts with "src:" (the fingerprint of the track's live items). When the
- * current key has no file, load() adopts those files for the same track (same
- * name after "name:", or the same ordinal), merges them by guide id, rewrites
- * them under the current key and renames each superseded file to "<file>.bak".
- * Nothing is deleted; the bytes stay for the user and only one live file per
- * track remains.
+ * path of the current key has no file, load() adopts those files for the same
+ * track (same name after "name:", or the same ordinal), merges them by guide
+ * id, rewrites them under the current key and renames each superseded file to
+ * "<file>.bak". Nothing is deleted; the bytes stay for the user and only one
+ * live file per track remains. The canonical files R11d/R11e left at their
+ * old (per-view) paths are adopted the same way, because a track's file moved
+ * in R11f: that is the consolidation, and it is what turns N per-view files
+ * into one.
  *
  * Write: temporary sibling + atomic replace (juce::TemporaryFile ->
  * replaceFileIn), so a reader never sees half a file and a crash leaves the
@@ -61,12 +74,14 @@ juce::File defaultDirectory();
 
 // Deterministic fingerprint of one ARA document from its audio sources' stable
 // identities (the names ARA exposes), never from their persistent IDs.
-// Order-independent; empty input gives an empty key.
+// Order-independent; empty input gives an empty key. It is recorded INSIDE the
+// sidecar as "which view wrote it last" (D-370); it never names a file.
 juce::String projectKeyFromSources(std::vector<juce::String> sourceIds);
 
-// One file per (document fingerprint, track key).
-juce::File fileFor(const juce::File &directory, const juce::String &projectKey,
-                   const juce::String &trackKey);
+// One file per TRACK, and only the track key names it (D-370): the same track
+// gets the same path in every view of the document, so a view change reads the
+// file it already has instead of creating a second one.
+juce::File fileFor(const juce::File &directory, const juce::String &trackKey);
 } // namespace midiGuideDisk
 
 struct MidiGuideLoadResult
@@ -94,34 +109,36 @@ public:
     explicit MidiGuidePersistence(juce::File directory = {});
 
     juce::File getDirectory() const;
-    juce::File fileFor(const juce::String &projectKey,
-                       const juce::String &trackKey) const;
+    juce::File fileFor(const juce::String &trackKey) const;
 
-    // Atomic replace. Returns false (and fills error when given) if the file
-    // could not be written; the previous copy is left untouched. On success
-    // the superseded ("doc:" / "src:...|name:") sidecars of the same track are
-    // retired to .bak, so a track never ends up with two live keys (D-365).
-    bool save(const juce::String &projectKey, const juce::String &trackKey,
+    // Atomic replace of the track's single file. `documentViewKey` is recorded
+    // in the file but never used for the path (D-370): a save from another
+    // view of the document is the same file. Returns false (and fills error
+    // when given) if the file could not be written; the previous copy is left
+    // untouched. On success every OTHER live file of the same track (the
+    // "doc:" / "src:...|name:" forms and the per-view paths R11d/R11e wrote) is
+    // retired to .bak, so a track never ends up with two live files.
+    bool save(const juce::String &documentViewKey, const juce::String &trackKey,
               const std::vector<GuideSource> &guides,
               juce::String *error = nullptr);
 
-    // Reads the file for the key. When that file does not exist yet, adopts
-    // the sidecars of the same track written in a superseded form ("doc:" and
-    // "src:...|name:"), materialises them under the key and returns them
-    // (status loaded), so a project opened after a key change - or after the
-    // R11d fix - recovers the guide instead of starting empty. A canonical
-    // file of another document view is only adopted when it is the single
-    // candidate (D-367).
-    MidiGuideLoadResult load(const juce::String &projectKey,
+    // Reads the track's file. The document view is informational: a file whose
+    // recorded view differs is this track's file (D-370) and is accepted. When
+    // the path has no file yet, adopts every file of the same track written
+    // before (superseded key forms and canonical files at the old per-view
+    // paths), merges them by guide id, materialises them under the canonical
+    // path and renames each adopted file to .bak. This is the one-time
+    // migration of older builds and the consolidation of the per-view files.
+    MidiGuideLoadResult load(const juce::String &documentViewKey,
                              const juce::String &trackKey) const;
 
 private:
-    bool writeGuides(const juce::String &projectKey,
+    bool writeGuides(const juce::String &documentViewKey,
                      const juce::String &trackKey,
                      const std::vector<GuideSource> &guides,
                      juce::String *error) const;
-    void retireSupersededFiles(const juce::String &trackKey,
-                               const juce::File &keep) const;
+    void retireOtherFilesOfTrack(const juce::String &trackKey,
+                                 const juce::File &keep) const;
 
     juce::File directory;
 };

@@ -29,21 +29,23 @@
  *
  * The item list, the audio sources and the position in the document play no
  * part. The document fingerprint (MidiGuidePersistence's projectKey, still
- * derived from the document's source names) stays in the FILE NAME, so two
- * documents with the same media are still two files.
+ * derived from the document's source names) is recorded inside the sidecar as
+ * "which view wrote it last"; since R11f (D-370) it is NOT part of the file
+ * name: one path per track, so a change of view reads the file it already has.
  *
- * Fallbacks and risks (D-367):
+ * Fallbacks and risks (D-367, D-370):
  *  - a track with no name falls back to `ordinal:<n>`, its position in
  *    ARADocument::getRegionSequences(). Documented, not preferred: reordering
  *    nameless tracks renames the key.
  *  - renaming the track changes the key: the old sidecar is not deleted, it
  *    simply stops being found (same as D-365).
- *  - two tracks with the same name are one key. Inside one document the file
- *    name still separates them only when their media differ, and the persistence
- *    refuses to guess between several candidates (MidiGuidePersistence::load).
- *    Two tracks of one document with the same name AND the same media are not
- *    distinguished; SCOPE=A gives one track per plug-in instance, the same
- *    accepted limitation as D-358/D-365.
+ *  - two tracks with the same name are one key AND one file (D-370). Inside
+ *    one document SCOPE=A gives one track per plug-in instance, the same
+ *    accepted limitation as D-358/D-365; in two DIFFERENT documents with a
+ *    homonymous track both instances read and write that one file, so the last
+ *    writer wins and the other document adopts the same guide. Accepted and
+ *    documented: the alternative - hashing the document view into the path -
+ *    is the R12 bug (the guide jumped to an empty file on the second change).
  */
 
 // Deterministic fingerprint of the document's audio sources from their stable

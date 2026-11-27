@@ -100,17 +100,25 @@ void DocumentMidiGuideStore::setDocumentKey(const juce::String& projectKey)
     if (documentKey.isEmpty() || trackKey.isEmpty())
         return;
 
-    // A different fingerprint is a different document view: whatever the store
-    // holds belongs to the previous one. Read the sidecar for the new key and,
-    // only when there is none, fall back to the legacy Project cache.
-    entries.clear();
-    importedProjects.clear();
-    guidesFromDisk = false;
-    diskAuthoritative = false;
-    markDirty();
-    publish();
-    if (!loadFromDisk())
+    // R11f (D-370): a different document fingerprint is a different VIEW of the
+    // same document, not another document. The sidecar has one path per track,
+    // so this view reads the very file the previous view wrote: the store
+    // ADOPTS it - what is in memory is kept and what the file holds replaces by
+    // id - instead of clearing the list and looking for a file that never
+    // existed (the second view change of R12 landed on 0/0 exactly because of
+    // that clear + new path). An empty list here would also be written next
+    // time, retiring the good sidecar to .bak.
+    const bool loaded = loadFromDisk();
+    if (!loaded)
         importFromObservedProjects();
+
+    // A guide that arrived before the view had a key (bindTrack with no key, a
+    // live sync, a Project migration) has not been written yet: materialise it
+    // under the track's single path. persistIfPossible refuses an empty list
+    // without disk authority, so this can never retire a good file.
+    if (!diskAuthoritative && !entries.empty())
+        persistIfPossible();
+
     publish();
 }
 
@@ -157,6 +165,12 @@ bool DocumentMidiGuideStore::persistIfPossible()
         return false;
     // Never create an empty sidecar out of nothing: a document save with no
     // guide must not shadow a legacy cache that has not been adopted yet.
+    //
+    // R11f (D-370): and never replace a good file with an empty list that only
+    // means "this view has nothing in memory" - that is what would retire the
+    // user's sidecar to .bak. An empty list IS written when the sidecar is
+    // already the authority (the user removed the last guide, removeAt), so a
+    // removal still sticks.
     if (!diskAuthoritative && entries.empty())
         return false;
 

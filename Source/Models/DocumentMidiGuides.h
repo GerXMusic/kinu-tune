@@ -33,7 +33,9 @@ class MidiGuidePersistence;
  * never read by the UI (SourceGuard_midi-guides enforces it). Persisting the
  * guide as state of the document is R7 (D-360): the store also writes a sidecar
  * through MidiGuidePersistence while the host archive stays unfixed (D-346).
- * Identity/sync is R10.
+ * R11f (D-370) pins one sidecar per track name: the document view no longer
+ * names the file, so a view change adopts the track's guide instead of looking
+ * for a second file. Identity/sync is R10.
  *
  * Axes: the guide is in quarter notes (MidiGuide.h); it becomes host seconds
  * through HostTempoMap, and the canvas turns host into project seconds with the
@@ -135,16 +137,19 @@ public:
     bool removeAt(int index);
     void clear();
 
-    // --- Disk persistence (R7, D-360) -------------------------------------
-    // One sidecar per (document fingerprint, track key). The store owns the
-    // guides, so it is also the only writer: every user mutation persists,
-    // and no path outside this class writes the file.
+    // --- Disk persistence (R7 D-360, R11f D-370) --------------------------
+    // One sidecar per TRACK KEY, and nothing else names the file (D-370). The
+    // store owns the guides, so it is also the only writer: every user mutation
+    // persists, and no path outside this class writes the file.
     //
-    // The document fingerprint comes from the document controller (the ARA
-    // audio source set); an empty key means "no document published", and then
-    // nothing is read or written (clip mode must not invent a file). The key
-    // may arrive after bindTrack (sources are created later than the editor in
-    // some hosts), which is why setDocumentKey() retries the load itself.
+    // A document fingerprint may arrive after bindTrack (sources are created
+    // later than the editor in some hosts), which is why setDocumentKey()
+    // retries the load itself; it is recorded in the file but is NOT part of
+    // its path. A new fingerprint is a new VIEW of the same document, so
+    // setDocumentKey ADOPTS the track's file instead of clearing the list: the
+    // in-memory guides stay and the file's guides replace by id. An empty key
+    // means "no document published", and then nothing is read or written (clip
+    // mode must not invent a file).
     void setPersistence(MidiGuidePersistence* persistenceIn) {
         persistence = persistenceIn;
     }

@@ -14,15 +14,17 @@
 // solo; el contrato nuevo (items, undo del documento) se mide en
 // MidiGuideStoreTrackKeyTests.
 //
-// Aqui se mide lo que NO cambia con R11d, sin ARA (no hay host en un test):
-//  (a) dos sesiones con el mismo nombre de pista dan la MISMA clave, sin
-//      direccion ni documento dentro; el documento vive en el nombre del
-//      fichero (dos documentos con medios distintos no comparten fichero);
+// Aqui se mide lo que NO cambia con R11d, y el contrato de R11f (D-370), sin
+// ARA (no hay host en un test):
+//  (a) dos sesiones con el mismo nombre de pista dan la MISMA clave y la MISMA
+//      ruta, sin direccion ni documento dentro; el documento ya no vive en el
+//      nombre del fichero;
 //  (b) una reapertura lee el sidecar y ve las 111 notas;
 //  (c) los sidecars legacy `doc:<direccion>` de la misma pista se importan una
 //      vez, se consolidan en un solo fichero y quedan como `.bak` (no se borran
 //      datos del usuario);
-//  (d) el mismo nombre de pista en documentos distintos son ficheros distintos;
+//  (d) una ruta por pista: dos pistas de nombre distinto no comparten fichero,
+//      y dos documentos con una pista homonima SI (riesgo aceptado en D-370);
 //  (e) renombrar la pista cambia la clave (riesgo documentado): el fichero
 //      viejo no se borra, simplemente deja de encontrarse.
 // Fixture = la guia Lead real medida en R5 (13,704374 s / 111 notas).
@@ -182,16 +184,20 @@ void testSameTrackNameGivesTheSameKey()
     // Otro nombre es otra pista.
     CHECK(trackKeyForTrack("Lead", 0) != sessionOne);
 
-    // El documento (la huella de sus fuentes) no entra en la clave de pista,
-    // pero si en el nombre del fichero: medios distintos, ficheros distintos.
+    // El documento (la huella de sus fuentes) ni entra en la clave de pista ni
+    // en el nombre del fichero (D-370): la misma pista es UNA ruta en todas las
+    // vistas del documento. Antes de R11f cada vista hasheaba otro fichero y la
+    // guia "saltaba" (R12: segundo cambio -> 0/0).
     const auto documentA =
         midiGuideDisk::projectKeyFromSources({"name:03-Lead.wav"});
     const auto documentB =
         midiGuideDisk::projectKeyFromSources({"name:07-Bgv.wav"});
     CHECK(documentA != documentB);
     const auto keysDirectory = freshDirectory("keys");
-    CHECK(midiGuideDisk::fileFor(keysDirectory, documentA, sessionOne) !=
-          midiGuideDisk::fileFor(keysDirectory, documentB, sessionOne));
+    CHECK(midiGuideDisk::fileFor(keysDirectory, sessionOne) ==
+          midiGuideDisk::fileFor(keysDirectory, sessionTwo));
+    CHECK(midiGuideDisk::fileFor(keysDirectory, sessionOne) !=
+          midiGuideDisk::fileFor(keysDirectory, trackKeyForTrack("Lead", 0)));
 
     // Sin nombre el fingerprint no existe: la clave cae al ordinal.
     const auto nameless = trackKeyForTrack({}, 2);
@@ -275,7 +281,7 @@ void testLegacyDocumentKeyIsImportedAndConsolidated()
     CHECK(loaded.guides.size() == 1); // consolidado por id, sin duplicar
     CHECK(loaded.guides.front().notes.size() ==
           static_cast<std::size_t>(kLeadNotes));
-    CHECK(persistence.fileFor(projectKey, trackKey).existsAsFile());
+    CHECK(persistence.fileFor(trackKey).existsAsFile());
 
     // Solo un sidecar vivo de la pista; los dos legacy, retirados a `.bak`.
     CHECK(liveSidecars(directory) == 2); // el nuevo + el de la otra pista
@@ -291,9 +297,12 @@ void testLegacyDocumentKeyIsImportedAndConsolidated()
     CHECK(backupSidecars(directory) == 2);
 }
 
-// (d) El mismo nombre de pista en documentos con medios distintos son ficheros
-// distintos, aunque la clave de pista sea la misma.
-void testSameTrackNameInAnotherDocumentDoesNotShareTheFile()
+// (d) R11f (D-370): una ruta por pista. Dos pistas de nombre distinto siguen
+// teniendo ficheros distintos; dos documentos con una pista homonima comparten
+// el fichero de esa pista (riesgo aceptado y documentado en D-370: gana el
+// ultimo que escribe y el otro adopta la misma guia, que es justo lo que evita
+// el salto de fichero de R12).
+void testOneFilePerTrackName()
 {
     const auto directory = freshDirectory("tracks");
     MidiGuidePersistence persistence(directory);
@@ -304,8 +313,7 @@ void testSameTrackNameInAnotherDocumentDoesNotShareTheFile()
     const auto leadKey = trackKeyForTrack(kTrackName, 0);
     const auto bgvKey = trackKeyForTrack("v2 - bgv", 1);
     CHECK(leadKey != bgvKey); // otro nombre, otra pista
-    CHECK(persistence.fileFor(projectKey, leadKey) !=
-          persistence.fileFor(projectKey, bgvKey));
+    CHECK(persistence.fileFor(leadKey) != persistence.fileFor(bgvKey));
 
     CHECK(persistence.save(projectKey, leadKey, {leadGuide("lead")}));
     CHECK(persistence.save(projectKey, bgvKey, {leadGuide("bgv")}));
@@ -317,11 +325,18 @@ void testSameTrackNameInAnotherDocumentDoesNotShareTheFile()
     CHECK(lead.guides.front().id == "lead");
     CHECK(bgv.guides.front().id == "bgv");
 
-    // Dos documentos distintos, la misma pista: ficheros distintos.
+    // Dos documentos distintos, la misma pista: la MISMA ruta, y el segundo
+    // documento lee lo que escribio el primero en vez de crear otra.
     const auto otherDocument =
         midiGuideDisk::projectKeyFromSources({"name:other-take.wav"});
-    CHECK(persistence.fileFor(projectKey, key) !=
-          persistence.fileFor(otherDocument, key));
+    const auto leadFile = persistence.fileFor(key);
+    CHECK(leadFile.existsAsFile());
+    const auto fromOtherDocument = persistence.load(otherDocument, key);
+    CHECK(fromOtherDocument.usable());
+    CHECK(fromOtherDocument.guides.size() == 1);
+    CHECK(fromOtherDocument.guides.front().id == "lead");
+    CHECK(persistence.fileFor(key) == leadFile);
+    CHECK(liveSidecars(directory) == 2); // el de lead y el de bgv, sin duplicar
 }
 
 // (e) Renombrar la pista cambia la clave (riesgo documentado en D-367). El
@@ -337,7 +352,7 @@ void testRenamingTheTrackChangesTheKey()
     CHECK(before != after);
 
     CHECK(persistence.save(documentKey, before, {leadGuide()}));
-    const auto oldFile = persistence.fileFor(documentKey, before);
+    const auto oldFile = persistence.fileFor(before);
     CHECK(oldFile.existsAsFile());
 
     const auto renamed = persistence.load(documentKey, after);
@@ -351,7 +366,7 @@ int main()
     testSameTrackNameGivesTheSameKey();
     testReopenReadsTheSidecarWithTheNewKey();
     testLegacyDocumentKeyIsImportedAndConsolidated();
-    testSameTrackNameInAnotherDocumentDoesNotShareTheFile();
+    testOneFilePerTrackName();
     testRenamingTheTrackChangesTheKey();
 
     std::printf("MidiGuideStoreIdentityTests: all checks passed\n");

@@ -13,7 +13,7 @@
 //  (d) proyecto sin guias: no se inventa fichero; quitar la ultima guia si se
 //      escribe (vacio = quiero cero) y no resucita desde la cache;
 //  (e) sidecar corrupto: se rechaza, se avisa y se sigue con la migracion;
-//  (f) dos claves distintas no se mezclan (ni el fichero de la otra se adopta);
+//  (f) dos pistas distintas no se mezclan (ni el fichero de la otra se adopta);
 //  (g) escritura atomica: no queda fichero a medias ni temporal visible.
 // Fixture = la guia Lead real medida en R5 (13,704374 s / 111 notas).
 #include "TestAssert.h"
@@ -34,7 +34,7 @@ constexpr double kGuideHostStart = 13.704374;
 constexpr int kLeadNotes = 111;
 constexpr const char* kProjectKey = "document:lead-stem-hash";
 constexpr const char* kTrackKey = "track:tunex-v2-2";
-constexpr const char* kOtherProjectKey = "document:other-song-hash";
+constexpr const char* kOtherTrackKey = "track:tunex-v2-bgv";
 
 HostTempoMap measuredTempoMap()
 {
@@ -188,7 +188,7 @@ void testLegacyProjectMigratesAndMaterialises()
     migrated.bindTrack(kTrackKey);
     CHECK(migrated.size() == 1);
     CHECK(!migrated.isFromDisk());
-    CHECK(persistence.fileFor(kProjectKey, kTrackKey).existsAsFile());
+    CHECK(persistence.fileFor(kTrackKey).existsAsFile());
 
     // La migracion se materializo: la siguiente apertura ya lee del disco.
     DocumentMidiGuideStore reopened;
@@ -212,16 +212,16 @@ void testNoGuidesWritesNothingAndRemovalSticks()
     empty.observeProjects({&emptyProject});
     empty.bindTrack(kTrackKey);
     CHECK(empty.empty());
-    CHECK(!persistence.fileFor(kProjectKey, kTrackKey).existsAsFile());
+    CHECK(!persistence.fileFor(kTrackKey).existsAsFile());
 
     // Un proyecto guardado sin guias (flush del host) tampoco puede crear un
     // sidecar vacio que luego tape la cache de un proyecto viejo.
     CHECK(!empty.flushPersistence());
-    CHECK(!persistence.fileFor(kProjectKey, kTrackKey).existsAsFile());
+    CHECK(!persistence.fileFor(kTrackKey).existsAsFile());
 
     // Con una guia escrita, quitarla deja un sidecar vacio (autoritativo).
     CHECK(empty.syncLive({leadGuide()}));
-    CHECK(persistence.fileFor(kProjectKey, kTrackKey).existsAsFile());
+    CHECK(persistence.fileFor(kTrackKey).existsAsFile());
     CHECK(empty.removeAt(0));
     CHECK(empty.empty());
 
@@ -240,7 +240,7 @@ void testNoGuidesWritesNothingAndRemovalSticks()
 void testCorruptSidecarIsRejectedAndWarns()
 {
     MidiGuidePersistence persistence(freshDirectory("e"));
-    const auto file = persistence.fileFor(kProjectKey, kTrackKey);
+    const auto file = persistence.fileFor(kTrackKey);
     file.getParentDirectory().createDirectory();
     file.replaceWithText("{ esto no es json");
 
@@ -268,12 +268,14 @@ void testCorruptSidecarIsRejectedAndWarns()
     CHECK(future.status == MidiGuideLoadResult::Status::rejected);
 }
 
-// (f) Dos claves distintas (dos proyectos, o dos pistas) no se mezclan.
+// (f) Dos pistas distintas no se mezclan. Desde R11f (D-370) el fichero es por
+// pista y solo por pista: la vista del documento NO entra en la ruta, asi que
+// lo que separa dos pistas es la clave de pista, no el projectKey.
 void testTwoKeysDoNotMix()
 {
     MidiGuidePersistence persistence(freshDirectory("f"));
-    const auto mine = persistence.fileFor(kProjectKey, kTrackKey);
-    const auto other = persistence.fileFor(kOtherProjectKey, kTrackKey);
+    const auto mine = persistence.fileFor(kTrackKey);
+    const auto other = persistence.fileFor(kOtherTrackKey);
     CHECK(mine != other);
 
     GuideSource otherGuide;
@@ -282,17 +284,17 @@ void testTwoKeysDoNotMix()
     otherGuide.notes.push_back({0.0, 1.0, 60.0f, 0.5f});
 
     CHECK(persistence.save(kProjectKey, kTrackKey, {leadGuide()}));
-    CHECK(persistence.save(kOtherProjectKey, kTrackKey, {otherGuide}));
+    CHECK(persistence.save(kProjectKey, kOtherTrackKey, {otherGuide}));
 
     const auto mineLoaded = persistence.load(kProjectKey, kTrackKey);
-    const auto otherLoaded = persistence.load(kOtherProjectKey, kTrackKey);
+    const auto otherLoaded = persistence.load(kProjectKey, kOtherTrackKey);
     CHECK(mineLoaded.guides.size() == 1);
     CHECK(otherLoaded.guides.size() == 1);
     CHECK(mineLoaded.guides.front().id == "reaper:lead");
     CHECK(otherLoaded.guides.front().id == "reaper:other");
 
-    // El fichero del otro proyecto, copiado con el nombre de este, se rechaza:
-    // las claves del contenido no son las que se preguntan.
+    // El fichero de la otra pista, copiado con el nombre de esta, se rechaza:
+    // la clave de pista que lleva dentro no es la que se pregunta.
     CHECK(other.copyFileTo(mine));
     const auto borrowed = persistence.load(kProjectKey, kTrackKey);
     CHECK(borrowed.status == MidiGuideLoadResult::Status::rejected);
@@ -302,15 +304,15 @@ void testTwoKeysDoNotMix()
     store.setPersistence(&persistence);
     store.setDocumentKey(kProjectKey);
     store.bindTrack(kTrackKey);
-    CHECK(store.empty()); // no adopta la guia del otro proyecto
-    CHECK(store.takePersistenceWarning().containsIgnoreCase("another project"));
+    CHECK(store.empty()); // no adopta la guia de la otra pista
+    CHECK(store.takePersistenceWarning().containsIgnoreCase("another track"));
 }
 
 // (g) Escritura atomica: nada a medias, y un temporal huerfano se ignora.
 void testAtomicWriteLeavesNoHalfFile()
 {
     MidiGuidePersistence persistence(freshDirectory("g"));
-    const auto file = persistence.fileFor(kProjectKey, kTrackKey);
+    const auto file = persistence.fileFor(kTrackKey);
     const auto directory = file.getParentDirectory();
 
     CHECK(persistence.save(kProjectKey, kTrackKey, {leadGuide()}));
