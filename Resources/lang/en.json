@@ -198,6 +198,7 @@
   "status.render_none": "Not rendered yet",
   "notice.batch_rejected": "The batch was not applied: it would collapse or overlap a note.",
   "notice.batch_item_bound": "That edit works on one item: select notes of a single item.",
+  "notice.batch_applied": "Applied to {n} notes across {items} items · undone in one step.",
   "quantize.pitch_center": "Pitch Center",
   "quantize.pitch_drift": "Pitch Drift",
   "quantize.snap_to_scale": "Snap to Scale",

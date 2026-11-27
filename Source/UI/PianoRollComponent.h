@@ -13,6 +13,7 @@
 #include "../Utils/Localization.h"
 #include "../Utils/BasePitchPreview.h"
 #include "../Undo/UndoActions.h"
+#include "../Undo/DocumentBatchAction.h"
 #include "Commands.h"
 #include "GuiTypes.h"
 #include "PianoRoll/BoxSelector.h"
@@ -648,6 +649,9 @@ private:
   std::vector<Project *> inspectorEditProjects;
   std::vector<TransformParams> inspectorEditOldParams;
   std::vector<float> inspectorEditSourceMidi;
+  // N4 (D-344): the exact values of the notes of a batch inspector gesture when
+  // the slider was grabbed. Undo/redo is one step built from this record.
+  std::vector<documentNoteBatch::TrackedState> inspectorBatchBefore;
   float correctionTargetFor(float sourceMidi) const;
   float correctionTargetFor(const Project &owner, float sourceMidi) const;
   // The item of the note at `index` of an inspector gesture (N3: a batch one
@@ -656,8 +660,22 @@ private:
   // N3: the inspector targets of the whole track and the batch plumbing they
   // share with the note commands.
   std::vector<documentNoteBatch::Target> documentBatchTargets() const;
-  bool applyBatchResult(const documentNoteBatch::Result &result);
+  // N4 (D-344): runs one batch operation over the document selection and
+  // registers the whole batch as ONE undo step (DocumentBatchAction). The
+  // before-state is captured for every note of every item the selection
+  // reaches, so a quantize that moves a shared boundary is undone too.
+  bool applyDocumentBatch(
+      const juce::String &undoName,
+      const std::function<documentNoteBatch::Result(
+          const std::vector<documentNoteBatch::Target> &)> &operation);
   void notifyBatchProjects(const std::vector<Project *> &projects);
+  // N4: the non-modal message that says what a batch applied and in how many
+  // items (and that it is undone in one step).
+  void announceBatchApplied(int notes, int items);
+  // The items (windows) the current document selection reaches, counted by
+  // region key: three cuts of one take are three items of the track.
+  int documentBatchItemCount(
+      const std::vector<documentNoteBatch::Target> &targets) const;
   bool absoluteDragSnap = true; // Pitch Snap Mode Absolute by default
   // The first click of the current (double-)click landed on a segment. The
   // double-click splits it, after which the double-click point may hit no

@@ -56,6 +56,9 @@ set(PITCHNET_TEST_SOURCES
     # N3 (D-343): la edicion en lote, una operacion sobre la seleccion aplicada
     # en la toma de cada nota, igual que nota a nota.
     BatchEditTests.cpp
+    # N4 (D-344): un gesto en lote es UN paso de undo del documento (undo/redo
+    # exactos, vecinas del cuantizar incluidas, y el mensaje de la UI).
+    BatchUndoTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
@@ -117,6 +120,10 @@ target_link_libraries(TempoGridTests PRIVATE pitchnet_ui)
 
 # R4: la regla de persistencia del tempo vive en Source/UI (pitchnet_ui).
 target_link_libraries(ProjectTempoPersistenceTests PRIVATE pitchnet_ui)
+
+# N4: el gesto del inspector y el aviso no modal son del editor, asi que el test
+# maneja el PianoRollComponent real (pitchnet_ui).
+target_link_libraries(BatchUndoTests PRIVATE pitchnet_ui)
 
 # TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
 target_compile_definitions(TimingAudioTests PRIVATE
