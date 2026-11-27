@@ -9,47 +9,49 @@
 
 /**
  * Stable, persistent identity of one ARA track for the document's guide store
- * (R5d D-358, reworked in R11b D-365).
+ * (R5d D-358, reworked in R11b D-365 and in R11d D-367).
  *
- * The key used to be the ADDRESS of the ARA::PlugIn::RegionSequence, and then
- * the address of the ARA::PlugIn::Document plus the track name. The sequence
- * address survived nothing (R5c), and the document address survives neither
- * closing nor reopening the project: measured in R11 with the build 6EF011EA,
- * `doc:75e02210` became `doc:75dd3060` (no save) and `doc:75c709f0` (with
- * save), so the sidecar was written under a key that never came back: 6
- * orphan files, `guide_count=0`.
+ * The key used to be the ADDRESS of the ARA::PlugIn::RegionSequence, then the
+ * address of the ARA::PlugIn::Document plus the track name, and then the
+ * fingerprint of the track's audio sources plus the name. Each of the first two
+ * survived nothing (R5c, R11). The third survived closing and reopening the
+ * project (G-E3 PASS in R11c) but NOT a change in the track's item list: moving
+ * the four items that were not the target to another track took the key from
+ * `src:7221217c41993ac6|name:v2 - stem` to `src:782bf3636937c799|name:v2 - stem`
+ * and the store went to `guide_count=0` / `ghost_count=0` (G-B2 FAIL). Any
+ * added, removed or moved audio on the track did the same, which contradicts
+ * SCOPE=A: the guide belongs to the whole track, all its items and sources.
  *
- * What survives closing and reopening is what ARA hands over as DATA, never as
- * an object identity:
- *  - the audio sources of the track, named by the host (the media the project
- *    restores). The identity is the source NAME ARA exposes, not its
- *    persistent ID: measured in the same session, `projectKeyFromSources()`
- *    built from the persistent IDs produced three different fingerprints
- *    (`7fe16568...`, `b22f0ae4...`, `2616d898...`) for the same media. The
- *    persistent ID is a reconnection token, not a file identity.
- *  - the track name, which the host restores with the project.
+ * The track key is therefore the track NAME alone - the datum the host restores
+ * with the project and shows to the user:
  *
- * The key never contains an address, a pointer, or an ordinal when a name is
- * available: `src:<fingerprint>|name:<track name>`. The ordinal is the last
- * resort for hosts that send neither a name nor sources, and it is the
- * position in ARADocument::getRegionSequences() - documented, not preferred.
+ *     name:<track name>
  *
- * Deliberate risks (D-365):
- *  - moving the project folder or renaming the media changes the fingerprint,
- *    so the sidecar is no longer found (the guide is kept on disk; nothing is
- *    deleted).
- *  - renaming the track changes the key: same consequence, documented.
- *  - two tracks of one document with the same name and the same sources are
- *    not distinguished. SCOPE=A gives one track per plug-in instance, so this
- *    is the same accepted limitation as D-358.
+ * The item list, the audio sources and the position in the document play no
+ * part. The document fingerprint (MidiGuidePersistence's projectKey, still
+ * derived from the document's source names) stays in the FILE NAME, so two
+ * documents with the same media are still two files.
+ *
+ * Fallbacks and risks (D-367):
+ *  - a track with no name falls back to `ordinal:<n>`, its position in
+ *    ARADocument::getRegionSequences(). Documented, not preferred: reordering
+ *    nameless tracks renames the key.
+ *  - renaming the track changes the key: the old sidecar is not deleted, it
+ *    simply stops being found (same as D-365).
+ *  - two tracks with the same name are one key. Inside one document the file
+ *    name still separates them only when their media differ, and the persistence
+ *    refuses to guess between several candidates (MidiGuidePersistence::load).
+ *    Two tracks of one document with the same name AND the same media are not
+ *    distinguished; SCOPE=A gives one track per plug-in instance, the same
+ *    accepted limitation as D-358/D-365.
  */
 
-// Deterministic fingerprint of the track's audio sources from their stable
-// identities (the source names ARA exposes). Order- and duplicate-independent;
-// an empty input gives an empty string.
+// Deterministic fingerprint of the document's audio sources from their stable
+// identities (the source names ARA exposes). Not part of the track key; it is
+// the document half of the sidecar name. Order- and duplicate-independent; an
+// empty input gives an empty string.
 juce::String stableSourceFingerprint(std::vector<juce::String> sourceIdentities);
 
-// Key of one track: sources first, then the name. Never an address.
-juce::String trackKeyFromSources(std::vector<juce::String> sourceIdentities,
-                                 const juce::String &trackName,
-                                 int trackOrdinal);
+// Key of one track: its name, or the ordinal when the host sends none. Never an
+// address, never the sources, never the number of items.
+juce::String trackKeyForTrack(const juce::String &trackName, int trackOrdinal);

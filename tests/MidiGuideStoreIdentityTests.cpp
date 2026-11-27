@@ -1,4 +1,4 @@
-// R11b (guia MIDI, D-365): identidad persistente de la clave del sidecar.
+// R11b (guia MIDI, D-365) / R11d (D-367): identidad persistente del sidecar.
 //
 // R11 midio con la build 6EF011EA que tras guardar y reabrir el proyecto el
 // store arrancaba con `guide_count=0` y `ghost_count=0` (esperado 1 y 111).
@@ -8,15 +8,21 @@
 // cada sesion (`7fe16568...`, `b22f0ae4...`, `2616d898...` para el mismo
 // material): cada sesion escribia un sidecar con una clave que no volvia.
 //
-// Aqui se mide el contrato nuevo, sin ARA (no hay host en un test):
-//  (a) la clave depende solo de las fuentes (nombre que da ARA) y del nombre
-//      de pista: dos sesiones/documentos con los mismos datos dan la MISMA
-//      clave, y el orden de las fuentes no cuenta;
-//  (b) una reapertura lee el sidecar con la clave nueva y ve las 111 notas;
+// R11b lo arreglo con la huella de las fuentes de la pista + el nombre, pero
+// R11c midio que esa huella ES la lista de items: mover, anadir o quitar audio
+// renombraba el sidecar (G-B2 FAIL). R11d deja la clave de pista en el nombre
+// solo; el contrato nuevo (items, undo del documento) se mide en
+// MidiGuideStoreTrackKeyTests.
+//
+// Aqui se mide lo que NO cambia con R11d, sin ARA (no hay host en un test):
+//  (a) dos sesiones con el mismo nombre de pista dan la MISMA clave, sin
+//      direccion ni documento dentro; el documento vive en el nombre del
+//      fichero (dos documentos con medios distintos no comparten fichero);
+//  (b) una reapertura lee el sidecar y ve las 111 notas;
 //  (c) los sidecars legacy `doc:<direccion>` de la misma pista se importan una
 //      vez, se consolidan en un solo fichero y quedan como `.bak` (no se borran
 //      datos del usuario);
-//  (d) dos pistas con fuentes distintas no se mezclan;
+//  (d) el mismo nombre de pista en documentos distintos son ficheros distintos;
 //  (e) renombrar la pista cambia la clave (riesgo documentado): el fichero
 //      viejo no se borra, simplemente deja de encontrarse.
 // Fixture = la guia Lead real medida en R5 (13,704374 s / 111 notas).
@@ -158,41 +164,39 @@ int backupSidecars(const juce::File& directory)
     return directory.getNumberOfChildFiles(juce::File::findFiles, "*.bak");
 }
 
-// (a) La clave es la huella de las fuentes + el nombre de pista. No hay
-// direccion, ni documento, ni puntero que pueda cambiarla entre sesiones.
-void testSameSourcesAndNameGiveTheSameKey()
+// (a) La clave es el nombre de pista. No hay direccion, ni documento, ni
+// huella de fuentes, ni ordinal que pueda cambiarla entre sesiones; el
+// documento se separa en el NOMBRE DEL FICHERO.
+void testSameTrackNameGivesTheSameKey()
 {
-    const std::vector<juce::String> sources{"name:03-Lead.wav",
-                                            "name:v2 - stem.wav"};
-    const auto sessionOne = trackKeyFromSources(sources, kTrackName, 0);
-    const auto sessionTwo = trackKeyFromSources(sources, kTrackName, 2);
+    const auto sessionOne = trackKeyForTrack(kTrackName, 0);
+    const auto sessionTwo = trackKeyForTrack(kTrackName, 2);
 
     // El ordinal no entra cuando hay nombre: la posicion en la lista del host
     // puede cambiar (reordenar items) sin renombrar el sidecar.
     CHECK(sessionOne == sessionTwo);
-    CHECK(sessionOne.startsWith("src:"));
-    CHECK(sessionOne.contains("|name:v2 - stem"));
+    CHECK(sessionOne == juce::String("name:") + kTrackName);
     CHECK(!sessionOne.contains("doc:"));
     CHECK(!sessionOne.contains("0x"));
 
-    // El orden en que el host entrega las fuentes no importa.
-    CHECK(trackKeyFromSources({"name:v2 - stem.wav", "name:03-Lead.wav"},
-                              kTrackName, 0) == sessionOne);
-    // Los duplicados tampoco (un item partido comparte la fuente).
-    CHECK(trackKeyFromSources({"name:03-Lead.wav", "name:v2 - stem.wav",
-                               "name:03-Lead.wav"},
-                              kTrackName, 0) == sessionOne);
+    // Otro nombre es otra pista.
+    CHECK(trackKeyForTrack("Lead", 0) != sessionOne);
 
-    // Otras fuentes u otro nombre son otra pista.
-    CHECK(trackKeyFromSources({"name:other-source.wav"}, kTrackName, 0) !=
-          sessionOne);
-    CHECK(trackKeyFromSources(sources, "Lead", 0) != sessionOne);
+    // El documento (la huella de sus fuentes) no entra en la clave de pista,
+    // pero si en el nombre del fichero: medios distintos, ficheros distintos.
+    const auto documentA =
+        midiGuideDisk::projectKeyFromSources({"name:03-Lead.wav"});
+    const auto documentB =
+        midiGuideDisk::projectKeyFromSources({"name:07-Bgv.wav"});
+    CHECK(documentA != documentB);
+    const auto keysDirectory = freshDirectory("keys");
+    CHECK(midiGuideDisk::fileFor(keysDirectory, documentA, sessionOne) !=
+          midiGuideDisk::fileFor(keysDirectory, documentB, sessionOne));
 
-    // Sin fuentes el fingerprint es vacio pero la clave sigue sin direccion.
-    const auto nameless = trackKeyFromSources({}, "", 2);
-    CHECK(nameless.startsWith("src:none"));
-    CHECK(nameless.contains("|ordinal:2"));
-    CHECK(nameless != trackKeyFromSources({}, "", 3));
+    // Sin nombre el fingerprint no existe: la clave cae al ordinal.
+    const auto nameless = trackKeyForTrack({}, 2);
+    CHECK(nameless == "ordinal:2");
+    CHECK(nameless != trackKeyForTrack({}, 3));
 }
 
 // (b) La reapertura es un store y un MidiGuidePersistence nuevos sobre el
@@ -204,7 +208,7 @@ void testReopenReadsTheSidecarWithTheNewKey()
     const std::vector<juce::String> sources{"name:03-Lead.wav",
                                             "name:v2 - stem.wav"};
     const auto projectKey = midiGuideDisk::projectKeyFromSources(sources);
-    const auto trackKey = trackKeyFromSources(sources, kTrackName, 0);
+    const auto trackKey = trackKeyForTrack(kTrackName, 0);
     CHECK(projectKey.isNotEmpty());
 
     {
@@ -225,9 +229,7 @@ void testReopenReadsTheSidecarWithTheNewKey()
     reopened.setDocumentKey(
         midiGuideDisk::projectKeyFromSources({"name:v2 - stem.wav",
                                               "name:03-Lead.wav"}));
-    reopened.bindTrack(
-        trackKeyFromSources({"name:v2 - stem.wav", "name:03-Lead.wav"},
-                            kTrackName, 0));
+    reopened.bindTrack(trackKeyForTrack(kTrackName, 0));
 
     CHECK(reopened.size() == 1);
     CHECK(reopened.isFromDisk());
@@ -251,7 +253,7 @@ void testLegacyDocumentKeyIsImportedAndConsolidated()
     const std::vector<juce::String> sources{"name:03-Lead.wav",
                                             "name:v2 - stem.wav"};
     const auto projectKey = midiGuideDisk::projectKeyFromSources(sources);
-    const auto trackKey = trackKeyFromSources(sources, kTrackName, 0);
+    const auto trackKey = trackKeyForTrack(kTrackName, 0);
 
     // Tres sesiones de R11: mismo material, tres projectKey y tres direcciones.
     const auto legacyOne =
@@ -289,18 +291,19 @@ void testLegacyDocumentKeyIsImportedAndConsolidated()
     CHECK(backupSidecars(directory) == 2);
 }
 
-// (d) Dos pistas con fuentes distintas no comparten fichero ni guia.
-void testTwoTracksWithDifferentSourcesDoNotMix()
+// (d) El mismo nombre de pista en documentos con medios distintos son ficheros
+// distintos, aunque la clave de pista sea la misma.
+void testSameTrackNameInAnotherDocumentDoesNotShareTheFile()
 {
     const auto directory = freshDirectory("tracks");
     MidiGuidePersistence persistence(directory);
-    const std::vector<juce::String> leadSources{"name:03-Lead.wav"};
-    const std::vector<juce::String> bgvSources{"name:07-Bgv.wav"};
+    const auto key = trackKeyForTrack(kTrackName, 0);
+
     const auto projectKey = midiGuideDisk::projectKeyFromSources(
         {"name:03-Lead.wav", "name:07-Bgv.wav"});
-    const auto leadKey = trackKeyFromSources(leadSources, kTrackName, 0);
-    const auto bgvKey = trackKeyFromSources(bgvSources, kTrackName, 1);
-    CHECK(leadKey != bgvKey);
+    const auto leadKey = trackKeyForTrack(kTrackName, 0);
+    const auto bgvKey = trackKeyForTrack("v2 - bgv", 1);
+    CHECK(leadKey != bgvKey); // otro nombre, otra pista
     CHECK(persistence.fileFor(projectKey, leadKey) !=
           persistence.fileFor(projectKey, bgvKey));
 
@@ -313,25 +316,31 @@ void testTwoTracksWithDifferentSourcesDoNotMix()
     CHECK(lead.guides.size() == 1 && bgv.guides.size() == 1);
     CHECK(lead.guides.front().id == "lead");
     CHECK(bgv.guides.front().id == "bgv");
+
+    // Dos documentos distintos, la misma pista: ficheros distintos.
+    const auto otherDocument =
+        midiGuideDisk::projectKeyFromSources({"name:other-take.wav"});
+    CHECK(persistence.fileFor(projectKey, key) !=
+          persistence.fileFor(otherDocument, key));
 }
 
-// (e) Renombrar la pista cambia la clave (riesgo documentado en D-365). El
+// (e) Renombrar la pista cambia la clave (riesgo documentado en D-367). El
 // fichero anterior NO se borra: simplemente deja de encontrarse.
 void testRenamingTheTrackChangesTheKey()
 {
     const auto directory = freshDirectory("rename");
     MidiGuidePersistence persistence(directory);
-    const std::vector<juce::String> sources{"name:03-Lead.wav"};
-    const auto projectKey = midiGuideDisk::projectKeyFromSources(sources);
-    const auto before = trackKeyFromSources(sources, "Lead", 0);
-    const auto after = trackKeyFromSources(sources, "Lead Lead", 0);
+    const auto documentKey =
+        midiGuideDisk::projectKeyFromSources({"name:03-Lead.wav"});
+    const auto before = trackKeyForTrack("Lead", 0);
+    const auto after = trackKeyForTrack("Lead Lead", 0);
     CHECK(before != after);
 
-    CHECK(persistence.save(projectKey, before, {leadGuide()}));
-    const auto oldFile = persistence.fileFor(projectKey, before);
+    CHECK(persistence.save(documentKey, before, {leadGuide()}));
+    const auto oldFile = persistence.fileFor(documentKey, before);
     CHECK(oldFile.existsAsFile());
 
-    const auto renamed = persistence.load(projectKey, after);
+    const auto renamed = persistence.load(documentKey, after);
     CHECK(!renamed.found());
     CHECK(oldFile.existsAsFile()); // los datos siguen en disco
 }
@@ -339,10 +348,10 @@ void testRenamingTheTrackChangesTheKey()
 
 int main()
 {
-    testSameSourcesAndNameGiveTheSameKey();
+    testSameTrackNameGivesTheSameKey();
     testReopenReadsTheSidecarWithTheNewKey();
     testLegacyDocumentKeyIsImportedAndConsolidated();
-    testTwoTracksWithDifferentSourcesDoNotMix();
+    testSameTrackNameInAnotherDocumentDoesNotShareTheFile();
     testRenamingTheTrackChangesTheKey();
 
     std::printf("MidiGuideStoreIdentityTests: all checks passed\n");

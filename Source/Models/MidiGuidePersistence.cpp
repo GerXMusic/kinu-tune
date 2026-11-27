@@ -194,20 +194,28 @@ ParsedGuideFile parseGuideFile(const juce::File &file)
     return parsed;
 }
 
-// ---- R11b (D-365): legacy sidecar migration --------------------------
+// ---- R11b (D-365) / R11d (D-367): legacy sidecar migration ------------
 //
 // Before R11b the track key started with "doc:" and carried the address of
-// the ARADocument, so every session wrote a NEW file under a NEW key. Those
-// files are the user's guides; they are not deleted. A legacy file is adopted
-// when its track key names the same track (the name after "|name:", or the
-// same ordinal when the host never sent a name), it is rewritten under the new
-// key and the legacy file is renamed to "<file>.bak" so exactly one live file
-// remains and the old bytes are still there for the user.
+// the ARADocument, so every session wrote a NEW file under a NEW key; before
+// R11d it started with "src:" and carried the fingerprint of the track's live
+// items, so moving or adding one item did the same. Those files are the user's
+// guides; they are not deleted. A file is adopted when its track key names the
+// same track (the name after "name:", or the same ordinal when the host never
+// sent a name), it is rewritten under the canonical key and the superseded
+// file is renamed to "<file>.bak" so the old bytes stay for the user.
 
 constexpr const char *kLegacyKeyPrefix = "doc:";
 
+// Name of the track a key belongs to. Accepts the canonical form ("name:X")
+// and the two forms older builds wrote ("doc:<address>|name:X",
+// "src:<fingerprint>|name:X"). Empty for a key that carries no name.
 juce::String namePartOfTrackKey(const juce::String &trackKey)
 {
+    const juce::String prefix("name:");
+    if (trackKey.startsWith(prefix))
+        return trackKey.substring(prefix.length());
+
     const juce::String marker("|name:");
     const int at = trackKey.lastIndexOf(marker);
     if (at < 0)
@@ -217,6 +225,10 @@ juce::String namePartOfTrackKey(const juce::String &trackKey)
 
 juce::String ordinalPartOfTrackKey(const juce::String &trackKey)
 {
+    const juce::String prefix("ordinal:");
+    if (trackKey.startsWith(prefix))
+        return trackKey.substring(prefix.length());
+
     const juce::String marker("|ordinal:");
     const int at = trackKey.lastIndexOf(marker);
     if (at < 0)
@@ -224,16 +236,23 @@ juce::String ordinalPartOfTrackKey(const juce::String &trackKey)
     return trackKey.substring(at + marker.length());
 }
 
-bool legacyKeyIsSameTrack(const juce::String &legacyKey,
-                          const juce::String &wantedKey)
+// Forms no current build writes: safe to retire once consolidated. A canonical
+// key of another document is NOT retired here - it may still be the live file
+// of that document (D-367).
+bool keyIsSupersededForm(const juce::String &trackKey)
 {
-    if (!legacyKey.startsWith(kLegacyKeyPrefix))
-        return false;
+    return trackKey.startsWith(kLegacyKeyPrefix) ||
+           trackKey.contains("|name:") || trackKey.contains("|ordinal:");
+}
+
+bool keyNamesSameTrack(const juce::String &candidateKey,
+                       const juce::String &wantedKey)
+{
     const auto wantedName = namePartOfTrackKey(wantedKey);
     if (wantedName.isNotEmpty())
-        return namePartOfTrackKey(legacyKey) == wantedName;
-    return namePartOfTrackKey(legacyKey).isEmpty() &&
-           ordinalPartOfTrackKey(legacyKey) ==
+        return namePartOfTrackKey(candidateKey) == wantedName;
+    return namePartOfTrackKey(candidateKey).isEmpty() &&
+           ordinalPartOfTrackKey(candidateKey) ==
                ordinalPartOfTrackKey(wantedKey);
 }
 
@@ -301,9 +320,11 @@ juce::File defaultDirectory()
 
 juce::String projectKeyFromSources(std::vector<juce::String> sourceIds)
 {
-    // Same fingerprint as the track key's first half (TrackIdentity.h). It is
+    // The document half of the sidecar name and key (TrackIdentity.h). It is
     // fed the stable source identities - the host's source names - not the
-    // persistent IDs: measured in R11, the IDs changed on every reopen.
+    // persistent IDs: measured in R11, the IDs changed on every reopen. Since
+    // R11d (D-367) the TRACK half is only the track name, so this fingerprint
+    // no longer follows the items of a track.
     return stableSourceFingerprint(std::move(sourceIds));
 }
 
@@ -413,11 +434,14 @@ bool MidiGuidePersistence::writeGuides(const juce::String &projectKey,
     return true;
 }
 
-// R11b (D-365): one live file per track. After the new key has been written,
-// every legacy sidecar of the same track is renamed to "<file>.bak": the user's
-// bytes stay on disk and no session can leave a second live key behind.
-void MidiGuidePersistence::retireLegacyFiles(const juce::String &trackKey,
-                                             const juce::File &keep) const
+// R11b (D-365) / R11d (D-367): one live file per track. After the new key has
+// been written, every sidecar of the same track written in a superseded key
+// form ("doc:" or "src:...|name:") is renamed to "<file>.bak": the user's bytes
+// stay on disk and no session can leave a second live key behind. A canonical
+// key that belongs to another document view is left alone - it may still be the
+// live file of that view.
+void MidiGuidePersistence::retireSupersededFiles(const juce::String &trackKey,
+                                                 const juce::File &keep) const
 {
     const auto directory = getDirectory();
     for (const auto &file : guideFilesIn(directory))
@@ -427,7 +451,9 @@ void MidiGuidePersistence::retireLegacyFiles(const juce::String &trackKey,
         const auto parsed = parseGuideFile(file);
         if (!parsed.ok)
             continue; // not ours: never touch a file we cannot read
-        if (!legacyKeyIsSameTrack(parsed.trackKey, trackKey))
+        if (!keyIsSupersededForm(parsed.trackKey))
+            continue;
+        if (!keyNamesSameTrack(parsed.trackKey, trackKey))
             continue;
         file.moveFileTo(backupPathFor(file));
     }
@@ -440,7 +466,7 @@ bool MidiGuidePersistence::save(const juce::String &projectKey,
 {
     if (!writeGuides(projectKey, trackKey, guides, error))
         return false;
-    retireLegacyFiles(trackKey, fileFor(projectKey, trackKey));
+    retireSupersededFiles(trackKey, fileFor(projectKey, trackKey));
     return true;
 }
 
@@ -478,13 +504,21 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
         return result;
     }
 
-    // R11b (D-365): no file for the new key. Adopt the legacy "doc:" sidecars
-    // of this same track, rewrite them under the stable key and retire the old
-    // files. This is the one-time migration of the guides written by the
-    // builds up to R11; it runs only when the new key has no file, so it can
-    // never overwrite a guide the stable key already owns.
-    std::vector<GuideSource> adopted;
-    bool adoptedAny = false;
+    // R11b (D-365) / R11d (D-367): no file for the key. Adopt the sidecars of
+    // this same track - the "doc:" files of R11 and earlier and the
+    // "src:...|name:" files of R11b/R11c, always; a canonical file of another
+    // document view only when it is the single candidate, because with several
+    // there is no way to tell which one is this document's. This is the
+    // one-time migration of the guides written by older builds; it runs only
+    // when the key has no file, so it can never overwrite a guide the key
+    // already owns.
+    struct Candidate
+    {
+        juce::File file;
+        std::vector<GuideSource> guides;
+    };
+    std::vector<Candidate> superseded;
+    std::vector<Candidate> canonical;
     for (const auto &file : guideFilesIn(getDirectory()))
     {
         if (file == target)
@@ -492,14 +526,25 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
         const auto parsed = parseGuideFile(file);
         if (!parsed.ok)
             continue;
-        if (!legacyKeyIsSameTrack(parsed.trackKey, trackKey))
+        if (!keyNamesSameTrack(parsed.trackKey, trackKey))
             continue;
-        mergeGuides(adopted, parsed.guides);
-        adoptedAny = true;
+        auto &into = keyIsSupersededForm(parsed.trackKey) ? superseded
+                                                          : canonical;
+        into.push_back({file, parsed.guides});
     }
 
-    if (!adoptedAny)
+    std::vector<const Candidate *> chosen;
+    for (const auto &candidate : superseded)
+        chosen.push_back(&candidate);
+    if (superseded.empty() && canonical.size() == 1)
+        chosen.push_back(&canonical.front());
+
+    if (chosen.empty())
         return result; // Status::none: the caller migrates from the Project cache
+
+    std::vector<GuideSource> adopted;
+    for (const auto *candidate : chosen)
+        mergeGuides(adopted, candidate->guides);
 
     juce::String error;
     if (!writeGuides(projectKey, trackKey, adopted, &error))
@@ -508,7 +553,8 @@ MidiGuideLoadResult MidiGuidePersistence::load(const juce::String &projectKey,
         result.message = "MIDI guide legacy migration failed: " + error;
         return result;
     }
-    retireLegacyFiles(trackKey, target);
+    for (const auto *candidate : chosen)
+        candidate->file.moveFileTo(backupPathFor(candidate->file));
 
     result.status = MidiGuideLoadResult::Status::loaded;
     result.guides = std::move(adopted);

@@ -21,22 +21,26 @@
  * a SIDECAR file next to the user's application data, and the host archive
  * keeps carrying the old `midiGuides` copy for compatibility (one version).
  *
- * Identity (R11b, D-365): ARA exposes no host project path (no .rpp name, no
- * project folder), and it exposes no persistent file path either: measured in
- * R11, the audio source persistent IDs changed on every reopen and produced
- * three different document fingerprints for the same media. What survives is
- * the source NAME the host restores with the project. The document key is the
- * fingerprint of those names and the track key is Models/TrackIdentity's
- * `src:<fingerprint>|name:<track>`; no address, pointer or ordinal of the
- * session is part of either. Two projects with different media never share a
- * file; two tracks of one project never share a file.
+ * Identity (R11b D-365, R11d D-367): ARA exposes no host project path (no .rpp
+ * name, no project folder), and it exposes no persistent file path either:
+ * measured in R11, the audio source persistent IDs changed on every reopen and
+ * produced three different document fingerprints for the same media. What
+ * survives is the source NAME the host restores with the project. The document
+ * key is the fingerprint of those names and the track key is the track NAME
+ * alone (Models/TrackIdentity.h); no address, pointer or ordinal of the session
+ * is part of either, and neither is the track's item list: adding, removing or
+ * moving items must not rename the sidecar (SCOPE=A, G-B2 in R11c). Two
+ * projects with different media never share a file; two tracks of one project
+ * never share a file.
  *
  * Legacy migration: a sidecar written before R11b carries a track key that
- * starts with "doc:" (the ARADocument address). When the stable key has no
- * file, load() adopts those files for the same track (same name after
- * "|name:"), merges them by guide id, rewrites them under the stable key and
- * renames each legacy file to "<file>.bak". Nothing is deleted; the bytes stay
- * for the user and only one live file per track remains.
+ * starts with "doc:" (the ARADocument address) and one written before R11d
+ * starts with "src:" (the fingerprint of the track's live items). When the
+ * current key has no file, load() adopts those files for the same track (same
+ * name after "name:", or the same ordinal), merges them by guide id, rewrites
+ * them under the current key and renames each superseded file to "<file>.bak".
+ * Nothing is deleted; the bytes stay for the user and only one live file per
+ * track remains.
  *
  * Write: temporary sibling + atomic replace (juce::TemporaryFile ->
  * replaceFileIn), so a reader never sees half a file and a crash leaves the
@@ -95,16 +99,19 @@ public:
 
     // Atomic replace. Returns false (and fills error when given) if the file
     // could not be written; the previous copy is left untouched. On success
-    // the legacy "doc:" sidecars of the same track are retired to .bak, so a
-    // track never ends up with two live keys (D-365).
+    // the superseded ("doc:" / "src:...|name:") sidecars of the same track are
+    // retired to .bak, so a track never ends up with two live keys (D-365).
     bool save(const juce::String &projectKey, const juce::String &trackKey,
               const std::vector<GuideSource> &guides,
               juce::String *error = nullptr);
 
     // Reads the file for the key. When that file does not exist yet, adopts
-    // the legacy "doc:" sidecars of the same track, materialises them under
-    // the key and returns them (status loaded), so the first reopen after the
-    // R11b fix recovers the guide instead of starting empty.
+    // the sidecars of the same track written in a superseded form ("doc:" and
+    // "src:...|name:"), materialises them under the key and returns them
+    // (status loaded), so a project opened after a key change - or after the
+    // R11d fix - recovers the guide instead of starting empty. A canonical
+    // file of another document view is only adopted when it is the single
+    // candidate (D-367).
     MidiGuideLoadResult load(const juce::String &projectKey,
                              const juce::String &trackKey) const;
 
@@ -113,8 +120,8 @@ private:
                      const juce::String &trackKey,
                      const std::vector<GuideSource> &guides,
                      juce::String *error) const;
-    void retireLegacyFiles(const juce::String &trackKey,
-                           const juce::File &keep) const;
+    void retireSupersededFiles(const juce::String &trackKey,
+                               const juce::File &keep) const;
 
     juce::File directory;
 };

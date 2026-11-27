@@ -60,6 +60,9 @@ set(PITCHNET_TEST_SOURCES
     # R11b (D-365): la clave del sidecar es la huella de las fuentes (nombre
     # ARA) + nombre de pista; reapertura y migracion del legacy `doc:`.
     MidiGuideStoreIdentityTests.cpp
+    # R11d (D-367): la clave de pista es el NOMBRE solo; mover, anadir o quitar
+    # items no la cambia, y la clave `src:...|name:` de R11b se migra una vez.
+    MidiGuideStoreTrackKeyTests.cpp
     # R8 (D-361): el plan de aplicacion por pista (SCOPE=A) resuelve que item y
     # nota recibe cada nota de guia, con motivos de skip, sin escribir nada.
     MidiGuideTrackPlanTests.cpp

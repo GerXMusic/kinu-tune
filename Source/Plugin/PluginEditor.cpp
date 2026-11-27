@@ -1103,12 +1103,13 @@ juce::String araTrackKey(juce::ARARegionSequence *sequence) {
       reinterpret_cast<std::uintptr_t>(sequence)));
 }
 
-// R5d (D-358) / R11b (D-365): stable identity of one track for the document's
-// guide store. Neither the RegionSequence ADDRESS (recreated when the editor
-// closes and reopens, R5c) nor the ARADocument address (recreated when the
-// project closes and reopens, R11) is part of it. The key is the track's own
-// audio sources - identified by the names ARA restores with the project - plus
-// the track name. See Models/TrackIdentity.h and Plugin/AraSourceIdentity.h.
+// R5d (D-358) / R11b (D-365) / R11d (D-367): stable identity of one track for
+// the document's guide store. Neither the RegionSequence ADDRESS (recreated
+// when the editor closes and reopens, R5c), the ARADocument address (recreated
+// when the project closes and reopens, R11) nor the track's item/source list
+// (any added, removed or moved item renamed the key, R11c G-B2) is part of it.
+// The key is the track NAME, which the host restores with the project. See
+// Models/TrackIdentity.h and Plugin/AraSourceIdentity.h.
 juce::String stableTrackKey(juce::ARADocument *document,
                             juce::ARARegionSequence *sequence) {
   if (sequence == nullptr)
@@ -1123,8 +1124,7 @@ juce::String stableTrackKey(juce::ARADocument *document,
         break;
       }
   }
-  return trackKeyFromSources(araIdentity::sequenceSourceIdentities(*sequence),
-                             juce::String(sequence->getName()), ordinal);
+  return trackKeyForTrack(juce::String(sequence->getName()), ordinal);
 }
 
 // The track colour the DAW sends through ARA. Hosts set it on the region

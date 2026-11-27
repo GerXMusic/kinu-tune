@@ -45,30 +45,27 @@ juce::String stableSourceFingerprint(std::vector<juce::String> sourceIdentities)
         std::unique(sourceIdentities.begin(), sourceIdentities.end()),
         sourceIdentities.end());
 
+    // The seed text is kept byte for byte from R11b on purpose: the document
+    // key is stored inside every sidecar and names its file, so changing it
+    // would orphan the files already on disk for nothing.
     juce::String seed("tunex-ara-track-sources-v2");
     for (const auto &identity : sourceIdentities)
         seed << '\n' << identity;
     return fnv1aHex(seed);
 }
 
-juce::String trackKeyFromSources(std::vector<juce::String> sourceIdentities,
-                                 const juce::String &trackName,
-                                 int trackOrdinal)
+juce::String trackKeyForTrack(const juce::String &trackName, int trackOrdinal)
 {
-    // R11b (D-365): the fingerprint of the track's own media replaces the
-    // document address. Only data that the host restores with the project is
-    // allowed in here; Models/TrackIdentity.cpp is guarded against
-    // reinterpret_cast / uintptr_t / getDocument for exactly that reason.
-    const auto fingerprint = stableSourceFingerprint(std::move(sourceIdentities));
-
-    juce::String key;
-    key << "src:" << (fingerprint.isNotEmpty() ? fingerprint : juce::String("none"));
-
-    // A named track is identified by its name alone, so the key survives a
-    // reorder. The ordinal is the fallback only when the host sends no name.
+    // R11d (D-367): the NAME is the whole key. R11b also mixed in the
+    // fingerprint of the track's sources, which is the list of its live items:
+    // moving, adding or removing one item renamed the sidecar (G-B2 FAIL). A
+    // track's name is what the host restores with the project and what the user
+    // sees; the item list is not an identity.
     const auto name = trackName.trim();
     if (name.isNotEmpty())
-        return key + "|name:" + name;
+        return "name:" + name;
 
-    return key + "|ordinal:" + juce::String(trackOrdinal);
+    // Last resort: the position in the document's sequence list. Documented,
+    // not preferred (TrackIdentity.h).
+    return "ordinal:" + juce::String(trackOrdinal);
 }

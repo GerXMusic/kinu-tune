@@ -2654,6 +2654,76 @@ void MainComponent::pollMcpControl()
       response->setProperty("status", midiGuidePanel.getStatusText());
       response->setProperty("ok", true);
     }
+    else if (command == "undo" || command == "redo")
+    {
+      // R11d (D-367): explicit history commands so the undo of a document step
+      // can be measured from outside. R11c could not: the local channel had no
+      // undo, the keyboard is not scriptable (D-126) and the host's
+      // `Undo_DoUndo2` restores the whole project chunk without reverting the
+      // guide. They call exactly MainComponent::undo()/redo(), the same path as
+      // Cmd+Z and the toolbar; no new behaviour, no new history entry.
+      const bool wantsUndo = command == "undo";
+      const auto stepName =
+          undoManager != nullptr
+              ? (wantsUndo ? undoManager->getUndoName()
+                           : undoManager->getRedoName())
+              : juce::String();
+      if (undoManager == nullptr || stepName.isEmpty())
+      {
+        response->setProperty("error", wantsUndo
+                                           ? "No hay nada que deshacer."
+                                           : "No hay nada que rehacer.");
+        response->setProperty("can_undo", undoManager && undoManager->canUndo());
+        response->setProperty("can_redo", undoManager && undoManager->canRedo());
+      }
+      else
+      {
+        // The name of the step that was taken, before the stack moves.
+        if (wantsUndo)
+          undo();
+        else
+          redo();
+        // State of the guide and of the pitches after the step: the guide lives
+        // in the document store (not in the undo history), the heights are the
+        // notes' shift against their own original pitch. The project pointer is
+        // read again: an undo may have reloaded the list under us.
+        auto *after = getProject();
+        const auto &snapshot = midiGuideStore->publish();
+        int shiftedNotes = 0;
+        float maxShiftCents = 0.0f;
+        if (after != nullptr)
+          for (const auto &note : after->getNotes())
+          {
+            if (note.isRest())
+              continue;
+            const float cents = (note.getAdjustedMidiNote() -
+                                 note.getOriginalMidiNote()) *
+                                100.0f;
+            if (std::abs(cents) > 0.01f)
+              ++shiftedNotes;
+            maxShiftCents = juce::jmax(maxShiftCents, std::abs(cents));
+          }
+        response->setProperty("step", stepName);
+        response->setProperty("undo_name",
+                              undoManager->getUndoName());
+        response->setProperty("redo_name",
+                              undoManager->getRedoName());
+        response->setProperty("can_undo", undoManager->canUndo());
+        response->setProperty("can_redo", undoManager->canRedo());
+        response->setProperty("guide_count",
+                              snapshot != nullptr ? snapshot->guideCount() : 0);
+        response->setProperty(
+            "ghost_count",
+            static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
+        response->setProperty("notes",
+                              after != nullptr
+                                  ? static_cast<int>(after->getNotes().size())
+                                  : 0);
+        response->setProperty("shifted_notes", shiftedNotes);
+        response->setProperty("max_shift_cents", maxShiftCents);
+        response->setProperty("ok", true);
+      }
+    }
     else if (command == "show_rail_panel")
     {
       const auto panelId = request.getProperty("panel", "midi").toString();

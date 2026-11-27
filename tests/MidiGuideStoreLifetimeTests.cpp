@@ -77,40 +77,28 @@ int ghostCount(const DocumentMidiGuideStore& store, int index = 0)
 
 // (a) La clave de pista no depende de ningun objeto ni de su direccion: el
 // host recrea la RegionSequence al cerrar y abrir el editor (R5c) y el
-// ARADocument al cerrar y abrir el proyecto (R11). Lo que llega a la clave es
-// la huella de las fuentes de audio (el nombre que da ARA) y el nombre de la
-// pista; dos sesiones con los mismos datos producen la misma clave. Y el store
-// no se vacia al re-bindear.
+// ARADocument al cerrar y abrir el proyecto (R11). R11d (D-367) quita tambien
+// la huella de las fuentes, que es la lista de items: la clave es el nombre de
+// la pista. Y el store no se vacia al re-bindear.
 void testRecreatedRegionSequenceKeepsTheKeyAndTheGuide()
 {
-    // Dos "sesiones" distintas con las mismas fuentes y el mismo nombre: no
-    // hay direccion, ni documento, ni ordinal que pueda cambiarla.
-    const std::vector<juce::String> sources{"name:03-Lead.wav",
-                                            "name:v2 - stem.wav"};
-    const auto sequenceBefore = trackKeyFromSources(sources, "TuneX", 2);
-    const auto sequenceAfterRecreation = trackKeyFromSources(sources, "TuneX", 0);
+    // Dos "sesiones" distintas con el mismo nombre: no hay direccion, ni
+    // documento, ni fuentes, ni ordinal que pueda cambiarla.
+    const auto sequenceBefore = trackKeyForTrack("TuneX", 2);
+    const auto sequenceAfterRecreation = trackKeyForTrack("TuneX", 0);
     CHECK(sequenceBefore == sequenceAfterRecreation);
     CHECK(sequenceBefore.isNotEmpty());
-    CHECK(sequenceBefore.startsWith("src:"));
-    CHECK(sequenceBefore.contains("|name:TuneX"));
+    CHECK(sequenceBefore == "name:TuneX");
 
-    // Otra pista del mismo documento (otras fuentes) y el mismo nombre en otro
-    // juego de fuentes son claves distintas (no se mezclan).
-    CHECK(trackKeyFromSources({"name:03-Lead.wav"}, "TuneX", 2) !=
-          sequenceBefore);
-    CHECK(trackKeyFromSources({"name:other.wav", "name:v2 - stem.wav"},
-                              "TuneX", 2) != sequenceBefore);
-    CHECK(trackKeyFromSources(sources, "Lead", 2) != sequenceBefore);
-
-    // El orden de las fuentes no cambia la clave.
-    CHECK(trackKeyFromSources({"name:v2 - stem.wav", "name:03-Lead.wav"},
-                              "TuneX", 0) == sequenceBefore);
+    // Mover, anadir o quitar items de la pista (R11c G-B2) no cambia la clave:
+    // el conjunto de fuentes ya no entra en ella.
+    CHECK(trackKeyForTrack("TuneX", 5) == sequenceBefore);
+    // Otro nombre es otra pista.
+    CHECK(trackKeyForTrack("Lead", 2) != sequenceBefore);
 
     // El ordinal solo entra cuando el host no manda nombre.
-    CHECK(trackKeyFromSources(sources, "", 2) !=
-          trackKeyFromSources(sources, "", 3));
-    CHECK(trackKeyFromSources(sources, "", 2) ==
-          trackKeyFromSources(sources, "", 2));
+    CHECK(trackKeyForTrack("", 2) != trackKeyForTrack("", 3));
+    CHECK(trackKeyForTrack("", 2) == trackKeyForTrack("", 2));
 
     DocumentMidiGuideStore store;
     CHECK(!store.bindTrack(sequenceBefore));
@@ -142,8 +130,7 @@ void testGuideSurvivesEditorCloseAndReopen()
 {
     // El "documento" (PitchNetDocumentController) posee el store.
     DocumentMidiGuideStore documentStore;
-    documentStore.bindTrack(
-        trackKeyFromSources({"name:v2 - stem.wav"}, "TuneX", 2));
+    documentStore.bindTrack(trackKeyForTrack("TuneX", 2));
     documentStore.upsert(leadGuide(), "file");
     const auto published = documentStore.publish();
 

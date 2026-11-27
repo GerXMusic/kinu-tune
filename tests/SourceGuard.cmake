@@ -175,7 +175,7 @@ elseif("${RULE}" STREQUAL "midi-guides")
             message(FATAL_ERROR
                 "SourceGuard (midi-guides) found a session identity in the guide key:\n"
                 "${identity_violations}"
-                "The key is the audio-source fingerprint plus the track name (Source/Models/TrackIdentity.h); addresses, pointers and persistent IDs change on reopen (see D-365).")
+                "The document key is the audio-source fingerprint and the track key is the track name (Source/Models/TrackIdentity.h); addresses, pointers, persistent IDs and the track's item list change on reopen or on an edit (see D-365 and D-367).")
         endif()
     endforeach()
 

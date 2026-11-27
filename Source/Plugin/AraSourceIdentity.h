@@ -19,11 +19,12 @@
  *
  * ARA does not expose a file path on ARAAudioSource; the stable datum the host
  * restores with the project is the source NAME (`ARAAudioSourceProperties::
- * name`, normally the media file name). That name is what goes into the key.
- * When a host sends no name, the geometry (sample rate, channels, samples) is
- * the fallback - still data, still not an address - and a source with neither
- * contributes nothing, which is what pushes the track key to its ordinal
- * fallback.
+ * name`, normally the media file name). The DOCUMENT key is the fingerprint of
+ * those names (R11b, D-365). The TRACK key is the track name alone since R11d
+ * (D-367), because the track's source list changes with its items. When a host
+ * sends no source name, the geometry (sample rate, channels, samples) is the
+ * fallback - still data, still not an address - and a source with neither
+ * contributes nothing.
  */
 namespace araIdentity
 {
@@ -56,8 +57,9 @@ documentSourceIdentities(const juce::ARADocument &document)
 }
 
 // Sources of one track, read through the playback regions of its sequence.
-// After a split every item of the track shares the source, and the
-// fingerprint is de-duplicated, so splitting does not rename the sidecar.
+// Since R11d (D-367) the track key does NOT use this: it is the list of the
+// track's live items, and moving, adding or removing one item renamed the
+// sidecar (R11c G-B2). Kept for diagnostics; do not feed it to a key again.
 inline std::vector<juce::String>
 sequenceSourceIdentities(const juce::ARARegionSequence &sequence)
 {
