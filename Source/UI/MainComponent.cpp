@@ -2263,7 +2263,7 @@ void MainComponent::pollMcpControl()
       // be checked from the outside (no keyboard/mouse scripting, D-126).
       // R5b/D-356: the document store is the source, so the report does not
       // change with the active item (the R5 bug reported guides=0 on item 2).
-      const auto &snapshot = midiGuideStore.publish();
+      const auto &snapshot = midiGuideStore->publish();
       juce::Array<juce::var> guideArray;
       for (int i = 0; snapshot != nullptr && i < snapshot->guideCount(); ++i)
       {
@@ -2315,7 +2315,7 @@ void MainComponent::pollMcpControl()
       {
         // R5b/D-356: the guide comes from the document store, not from the
         // active Project's cache, so this report is the same on every item.
-        const auto &snapshot = midiGuideStore.publish();
+        const auto &snapshot = midiGuideStore->publish();
         const auto *guide = snapshot != nullptr
                                 ? snapshot->guideAt(selectedMidiGuide)
                                 : nullptr;
@@ -2612,7 +2612,7 @@ void MainComponent::pollMcpControl()
     {
       syncLiveMidiGuides();
       refreshMidiGuideUi();
-      response->setProperty("guides", midiGuideStore.size());
+      response->setProperty("guides", midiGuideStore->size());
       response->setProperty(
           "ghost_count",
           static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
@@ -6916,7 +6916,7 @@ void MainComponent::importMidiGuideFromFile()
 
         // R5b/D-356: the guide is the document's; storing it needs no active
         // Project. The compatibility cache is written when one is open.
-        selectedMidiGuide = midiGuideStore.upsert(imported.source, "file");
+        selectedMidiGuide = midiGuideStore->upsert(imported.source, "file");
         writeMidiGuideCompatCache();
 
         juce::String status;
@@ -6931,13 +6931,13 @@ void MainComponent::importMidiGuideFromFile()
 
 void MainComponent::removeSelectedMidiGuide()
 {
-  if (!midiGuideStore.removeAt(selectedMidiGuide))
+  if (!midiGuideStore->removeAt(selectedMidiGuide))
     return;
 
-  selectedMidiGuide = midiGuideStore.empty()
+  selectedMidiGuide = midiGuideStore->empty()
                           ? -1
                           : juce::jmin(selectedMidiGuide,
-                                       midiGuideStore.size() - 1);
+                                       midiGuideStore->size() - 1);
   writeMidiGuideCompatCache();
   midiGuidePanel.setStatusText({});
   refreshMidiGuideUi();
@@ -6970,7 +6970,7 @@ void MainComponent::syncLiveMidiGuides()
   // R5b/D-356: the live files feed the DOCUMENT store. Before this, the sync
   // wrote into the active item's Project, so with item 2 selected it produced
   // guides=0 until the item that held them was active again (measured in R5).
-  if (midiGuideStore.syncLive(liveGuides))
+  if (midiGuideStore->syncLive(liveGuides))
   {
     if (selectedMidiGuide < 0)
       selectedMidiGuide = 0;
@@ -6995,10 +6995,10 @@ void MainComponent::importLegacyMidiGuides()
   {
     for (const auto &region : documentNoteIndex->regions)
       if (region.project != nullptr)
-        adopted = midiGuideStore.importFromProject(*region.project) || adopted;
+        adopted = midiGuideStore->importFromProject(*region.project) || adopted;
   }
   if (auto *project = getProject())
-    adopted = midiGuideStore.importFromProject(*project) || adopted;
+    adopted = midiGuideStore->importFromProject(*project) || adopted;
 
   if (adopted && selectedMidiGuide < 0)
     selectedMidiGuide = 0;
@@ -7016,14 +7016,27 @@ void MainComponent::writeMidiGuideCompatCache()
         projects.push_back(region.project);
   if (auto *project = getProject())
     projects.push_back(project);
-  midiGuideStore.writeCompatCache(projects);
+  midiGuideStore->writeCompatCache(projects);
+}
+
+void MainComponent::setMidiGuideStore(DocumentMidiGuideStore *store)
+{
+  // R5d (D-358): the document owns the guides. Attaching its store shows what
+  // it already holds (the 111 ghosts survive an editor close/reopen in the same
+  // process) without asking for a new sync; detaching falls back to the local
+  // store so no view keeps reading a store whose document is gone.
+  DocumentMidiGuideStore *next = store != nullptr ? store : &localMidiGuideStore;
+  if (next != midiGuideStore)
+    selectedMidiGuide = -1; // the list is the document's, not the old view's
+  midiGuideStore = next;
+  refreshMidiGuideUi();
 }
 
 void MainComponent::refreshMidiGuideUi()
 {
   // R5b/D-356: everything here comes from the document store, so neither the
   // list nor the ghosts disappear when the active item changes.
-  documentMidiGuides = midiGuideStore.publish();
+  documentMidiGuides = midiGuideStore->publish();
 
   juce::StringArray labels;
   juce::StringArray ids;
@@ -7074,7 +7087,7 @@ void MainComponent::applyMidiGuide()
 
   // R5b/D-356: the guide is the document's; Apply still edits the active item
   // only (R1/D-313). The store is the only read path.
-  const auto *guide = midiGuideStore.at(selectedMidiGuide);
+  const auto *guide = midiGuideStore->at(selectedMidiGuide);
   if (guide == nullptr)
   {
     midiGuidePanel.setStatusText(TR("midi.empty"));
@@ -7541,7 +7554,7 @@ void MainComponent::releaseBorrowedProject(const Project *project) {
   // R5b/D-356: the guide store owns the guide data, so a Project death cannot
   // leave a dangling pointer to it. The store is emptied only when the LAST
   // Project of the document dies; an item switch releases nothing.
-  if (midiGuideStore.releaseProject(project)) {
+  if (midiGuideStore->releaseProject(project)) {
     selectedMidiGuide = -1;
     refreshMidiGuideUi();
   }
@@ -7568,7 +7581,10 @@ void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
   // it when another track replaced this one (a new document has no guides); the
   // Projects tell it when the whole document is gone, without reacting to an
   // item change. Both are republished from this one path.
-  if (midiGuideStore.bindTrack(documentNoteIndex != nullptr
+  // R5d/D-358: the key is STABLE (Models/TrackIdentity.h), so recreating the
+  // RegionSequence does not look like another track; and an unknown key imports
+  // the document's cache instead of emptying the list.
+  if (midiGuideStore->bindTrack(documentNoteIndex != nullptr
                                    ? documentNoteIndex->trackKey
                                    : juce::String()))
     selectedMidiGuide = -1;
@@ -7577,7 +7593,7 @@ void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
     for (const auto &region : documentNoteIndex->regions)
       if (region.project != nullptr)
         documentProjects.push_back(region.project);
-  midiGuideStore.observeProjects(std::move(documentProjects));
+  midiGuideStore->observeProjects(std::move(documentProjects));
   importLegacyMidiGuides();
   refreshMidiGuideUi();
   if (documentNoteSelection != nullptr) {

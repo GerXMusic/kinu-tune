@@ -1773,12 +1773,21 @@ PitchNetDocumentController::~PitchNetDocumentController() {
     analysisJoinerThread.join();
 }
 
-void PitchNetDocumentController::setMainComponent(IMainView *mc) {  if (mc == nullptr && mainComponent != nullptr) {
+void PitchNetDocumentController::setMainComponent(IMainView *mc) {
+  // R5d (D-358): the guide store is the document's. A closing editor withdraws
+  // its borrow (it must not keep a pointer after it dies); an opening one is
+  // handed the store, guides included, so no re-sync is needed.
+  if (mainComponent != nullptr && mainComponent != mc)
+    mainComponent->setMidiGuideStore(nullptr);
+
+  if (mc == nullptr && mainComponent != nullptr) {
     stopAnalysisThread();
     currentAudioSource = nullptr;
   }
 
   mainComponent = mc;
+  if (mainComponent != nullptr)
+    mainComponent->setMidiGuideStore(&midiGuideStore);
   if (mainComponent && pendingRestoredProjectData.getSize() > 0 &&
       !restoreProjectStateCallback) {
     juce::String jsonString(

@@ -803,8 +803,15 @@ private:
 
   // D-311: MIDI guides. R5b/D-356: the store and the snapshot are the document
   // truth; the ghosts are host seconds and the painter re-maps them.
-  DocumentMidiGuideStore midiGuideStore;
+  // R5d/D-358: the store belongs to the document (PitchNetDocumentController)
+  // and this view only borrows it, so closing and reopening the editor in the
+  // same process keeps the guides. Without a document (standalone / non-ARA)
+  // the local store backs the UI.
+  DocumentMidiGuideStore localMidiGuideStore;
+  DocumentMidiGuideStore *midiGuideStore = &localMidiGuideStore;
   DocumentMidiGuidesPtr documentMidiGuides;
+  // IMainView: attach/detach the document's store (R5d/D-358).
+  void setMidiGuideStore(DocumentMidiGuideStore *store) override;
   // One-time migration of the per-Project "midiGuides" cache and the write-back
   // of the compatibility copy after a change.
   void importLegacyMidiGuides();

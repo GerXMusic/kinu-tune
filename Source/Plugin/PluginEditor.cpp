@@ -17,6 +17,7 @@
 #include "AraSelectionPolicy.h"
 #include "PitchNetAudioModification.h"
 #include "SingleWindowPolicy.h"
+#include "../Models/TrackIdentity.h"
 #include "../UI/CursorFollowPolicy.h"
 #endif
 
@@ -1101,6 +1102,30 @@ juce::String araTrackKey(juce::ARARegionSequence *sequence) {
       reinterpret_cast<std::uintptr_t>(sequence)));
 }
 
+// R5d (D-358): stable identity of one track for the document's guide store.
+// The RegionSequence ADDRESS is deliberately not part of it: the host
+// recreates the sequence when the editor closes and reopens (measured in R5c),
+// the address changed and the guide store emptied (111 -> 0). The document
+// object does survive that recreation, and the track name survives an editor
+// reopen and a reorder. See Models/TrackIdentity.h.
+juce::String stableTrackKey(juce::ARADocument *document,
+                            juce::ARARegionSequence *sequence) {
+  if (document == nullptr || sequence == nullptr)
+    return {};
+  int ordinal = 0;
+  const auto sequences =
+      document->getRegionSequences<juce::ARARegionSequence>();
+  for (size_t i = 0; i < sequences.size(); ++i)
+    if (sequences[i] == sequence) {
+      ordinal = static_cast<int>(i);
+      break;
+    }
+  const auto documentKey = juce::String::toHexString(static_cast<juce::int64>(
+      reinterpret_cast<std::uintptr_t>(document)));
+  return documentTrackKey(documentKey, juce::String(sequence->getName()),
+                          ordinal);
+}
+
 // The track colour the DAW sends through ARA. Hosts set it on the region
 // sequence (the track) itself; some only colour the clips, so fall back to the
 // first clip's colour on that track. hasHostColour is false when the DAW sent
@@ -1365,9 +1390,20 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
         fromCanvas));
     noteSpecs.push_back(std::move(spec));
   }
-  documentNoteIndex = buildDocumentNoteIndex(
-      activeSequence != nullptr ? araTrackKey(activeSequence) : juce::String(),
-      noteSpecs);
+  // R5d (D-358): the index's track key is the STABLE one (the guide store binds
+  // to it in updateDocumentNoteIndex), not the RegionSequence address.
+  juce::String activeTrackKey;
+  if (activeSequence != nullptr) {
+    auto *editorView = getARAEditorView();
+    auto *docController =
+        editorView != nullptr ? editorView->getDocumentController() : nullptr;
+    auto *document = docController != nullptr
+                         ? static_cast<juce::ARADocument *>(
+                               docController->getDocument())
+                         : nullptr;
+    activeTrackKey = stableTrackKey(document, activeSequence);
+  }
+  documentNoteIndex = buildDocumentNoteIndex(activeTrackKey, noteSpecs);
   publishDocumentNoteIndex(documentNoteIndex);
 
   auto previews = std::make_shared<std::vector<MainViewRegionPreview>>();

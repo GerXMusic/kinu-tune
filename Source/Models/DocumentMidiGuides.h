@@ -62,14 +62,24 @@ using DocumentMidiGuidesPtr = std::shared_ptr<const DocumentMidiGuides>;
 /**
  * The only owner and writer of the document's guides.
  *
+ * Ownership (R5d, D-358): the store belongs to the DOCUMENT controller
+ * (PitchNetDocumentController), not to the editor. The editor only borrows it
+ * while it is open; closing and reopening the window in the same process keeps
+ * the guides, because the store outlives the view. A new document controller is
+ * a new document and starts empty.
+ *
  * Lifecycle:
  *  - observeProjects() tells the store which Projects the document has (the
  *    plug-in publishes them with the note index). A Project that dies is
  *    released with releaseProject(); when the LAST observed Project dies the
  *    document is gone and the store empties, so nothing refers to a dead
  *    Project. Item changes release nothing, which is exactly the R5 fix.
- *  - bindTrack() scopes the store to one ARA track: a different non-empty
- *    track key starts a new document with no guides.
+ *  - bindTrack() scopes the store to one ARA track. The key is STABLE (see
+ *    Models/TrackIdentity.h): the same track keeps the same key when the host
+ *    recreates its region sequence, so the store is not emptied. An unknown
+ *    key adopts the guides the document's Project caches still carry, instead
+ *    of leaving the list empty; an empty result is only valid when there is no
+ *    guide anywhere.
  *  - importFromProject() adopts a Project's legacy "midiGuides" once.
  */
 class DocumentMidiGuideStore
@@ -81,9 +91,13 @@ public:
     DocumentMidiGuideStore(const DocumentMidiGuideStore&) = delete;
     DocumentMidiGuideStore& operator=(const DocumentMidiGuideStore&) = delete;
 
-    // True when the track key changed and the previous document was dropped.
+    // True when the track key changed (another track/document was bound).
     // An empty key means "no document published" and keeps what is there (clip
-    // mode must not wipe the track's guides).
+    // mode must not wipe the track's guides). The same key is a no-op, so a
+    // recreated RegionSequence with a stable key does not lose the guides. An
+    // unknown key does not keep the previous track's list, but it does import
+    // whatever the document's Project caches carry: the store is only empty
+    // when there is no guide anywhere (R5d, D-358).
     bool bindTrack(const juce::String& trackKey);
 
     // The Projects of the current document, deduplicated. Empty is ignored: a

@@ -2,6 +2,7 @@
 
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
+#include "../Models/DocumentMidiGuides.h"
 
 #include <atomic>
 #include <cmath>
@@ -425,6 +426,13 @@ public:
 
   void setMainComponent(IMainView *mc);
   IMainView *getMainComponent() const { return mainComponent; }
+  // R5d (D-358): the MIDI guides belong to the DOCUMENT, so their store lives
+  // here and outlives the editor. The view only borrows it while it is open
+  // (setMainComponent publishes/withdraws the pointer).
+  DocumentMidiGuideStore &getMidiGuideStore() { return midiGuideStore; }
+  const DocumentMidiGuideStore &getMidiGuideStore() const {
+    return midiGuideStore;
+  }
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-137: the bypass parameter as the project has it (the INTENT of the
   // render), written by the processor before it renders a block and read by
@@ -594,6 +602,9 @@ private:
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;
   AraPreviewState previewState;
+  // R5d (D-358): the document's MIDI guides. Owned here, not by the editor, so
+  // closing and reopening the window in the same process does not lose them.
+  DocumentMidiGuideStore midiGuideStore;
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;
   juce::MemoryBlock pendingRestoredProjectData;

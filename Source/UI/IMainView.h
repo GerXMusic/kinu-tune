@@ -13,6 +13,7 @@ class Vocoder;
 class RealtimePitchProcessor;
 class EditorController;
 class PitchUndoManager;
+class DocumentMidiGuideStore;
 
 struct MainViewViewportState
 {
@@ -141,6 +142,14 @@ public:
    * next publication rebuilds them, and the selection re-adopts the live flags.
    */
   virtual void releaseBorrowedProject(const Project *project) = 0;
+  /**
+   * R5d (D-358): the MIDI guides belong to the document, not to the editor, so
+   * the plug-in hands the view the document's store while it is open and
+   * withdraws it (nullptr) when the editor closes. A view with no document
+   * (standalone / non-ARA) keeps its own local store. Reattaching a store whose
+   * guides were already published must show them without a new sync.
+   */
+  virtual void setMidiGuideStore(DocumentMidiGuideStore * /*store*/) {}
   /**
    * Called with a region key when the user clicks inside an inactive region on
    * the canvas (empty space or one of its notes). Unlike a host selection

@@ -50,6 +50,10 @@ set(PITCHNET_TEST_SOURCES
     # R5b (D-356): la guia es del documento; el store publicado apunta a las
     # guias reales y sobrevive al cambio de item.
     MidiGuideStoreTests.cpp
+    # R5d (D-358): el store vive en el documento (no en el editor) y su clave
+    # de pista es estable al recrearse la RegionSequence; sobrevive al cierre
+    # del editor y una clave desconocida importa, no vacia.
+    MidiGuideStoreLifetimeTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp

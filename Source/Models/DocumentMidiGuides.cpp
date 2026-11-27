@@ -67,14 +67,26 @@ bool DocumentMidiGuideStore::bindTrack(const juce::String& newTrackKey)
     if (newTrackKey == trackKey)
         return false;
 
-    // A different document has its own guides: the previous ones are not these.
+    // R5d (D-358): a different key is not automatically "a different track".
+    // The key is stable now (Models/TrackIdentity.h), so the same track keeps
+    // it across a RegionSequence recreation; when it really changed, the
+    // previous list must not follow (another track is another history). The
+    // document's Projects DO follow: they are the only place a cache can come
+    // from, so an unknown key is imported from them instead of left empty.
     const bool hadDocument = trackKey.isNotEmpty();
+    const auto documentProjects = observedProjects;
     trackKey = newTrackKey;
     entries.clear();
     importedProjects.clear();
     observedProjects.clear();
     markDirty();
     publish();
+
+    for (const auto* project : documentProjects)
+        if (project != nullptr)
+            importFromProject(*project);
+    publish();
+
     return hadDocument;
 }
 
