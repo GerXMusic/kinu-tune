@@ -226,6 +226,20 @@ target_link_libraries(VariAudioInspectorTests PRIVATE pitchnet_ui)
 target_compile_features(VariAudioInspectorTests PRIVATE cxx_std_17)
 add_test(NAME VariAudioInspectorTests COMMAND VariAudioInspectorTests)
 
+# N8 (D-348): el hover ya no activa la region; el inspector habla del
+# documento (indice/seleccion), no del project que el puntero dejo activo.
+add_executable(TrackHoverRegionTests TrackHoverRegionTests.cpp)
+target_link_libraries(TrackHoverRegionTests PRIVATE pitchnet_ui)
+target_compile_features(TrackHoverRegionTests PRIVATE cxx_std_17)
+add_test(NAME TrackHoverRegionTests COMMAND TrackHoverRegionTests)
+
+# N8 (D-348): conteo y texto del objetivo a nivel de documento (caso real
+# 262+29, ventanas 0/7/77/70/110) y valores mixtos.
+add_executable(DocumentInspectorTests DocumentInspectorTests.cpp)
+target_link_libraries(DocumentInspectorTests PRIVATE pitchnet_ui)
+target_compile_features(DocumentInspectorTests PRIVATE cxx_std_17)
+add_test(NAME DocumentInspectorTests COMMAND DocumentInspectorTests)
+
 add_executable(AuditionOutputTests AuditionOutputTests.cpp)
 target_link_libraries(AuditionOutputTests PRIVATE pitchnet_ui)
 target_compile_features(AuditionOutputTests PRIVATE cxx_std_17)

@@ -179,13 +179,18 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
     g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
     g.drawText(caption, top, juce::Justification::centredLeft, true);
     g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(alpha));
-    g.drawText(formatValue(param, getValue()), top, juce::Justification::centredRight,
-               false);
+    // N8 (D-348): a mixed objective shows the placeholder, never the value of
+    // whichever item the pointer happened to activate last.
+    g.drawText(mixed ? TR("inspector.mixed") : formatValue(param, getValue()), top,
+               juce::Justification::centredRight, false);
 
-    // Thin bar: bipolar values (formant) fill from the centre.
+    // Thin bar: bipolar values (formant) fill from the centre. A mixed value
+    // has no position, so only the track is drawn.
     auto bar = bounds.withSizeKeepingCentre(bounds.getWidth(), 4.0f);
     g.setColour(kBarTrack.withMultipliedAlpha(alpha));
     g.fillRoundedRectangle(bar, 2.0f);
+    if (mixed)
+        return;
     const double proportion = valueToProportionOfLength(getValue());
     const double origin =
         getMinimum() < 0.0 && getMaximum() > 0.0 ? valueToProportionOfLength(0.0) : 0.0;
@@ -196,6 +201,14 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
                                                   std::max(3.0f, x1 - x0),
                                                   bar.getHeight()),
                            2.0f);
+}
+
+bool VariAudioInspector::isRowMixed(Param param) const
+{
+    for (const auto& row : rows)
+        if (row != nullptr && row->param == param)
+            return row->mixed;
+    return false;
 }
 
 void VariAudioInspector::DisabledRow::paint(juce::Graphics& g)
@@ -637,11 +650,20 @@ void VariAudioInspector::refreshFromProject()
 
     const auto [count, isSelection] =
         getTargetCount ? getTargetCount() : std::pair<int, bool>{0, false};
-    targetLabel.setText(count <= 0 ? TR("inspector.target_none")
-                        : isSelection
-                            ? TR("inspector.target_selected").replace("{n}", juce::String(count))
-                            : TR("inspector.target_all").replace("{n}", juce::String(count)),
-                        juce::dontSendNotification);
+    const int items = getTargetItemCount ? getTargetItemCount() : 1;
+    // N8 (D-348): the objective is the document. More than one item says so
+    // ("{n} segments in {m} items"), whether they come from a selection or from
+    // the whole track; a single take keeps target_all / target_selected.
+    targetLabel.setText(
+        count <= 0 ? TR("inspector.target_none")
+        : items > 1
+            ? TR("inspector.target_document")
+                  .replace("{n}", juce::String(count))
+                  .replace("{m}", juce::String(items))
+        : isSelection
+            ? TR("inspector.target_selected").replace("{n}", juce::String(count))
+            : TR("inspector.target_all").replace("{n}", juce::String(count)),
+        juce::dontSendNotification);
     // D-299: eliminar necesita al menos un segmento objetivo.
     deleteButton.setEnabled(count > 0);
 
@@ -650,6 +672,13 @@ void VariAudioInspector::refreshFromProject()
     for (size_t i = 0; i < rows.size(); ++i)
     {
         const auto value = getParamValue ? getParamValue(rows[i]->param) : std::nullopt;
+        const bool mixed =
+            getParamValueMixed && getParamValueMixed(rows[i]->param);
+        if (rows[i]->mixed != mixed)
+        {
+            rows[i]->mixed = mixed;
+            rows[i]->repaint();
+        }
         const bool advancedOnly = rows[i]->param == Param::Formant ||
                                   rows[i]->param == Param::Volume ||
                                   rows[i]->param == Param::Tilt ||
@@ -658,7 +687,7 @@ void VariAudioInspector::refreshFromProject()
         const bool enabled = value.has_value() &&
                              (!advancedOnly || editorMode == EditorUiMode::Advanced);
         rows[i]->setEnabled(enabled);
-        if (value && std::abs(rows[i]->getValue() - *value) > 1.0e-4)
+        if (!mixed && value && std::abs(rows[i]->getValue() - *value) > 1.0e-4)
         {
             rows[i]->setValue(*value, juce::dontSendNotification);
             rows[i]->repaint();

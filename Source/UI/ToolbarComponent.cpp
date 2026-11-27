@@ -377,6 +377,10 @@ void ToolbarComponent::resized()
 
     placeRight(redoButton, 26);
     placeRight(undoButton, 26);
+    // N8 (D-348): the Clip/Track switch sits next to undo/redo when the host
+    // offers track view; the rest of the group does not change.
+    if (trackViewAvailable)
+        placeRight(trackViewButton, 36);
     // Tarea 2: Bypass a la derecha del grupo escala/tiempo/rejilla. Icono
     // cuadrado estilo Melodyne.
     placeRight(bypassButton, 36);
@@ -400,7 +404,7 @@ void ToolbarComponent::resized()
     leftPanelCapsuleBounds = {};
     parametersButton.setVisible(false);
     leftPanelButton.setVisible(false);
-    trackViewButton.setVisible(false);
+    trackViewButton.setVisible(trackViewAvailable);
     selectModeButton.setVisible(false);
     splitModeButton.setVisible(false);
     pitchDrawingModeButton.setVisible(false);
@@ -839,7 +843,9 @@ void ToolbarComponent::setTrackViewAvailable(bool available)
     if (trackViewAvailable == available)
         return;
     trackViewAvailable = available;
-    trackViewButton.setVisible(false);
+    // N8 (D-348): the Clip/Track switch was unreachable (D-347). Available
+    // means visible; resized() places it in the right group when it is.
+    trackViewButton.setVisible(available);
     resized();
 }
 

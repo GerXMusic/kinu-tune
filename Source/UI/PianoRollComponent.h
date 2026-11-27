@@ -96,14 +96,19 @@ public:
   enum class InspectorParam { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, Transition, TiltLeft, TiltRight, Tilt };
   // D-279: Melodyne's Reset Individual Edits categories.
   enum class NoteRestoreMode { Pitch, Formant, Amplitude, Timing, All };
+  // N8 (D-348): in track mode the objective is the document (the document
+  // selection when there is one, otherwise every visible note of the published
+  // index), never the project a hover left active. Without a document it stays
+  // the active item's notes, selected first.
   std::vector<Note *> getInspectorTargets() const;
-  // N3: how many notes an inspector gesture would move (the whole document
-  // selection when it reaches other items) and whether they come from a
-  // selection rather than from the "every note of the item" fallback.
   int getInspectorTargetCount() const;
+  // N8 (D-348): items (windows) the objective reaches. 1 without a document.
+  int getInspectorTargetItemCount() const;
   bool inspectorTargetsAreSelection() const;
-  // Value shown for the first target, or nullopt when there are no targets.
+  // Value shown for the objective; when the target notes disagree,
+  // inspectorValueIsMixed() is true and the inspector shows inspector.mixed.
   std::optional<float> getInspectorValue(InspectorParam param) const;
+  bool inspectorValueIsMixed(InspectorParam param) const;
   void beginInspectorEdit(InspectorParam param);
   void setInspectorEditValue(float value);
   void endInspectorEdit();
@@ -777,6 +782,15 @@ private:
     return trackViewMode && documentNoteIndex != nullptr &&
            documentNoteSelection != nullptr;
   }
+  // N8 (D-348): owners of getInspectorTargets(), aligned one to one. With no
+  // document they are all the active project. Never a copy of an edit.
+  std::vector<Project *> inspectorTargetProjects() const;
+  // True when the inspector objective needs the document batch path: the
+  // selection reaches another item, or "all segments" is the whole document.
+  bool inspectorBatchApplies() const;
+  std::optional<float> inspectorValueForTarget(InspectorParam param,
+                                               const Note &note,
+                                               const Project *owner) const;
 
   InactiveLayerKey inactiveLayerKey;
   juce::Image inactiveLayer;

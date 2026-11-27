@@ -783,6 +783,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     return std::pair<int, bool>{pianoRoll.getInspectorTargetCount(),
                                 pianoRoll.inspectorTargetsAreSelection()};
   };
+  variAudioInspector.getTargetItemCount = [this]
+  { return pianoRoll.getInspectorTargetItemCount(); };
+  variAudioInspector.getParamValueMixed = [this](VariAudioInspector::Param param)
+  { return pianoRoll.inspectorValueIsMixed(static_cast<InspectorParam>(param)); };
   variAudioInspector.onParamEditBegin = [this](VariAudioInspector::Param param)
   { pianoRoll.beginInspectorEdit(static_cast<InspectorParam>(param)); };
   variAudioInspector.onParamEditValue = [this](float value)

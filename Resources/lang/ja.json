@@ -326,6 +326,8 @@
   "inspector.target_none": "セグメントがありません",
   "inspector.target_selected": "対象: 選択中の {n} セグメント",
   "inspector.target_all": "対象: すべてのセグメント ({n})",
+  "inspector.target_document": "対象: {m} アイテムの {n} セグメント",
+  "inspector.mixed": "—",
   "mode.basic": "ベーシック",
   "mode.advanced": "アドバンス",
   "tool.main": "Main Tool",

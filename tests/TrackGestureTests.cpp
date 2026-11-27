@@ -105,17 +105,27 @@ int main() {
     (*peers)[1].active = key == "b";
     roll.setRegionPreviews(peers);
   };
+  // N8 (D-348): hovering a note of another item does not activate the region,
+  // so it cannot change the active project or the inspector target by itself.
   roll.mouseMove(event(roll, {x, header + 3.5f*h}, 0));
+  CHECK(routed.isEmpty() && roll.getProject() == &a && !(*peers)[1].active);
+  // A click on that note still activates it. The note is unselected so the
+  // click is routing, not the start of a drag over the selection.
+  a.getNotes()[0].setSelected(false);
+  b.getNotes()[0].setSelected(false);
+  roll.mouseDown(event(roll, {x, header + 3.5f*h}));
+  roll.mouseUp(event(roll, {x, header + 3.5f*h}));
   CHECK(routed == "b" && roll.getProject() == &b);
-  // Hover returns to A without a selection/activation click.
-  roll.mouseMove(event(roll, {x, header + 1.5f*h}, 0));
-  CHECK(routed == "a" && roll.getProject() == &a);
   // Flags affect only routing metadata, not which overlapping note can be hit.
+  roll.setProject(&a);
+  roll.setTimelineDisplayOffset(0);
   (*peers)[0].active = false;
   (*peers)[1].active = true;
   roll.setRegionPreviews(peers);
   routed.clear();
-  roll.mouseMove(event(roll, {x, header + 3.5f*h}, 0));
+  b.getNotes()[0].setSelected(false);
+  roll.mouseDown(event(roll, {x, header + 3.5f*h}));
+  roll.mouseUp(event(roll, {x, header + 3.5f*h}));
   CHECK(routed == "b");
   // Clip Mode retains its existing local hover behavior.
   roll.setTrackViewMode(false);

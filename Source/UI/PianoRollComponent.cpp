@@ -2926,7 +2926,11 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 {
-  if (isCanvasPoint(e) && !isModifierZoomDrag(e)) prepareTrackPointer(e.position, true);
+  // N8 (D-348): hovering a note must not open or change the inspector's
+  // notebook. Region activation stays in the click paths (mouseDown and the
+  // Alt-click), which call prepareTrackPointer() themselves; doing it here
+  // swapped the active project and the inspector just by passing the pointer.
+
   const bool showZoomCursor = isCanvasPoint(e) && isModifierZoomDrag(e);
   const float adjustedX =
       e.x - pianoKeysWidth + static_cast<float>(scrollX);
@@ -4001,6 +4005,32 @@ PianoRollComponent::resolveDragSnapKind(const juce::ModifierKeys &mods) const
 
 std::vector<Note *> PianoRollComponent::getInspectorTargets() const
 {
+  // N8 (D-348): in track mode the inspector speaks in document terms. The
+  // objective is the document selection when there is one, otherwise every
+  // visible note of the published index. Both point at the real Notes; this
+  // function copies neither the notes nor their edits. It never follows the
+  // project a hover left active.
+  if (documentSelectionAvailable())
+  {
+    std::vector<Note *> targets;
+    if (!documentNoteSelection->isEmpty())
+    {
+      targets.reserve(static_cast<size_t>(documentNoteSelection->size()));
+      for (const auto &entry : documentNoteSelection->entries())
+        if (entry.note != nullptr && !entry.note->isRest() &&
+            !entry.note->isDeleted())
+          targets.push_back(entry.note);
+    }
+    else
+    {
+      targets.reserve(documentNoteIndex->notes.size());
+      for (const auto &ref : documentNoteIndex->notes)
+        if (ref.note != nullptr && !ref.note->isRest() && !ref.note->isDeleted())
+          targets.push_back(ref.note);
+    }
+    return targets;
+  }
+
   std::vector<Note *> selected, all;
   if (project == nullptr)
     return all;
@@ -4015,19 +4045,95 @@ std::vector<Note *> PianoRollComponent::getInspectorTargets() const
   return selected.empty() ? all : selected;
 }
 
+std::vector<Project *> PianoRollComponent::inspectorTargetProjects() const
+{
+  // N8 (D-348): same order as getInspectorTargets(), same pointers. Needed so
+  // Correct Pitch reads each note's own scale instead of the active item's.
+  if (documentSelectionAvailable())
+  {
+    std::vector<Project *> owners;
+    if (!documentNoteSelection->isEmpty())
+    {
+      owners.reserve(static_cast<size_t>(documentNoteSelection->size()));
+      for (const auto &entry : documentNoteSelection->entries())
+        if (entry.note != nullptr && !entry.note->isRest() &&
+            !entry.note->isDeleted())
+          owners.push_back(entry.project);
+    }
+    else
+    {
+      owners.reserve(documentNoteIndex->notes.size());
+      for (const auto &ref : documentNoteIndex->notes)
+        if (ref.note != nullptr && !ref.note->isRest() && !ref.note->isDeleted())
+          owners.push_back(ref.project);
+    }
+    return owners;
+  }
+  return std::vector<Project *>(getInspectorTargets().size(), project);
+}
+
 int PianoRollComponent::getInspectorTargetCount() const
 {
-  if (documentBatchApplies())
-    return static_cast<int>(documentBatchTargets().size());
   return static_cast<int>(getInspectorTargets().size());
+}
+
+int PianoRollComponent::getInspectorTargetItemCount() const
+{
+  // N8 (D-348): "items" are the windows the objective is shown in, the same
+  // unit the batch notice uses: three contiguous cuts of one take are three
+  // items and one Project.
+  if (!documentSelectionAvailable())
+    return getInspectorTargets().empty() ? 0 : 1;
+
+  std::vector<juce::String> keys;
+  const auto addKey = [&keys](const juce::String &key)
+  {
+    if (std::find(keys.begin(), keys.end(), key) == keys.end())
+      keys.push_back(key);
+  };
+  if (!documentNoteSelection->isEmpty())
+  {
+    for (const auto &entry : documentNoteSelection->entries())
+      if (entry.note != nullptr && !entry.note->isRest() && !entry.note->isDeleted())
+        addKey(entry.regionKey);
+  }
+  else
+  {
+    for (const auto &ref : documentNoteIndex->notes)
+    {
+      if (ref.note == nullptr || ref.note->isRest() || ref.note->isDeleted())
+        continue;
+      if (ref.regionIndex < 0 || ref.regionIndex >= documentNoteIndex->regionCount())
+        continue;
+      addKey(documentNoteIndex->regions[static_cast<size_t>(ref.regionIndex)].key);
+    }
+  }
+  return static_cast<int>(keys.size());
 }
 
 bool PianoRollComponent::inspectorTargetsAreSelection() const
 {
-  if (documentBatchApplies())
-    return true;
+  // N8 (D-348): a non-empty document selection is a selection; the
+  // "all visible notes" fallback never is, however many items it reaches.
+  if (documentSelectionAvailable())
+    return !documentNoteSelection->isEmpty();
   const auto targets = getInspectorTargets();
   return !targets.empty() && targets.front()->isSelected();
+}
+
+bool PianoRollComponent::inspectorBatchApplies() const
+{
+  // N8 (D-348): the objective may be the whole document with nothing selected.
+  // Then a gesture needs the batch path as soon as the index has notes outside
+  // the active item; with the selection it is the N3 rule (another item).
+  if (!documentSelectionAvailable())
+    return false;
+  if (!documentNoteSelection->isEmpty())
+    return documentBatchApplies();
+  for (const auto &ref : documentNoteIndex->notes)
+    if (ref.project != nullptr && ref.project != project)
+      return true;
+  return false;
 }
 
 float PianoRollComponent::correctionTargetFor(float sourceMidi) const
@@ -4052,13 +4158,9 @@ const Project &PianoRollComponent::inspectorOwner(size_t index) const
   return *project;
 }
 
-std::optional<float>
-PianoRollComponent::getInspectorValue(InspectorParam param) const
+std::optional<float> PianoRollComponent::inspectorValueForTarget(
+    InspectorParam param, const Note &note, const Project *owner) const
 {
-  const auto targets = getInspectorTargets();
-  if (targets.empty())
-    return std::nullopt;
-  const Note &note = *targets.front();
   switch (param)
   {
     case InspectorParam::CorrectPitch:
@@ -4067,10 +4169,14 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
       // removed: 0% = as sung, 100% = exactly on the semitone/scale tone. A
       // pitch outside 0-100% shows 0%, which is where a gesture starts from
       // (beginInspectorEdit re-anchors it), so the slider never jumps.
-      if (project == nullptr)
+      // N8 (D-348): the reference is the note's own item; a document target may
+      // belong to any item of the track.
+      const Project *scaleOwner = owner != nullptr ? owner : project;
+      if (scaleOwner == nullptr)
         return 0.0f;
       const auto share = ScaleUtils::correctionShare(
-          *project, note.getLastNonMacroMidiNote(), note.getMidiNote(), pitchReferenceHz);
+          *scaleOwner, note.getLastNonMacroMidiNote(), note.getMidiNote(),
+          pitchReferenceHz);
       return share ? *share * 100.0f : 0.0f;
     }
     case InspectorParam::FlattenCurve:
@@ -4100,6 +4206,40 @@ PianoRollComponent::getInspectorValue(InspectorParam param) const
   return std::nullopt;
 }
 
+std::optional<float>
+PianoRollComponent::getInspectorValue(InspectorParam param) const
+{
+  const auto targets = getInspectorTargets();
+  if (targets.empty())
+    return std::nullopt;
+  const auto owners = inspectorTargetProjects();
+  const Project *owner = owners.empty() ? project : owners.front();
+  return inspectorValueForTarget(param, *targets.front(), owner);
+}
+
+bool PianoRollComponent::inspectorValueIsMixed(InspectorParam param) const
+{
+  // N8 (D-348): the row says "—" when the objective's notes disagree. Without
+  // this, the first note of the document order would pass for all of them.
+  const auto targets = getInspectorTargets();
+  if (targets.size() < 2)
+    return false;
+  const auto owners = inspectorTargetProjects();
+  const Project *firstOwner = owners.empty() ? project : owners.front();
+  const auto first = inspectorValueForTarget(param, *targets.front(), firstOwner);
+  if (!first)
+    return false;
+  for (size_t i = 1; i < targets.size(); ++i)
+  {
+    const Project *owner = i < owners.size() ? owners[i] : project;
+    const auto value =
+        inspectorValueForTarget(param, *targets[i], owner);
+    if (value && std::abs(*value - *first) > 1.0e-4f)
+      return true;
+  }
+  return false;
+}
+
 void PianoRollComponent::beginInspectorEdit(InspectorParam param)
 {
   if (inspectorEditActive)
@@ -4108,7 +4248,9 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
   // with the next one of its item and Volume is applied to that item's audio on
   // release. Over a selection that reaches other items they are refused with a
   // notice instead of being applied to a part of the selection.
-  if (documentBatchApplies() &&
+  // N8 (D-348): the objective may be the whole document, so the item-bound
+  // refusal follows the same test as the batch routing below.
+  if (inspectorBatchApplies() &&
       (param == InspectorParam::Transition || param == InspectorParam::Volume))
   {
     if (onBatchNotice)
@@ -4130,10 +4272,11 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
   inspectorEditProjects.clear();
   inspectorEditNotes.clear();
   inspectorBatchBefore.clear();
-  if (documentBatchApplies())
+  if (inspectorBatchApplies())
   {
-    // One gesture over the whole document selection: every note with its own
-    // item, in (region, note) order.
+    // One gesture over the whole document objective: every note with its own
+    // item, in (region, note) order. With no selection that objective is every
+    // visible note of the index (D-348), not just the active item.
     for (const auto &target : documentBatchTargets())
       if (target.project != nullptr && target.note != nullptr &&
           !target.note->isRest() && !target.note->isDeleted())
@@ -5554,10 +5697,12 @@ bool PianoRollComponent::hasDocumentSelection() const
 
 bool PianoRollComponent::documentBatchApplies() const
 {
+  // N8 (D-348): the objective is the document selection, read from its entries
+  // (each points at a real Note of its own item), never from the project a
+  // hover left active. One entry in another item is enough for the batch path:
+  // everything inside the active item keeps its own single-item path (and undo).
   if (!hasDocumentSelection())
     return false;
-  // Only a selection that reaches another item needs the batch: everything
-  // inside the active item keeps its own single-item path (and its undo).
   for (const auto &entry : documentNoteSelection->entries())
     if (entry.project != nullptr && entry.project != project)
       return true;
@@ -5569,7 +5714,14 @@ PianoRollComponent::documentBatchTargets() const
 {
   if (!documentSelectionAvailable())
     return {};
-  return documentNoteBatch::targetsOf(*documentNoteSelection, *documentNoteIndex);
+  if (!documentNoteSelection->isEmpty())
+    return documentNoteBatch::targetsOf(*documentNoteSelection, *documentNoteIndex);
+  // N8 (D-348): no selection in track mode means "all segments", and the
+  // objective is every visible note of the document. A temporary set is only a
+  // list of pointers: no note and no edit is copied.
+  DocumentNoteSelection allVisible;
+  allVisible.selectAll(*documentNoteIndex);
+  return documentNoteBatch::targetsOf(allVisible, *documentNoteIndex);
 }
 
 void PianoRollComponent::notifyBatchProjects(

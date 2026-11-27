@@ -349,6 +349,8 @@
   "inspector.target_none": "Sin segmentos",
   "inspector.target_selected": "Objetivo: {n} segmento(s) seleccionado(s)",
   "inspector.target_all": "Objetivo: todos los segmentos ({n})",
+  "inspector.target_document": "Objetivo: {n} segmento(s) en {m} ítem(s)",
+  "inspector.mixed": "—",
   "inspector.pitch_drift": "Deriva de afinación",
   "inspector.volume": "Volumen",
   "inspector.correct_pitch": "Corregir afinación",

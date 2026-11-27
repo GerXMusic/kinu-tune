@@ -40,6 +40,8 @@ public:
     void refreshLocalisedText();
     /** Re-reads snap state and slider values now (they are also polled). */
     void refresh() { refreshFromProject(); }
+    /** True when that row is showing the mixed placeholder (N8, D-348). */
+    bool isRowMixed(Param param) const;
     void setEditorMode(EditorUiMode mode);
     // Used by the top-bar global scale control; same path as the menus.
     void selectScaleRoot(int root) { applyScaleRoot(root); }
@@ -64,6 +66,11 @@ public:
     // whether they are the selection (true) or every segment (false).
     std::function<std::optional<float>(Param)> getParamValue;
     std::function<std::pair<int, bool>()> getTargetCount;
+    // N8 (D-348): items the objective reaches (the inspector says "in {m}
+    // items") and whether the target notes disagree on a value. Both are
+    // queries into the document; the inspector caches neither.
+    std::function<int()> getTargetItemCount;
+    std::function<bool(Param)> getParamValueMixed;
     std::function<void(Param)> onParamEditBegin;
     std::function<void(float)> onParamEditValue;
     std::function<void()> onParamEditEnd;
@@ -122,6 +129,9 @@ private:
         juce::String caption;
         const Param param;
         const double defaultValue;
+        // N8 (D-348): the target notes disagree; paint inspector.mixed
+        // instead of one note's value.
+        bool mixed = false;
     };
 
     // A Melodyne control that exists in the layout but has no engine behind
