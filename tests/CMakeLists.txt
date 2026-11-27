@@ -53,6 +53,9 @@ set(PITCHNET_TEST_SOURCES
     # N2 (D-340): la seleccion del documento (marquesina, shift-clic, seleccionar
     # todo en pista, dedupe de ventanas hermanas y poda al desaparecer un project).
     NoteSelectionTests.cpp
+    # N3 (D-343): la edicion en lote, una operacion sobre la seleccion aplicada
+    # en la toma de cada nota, igual que nota a nota.
+    BatchEditTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp

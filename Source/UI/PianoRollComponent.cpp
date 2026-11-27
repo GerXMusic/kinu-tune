@@ -3894,7 +3894,16 @@ void PianoRollComponent::setUndoManager(PitchUndoManager *manager)
 
 bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
 {
-  if (project == nullptr || semitoneDelta == 0)
+  if (semitoneDelta == 0)
+    return false;
+
+  if (documentBatchApplies())
+    return applyBatchResult(documentNoteBatch::shiftPitch(
+        documentBatchTargets(),
+        [semitoneDelta](const Project &, const Note &)
+        { return std::optional<float>(static_cast<float>(semitoneDelta)); }));
+
+  if (project == nullptr)
     return false;
 
   return shiftNotesBySemitones(
@@ -3904,35 +3913,57 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
 
 bool PianoRollComponent::nudgeSelectedNotesToNextPitch(int direction)
 {
-  if (project == nullptr || direction == 0)
+  if (direction == 0)
     return false;
 
   const float reference = ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
-  const ScaleMode mode = project->getPreferredScaleMode();
-  const int root = project->getScaleRootNote();
-  const bool useScale = project->getDragSnapMode() == DragSnapMode::Scale &&
-                        mode != ScaleMode::None && mode != ScaleMode::Chromatic &&
-                        root >= 0;
+  const auto shiftFor = [=](const Project &owner, const Note &note)
+      -> std::optional<float>
+  {
+    const ScaleMode mode = owner.getPreferredScaleMode();
+    const int root = owner.getScaleRootNote();
+    const bool useScale = owner.getDragSnapMode() == DragSnapMode::Scale &&
+                          mode != ScaleMode::None && mode != ScaleMode::Chromatic &&
+                          root >= 0;
+    // Absolute: step from the nearest semitone (or scale tone) so the
+    // segment lands exactly on the next one.
+    const float adjusted = note.getAdjustedMidiNote();
+    int target = static_cast<int>(std::round(adjusted - reference)) + direction;
+    if (useScale)
+      for (int guard = 0;
+           guard < 12 && !ScaleUtils::isPitchClassInScale(mode, target, root);
+           ++guard)
+        target += direction;
+    return std::optional<float>(static_cast<float>(target) + reference - adjusted);
+  };
+
+  // N3: the batch reads the scale of each note's own item, not the active one.
+  if (documentBatchApplies())
+    return applyBatchResult(
+        documentNoteBatch::shiftPitch(documentBatchTargets(), shiftFor));
+
+  if (project == nullptr)
+    return false;
+
+  Project *const owner = project;
   return shiftNotesBySemitones(
       project->getSelectedNotes(),
-      [=](const Note &note)
-      {
-        // Absolute: step from the nearest semitone (or scale tone) so the
-        // segment lands exactly on the next one.
-        const float adjusted = note.getAdjustedMidiNote();
-        int target = static_cast<int>(std::round(adjusted - reference)) + direction;
-        if (useScale)
-          for (int guard = 0; guard < 12 &&
-                              !ScaleUtils::isPitchClassInScale(mode, target, root);
-               ++guard)
-            target += direction;
-        return std::optional<float>(static_cast<float>(target) + reference - adjusted);
-      });
+      [&shiftFor, owner](const Note &note)
+      { return shiftFor(*owner, note); });
 }
 
 bool PianoRollComponent::nudgeSelectedNotesByCents(int cents)
 {
-  if (project == nullptr || cents == 0)
+  if (cents == 0)
+    return false;
+
+  if (documentBatchApplies())
+    return applyBatchResult(documentNoteBatch::shiftPitch(
+        documentBatchTargets(),
+        [cents](const Project &, const Note &)
+        { return std::optional<float>(static_cast<float>(cents) / 100.0f); }));
+
+  if (project == nullptr)
     return false;
 
   return shiftNotesBySemitones(
@@ -3973,11 +4004,41 @@ std::vector<Note *> PianoRollComponent::getInspectorTargets() const
   return selected.empty() ? all : selected;
 }
 
+int PianoRollComponent::getInspectorTargetCount() const
+{
+  if (documentBatchApplies())
+    return static_cast<int>(documentBatchTargets().size());
+  return static_cast<int>(getInspectorTargets().size());
+}
+
+bool PianoRollComponent::inspectorTargetsAreSelection() const
+{
+  if (documentBatchApplies())
+    return true;
+  const auto targets = getInspectorTargets();
+  return !targets.empty() && targets.front()->isSelected();
+}
+
 float PianoRollComponent::correctionTargetFor(float sourceMidi) const
 {
   if (project != nullptr)
     return ScaleUtils::correctionTargetFor(*project, sourceMidi, pitchReferenceHz);
   return ScaleUtils::snapMidiToSemitone(sourceMidi, pitchReferenceHz);
+}
+
+float PianoRollComponent::correctionTargetFor(const Project &owner,
+                                              float sourceMidi) const
+{
+  return ScaleUtils::correctionTargetFor(owner, sourceMidi, pitchReferenceHz);
+}
+
+const Project &PianoRollComponent::inspectorOwner(size_t index) const
+{
+  if (!inspectorEditProjects.empty() &&
+      index < inspectorEditProjects.size() &&
+      inspectorEditProjects[index] != nullptr)
+    return *inspectorEditProjects[index];
+  return *project;
 }
 
 std::optional<float>
@@ -4032,6 +4093,17 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
 {
   if (inspectorEditActive)
     endInspectorEdit();
+  // N3: two sliders need the active item itself — Transition joins the note
+  // with the next one of its item and Volume is applied to that item's audio on
+  // release. Over a selection that reaches other items they are refused with a
+  // notice instead of being applied to a part of the selection.
+  if (documentBatchApplies() &&
+      (param == InspectorParam::Transition || param == InspectorParam::Volume))
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_item_bound"));
+    return;
+  }
   // D-225: Transition is the only slider that requires an explicit selection;
   // without one it must not fall back to "every segment" (that would apply a
   // gesture to the whole project).
@@ -4044,21 +4116,40 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
     if (!anySelected)
       return;
   }
-  inspectorEditNotes = getInspectorTargets();
+  inspectorEditProjects.clear();
+  inspectorEditNotes.clear();
+  if (documentBatchApplies())
+  {
+    // One gesture over the whole document selection: every note with its own
+    // item, in (region, note) order.
+    for (const auto &target : documentBatchTargets())
+      if (target.project != nullptr && target.note != nullptr &&
+          !target.note->isRest() && !target.note->isDeleted())
+      {
+        inspectorEditNotes.push_back(target.note);
+        inspectorEditProjects.push_back(target.project);
+      }
+  }
+  else
+  {
+    inspectorEditNotes = getInspectorTargets();
+  }
   if (inspectorEditNotes.empty())
     return;
   inspectorEditActive = true;
   inspectorEditParam = param;
   inspectorEditOldParams.clear();
   inspectorEditSourceMidi.clear();
-  for (auto *note : inspectorEditNotes)
+  for (size_t i = 0; i < inspectorEditNotes.size(); ++i)
   {
+    auto *note = inspectorEditNotes[i];
+    const Project &owner = inspectorOwner(i);
     inspectorEditOldParams.push_back(TransformParams::fromNote(*note));
     // A pitch that is not a 0-100% correction of its reference (older
     // projects, pitch drawing) starts over from where it is, so the slider
     // never jumps. The undo step restores the old reference.
-    if (param == InspectorParam::CorrectPitch && project != nullptr &&
-        !ScaleUtils::correctionShare(*project, note->getLastNonMacroMidiNote(),
+    if (param == InspectorParam::CorrectPitch &&
+        !ScaleUtils::correctionShare(owner, note->getLastNonMacroMidiNote(),
                                      note->getMidiNote(), pitchReferenceHz))
       NotePitch::setCorrectionSource(*note, note->getMidiNote());
     inspectorEditSourceMidi.push_back(note->getLastNonMacroMidiNote());
@@ -4067,7 +4158,10 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
 
 void PianoRollComponent::setInspectorEditValue(float value)
 {
-  if (!inspectorEditActive || project == nullptr)
+  if (!inspectorEditActive)
+    return;
+  const bool batch = !inspectorEditProjects.empty();
+  if (!batch && project == nullptr)
     return;
 
   int minFrame = std::numeric_limits<int>::max();
@@ -4075,12 +4169,15 @@ void PianoRollComponent::setInspectorEditValue(float value)
   for (size_t i = 0; i < inspectorEditNotes.size(); ++i)
   {
     auto *note = inspectorEditNotes[i];
+    // N3: each note is edited against its own item, so one gesture can span
+    // the whole document selection.
+    const Project &owner = inspectorOwner(i);
     switch (inspectorEditParam)
     {
       case InspectorParam::CorrectPitch:
       {
         const float source = inspectorEditSourceMidi[i];
-        const float target = correctionTargetFor(source);
+        const float target = correctionTargetFor(owner, source);
         NotePitch::applyCorrection(
             *note, target + (source - target) * (1.0f - value / 100.0f));
         break;
@@ -4153,9 +4250,42 @@ void PianoRollComponent::setInspectorEditValue(float value)
   {
     // D-308: the base no longer depends on the tilt (the body is the centre
     // and the three layers live in the delta), so every pitch preview is a
-    // delta rebuild.
-    PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
-    project->markNoteEditDirtyRange(minFrame, maxFrame);
+    // delta rebuild. In a batch every item rebuilds its own notes.
+    if (batch)
+    {
+      std::vector<Project *> owners;
+      std::vector<std::vector<Note *>> groups;
+      for (size_t i = 0; i < inspectorEditNotes.size(); ++i)
+      {
+        auto *owner = inspectorEditProjects[i];
+        auto found = std::find(owners.begin(), owners.end(), owner);
+        if (found == owners.end())
+        {
+          owners.push_back(owner);
+          groups.push_back({});
+          found = owners.end() - 1;
+        }
+        groups[static_cast<size_t>(found - owners.begin())]
+            .push_back(inspectorEditNotes[i]);
+      }
+      for (size_t group = 0; group < owners.size(); ++group)
+      {
+        int first = std::numeric_limits<int>::max();
+        int last = std::numeric_limits<int>::min();
+        for (auto *note : groups[group])
+        {
+          first = std::min(first, note->getStartFrame());
+          last = std::max(last, note->getEndFrame());
+        }
+        PitchCurveProcessor::rebuildDeltaForNotes(*owners[group], groups[group]);
+        owners[group]->markNoteEditDirtyRange(first, last);
+      }
+    }
+    else
+    {
+      PitchCurveProcessor::rebuildDeltaForNotes(*project, inspectorEditNotes);
+      project->markNoteEditDirtyRange(minFrame, maxFrame);
+    }
     invalidateBasePitchCache();
     if (onPitchEdited)
       onPitchEdited();
@@ -4169,19 +4299,26 @@ void PianoRollComponent::endInspectorEdit()
     return;
   inspectorEditActive = false;
   auto notes = std::move(inspectorEditNotes);
+  auto projects = std::move(inspectorEditProjects);
   auto oldParams = std::move(inspectorEditOldParams);
   inspectorEditSourceMidi.clear();
   inspectorEditNotes.clear();
+  inspectorEditProjects.clear();
+  // N3: a gesture over the document selection carries one item per note; the
+  // classic one carries none and everything belongs to the active project.
+  const bool batch = !projects.empty();
+  if (notes.empty() || (!batch && project == nullptr))
+    return;
   // References as they were before the gesture (beginInspectorEdit may have
   // re-anchored them).
   std::vector<float> oldSource;
   for (const auto &params : oldParams)
     oldSource.push_back(params.correctionSource);
-  if (project == nullptr || notes.empty())
-    return;
 
   if (inspectorEditParam == InspectorParam::Volume)
   {
+    if (batch)
+      return; // refused at begin: it needs the active item
     std::vector<float> before, after;
     for (size_t i = 0; i < notes.size(); ++i)
     {
@@ -4218,16 +4355,45 @@ void PianoRollComponent::endInspectorEdit()
     return;
   }
 
-  int minFrame = std::numeric_limits<int>::max();
-  int maxFrame = std::numeric_limits<int>::min();
-  for (auto *note : notes)
+  std::vector<Project *> owners;
+  if (batch)
   {
-    note->markSynthDirty();
-    minFrame = std::min(minFrame, note->getStartFrame());
-    maxFrame = std::max(maxFrame, note->getEndFrame());
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+      auto *owner = projects[i];
+      if (std::find(owners.begin(), owners.end(), owner) == owners.end())
+        owners.push_back(owner);
+      notes[i]->markSynthDirty();
+    }
+    for (auto *owner : owners)
+    {
+      std::vector<Note *> group;
+      int first = std::numeric_limits<int>::max();
+      int last = std::numeric_limits<int>::min();
+      for (size_t i = 0; i < notes.size(); ++i)
+        if (projects[i] == owner)
+        {
+          group.push_back(notes[i]);
+          first = std::min(first, notes[i]->getStartFrame());
+          last = std::max(last, notes[i]->getEndFrame());
+        }
+      PitchCurveProcessor::rebuildBaseFromNotes(*owner);
+      owner->markNoteEditDirtyRange(first, last);
+    }
   }
-  PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  project->markNoteEditDirtyRange(minFrame, maxFrame);
+  else
+  {
+    int minFrame = std::numeric_limits<int>::max();
+    int maxFrame = std::numeric_limits<int>::min();
+    for (auto *note : notes)
+    {
+      note->markSynthDirty();
+      minFrame = std::min(minFrame, note->getStartFrame());
+      maxFrame = std::max(maxFrame, note->getEndFrame());
+    }
+    PitchCurveProcessor::rebuildBaseFromNotes(*project);
+    project->markNoteEditDirtyRange(minFrame, maxFrame);
+  }
   invalidateBasePitchCache();
 
   // Indexed by InspectorParam: every new parameter must get its name here, or
@@ -4240,10 +4406,20 @@ void PianoRollComponent::endInspectorEdit()
   static_assert(sizeof(names) / sizeof(names[0]) ==
                     static_cast<size_t>(InspectorParam::Tilt) + 1,
                 "undo name table out of sync with InspectorParam");
-  if (undoManager)
+  // N4 owns the single document-level undo step. Until it exists, a gesture
+  // that crossed items must not register a partial action: undoing half the
+  // selection would leave the edit looking wrong.
+  if (!batch && undoManager)
     undoManager->addAction(std::make_unique<InspectorEditAction>(
         project, notes, oldParams, newParams, oldSource, newSource,
         names[static_cast<int>(inspectorEditParam)]));
+
+  if (batch)
+  {
+    notifyBatchProjects(owners);
+    repaint();
+    return;
+  }
 
   if (onPitchEdited)
     onPitchEdited();
@@ -4354,6 +4530,7 @@ void PianoRollComponent::dropTransientNotePointers()
   // committed safely any more (the list may already be rebuilt).
   inspectorEditActive = false;
   inspectorEditNotes.clear();
+  inspectorEditProjects.clear();
   if (selectHandler_)
     selectHandler_->cancel();  inspectorEditOldParams.clear();
   inspectorEditSourceMidi.clear();
@@ -4460,12 +4637,24 @@ void PianoRollComponent::selectFollowingSamePitch(Note &note)
 
 bool PianoRollComponent::quantizeTimeSelection(int strengthPercent)
 {
-  if (project == nullptr)
-    return false;
-
   // The visible grid is the reference: tempo, beat signature and subdivision
   // already come from the host (updateHostTimelineState).
   const double gridSeconds = getTimelineGridSeconds();
+
+  // N3: with a selection that reaches other items, every item is quantized
+  // against the same host grid (its phase comes from the window offset), and
+  // the whole operation is refused if any item's plan is unsafe.
+  if (documentBatchApplies())
+  {
+    if (gridSeconds <= 1.0e-9)
+      return false;
+    return applyBatchResult(documentNoteBatch::quantize(
+        documentBatchTargets(), gridSeconds, strengthPercent));
+  }
+
+  if (project == nullptr)
+    return false;
+
   if (gridSeconds <= 1.0e-9)
     return false;
 
@@ -4521,6 +4710,27 @@ bool PianoRollComponent::quantizeTimeSelection(int strengthPercent)
 bool PianoRollComponent::setMutedForNotes(const std::vector<Note *> &notes,
                                           bool muted)
 {
+  // N3: when the caller passed exactly the active item's part of a document
+  // selection, the action is the whole selection, each note in its own item.
+  // With a single clicked note that is not in the selection, nothing changes:
+  // it stays the one-note action it always was.
+  if (documentBatchApplies())
+  {
+    const auto activeSelected = getSelectedNotes();
+    const bool callerMeantSelection =
+        notes.size() == activeSelected.size() &&
+        std::all_of(notes.begin(), notes.end(),
+                    [&activeSelected](const Note *note)
+                    {
+                      return std::find(activeSelected.begin(),
+                                       activeSelected.end(),
+                                       note) != activeSelected.end();
+                    });
+    if (callerMeantSelection)
+      return applyBatchResult(
+          documentNoteBatch::setMuted(documentBatchTargets(), muted));
+  }
+
   if (project == nullptr || notes.empty())
     return false;
 
@@ -4558,6 +4768,10 @@ bool PianoRollComponent::setMutedForNotes(const std::vector<Note *> &notes,
 
 bool PianoRollComponent::deleteSelection()
 {
+  // N3: one delete over the document selection, each note in its own item.
+  if (documentBatchApplies())
+    return applyBatchResult(documentNoteBatch::deleteNotes(documentBatchTargets()));
+
   if (project == nullptr)
     return false;
 
@@ -4608,6 +4822,17 @@ bool PianoRollComponent::deleteSelection()
 
 bool PianoRollComponent::muteSelection()
 {
+  // N3: the whole document selection, toggled on its own notes.
+  if (documentBatchApplies())
+  {
+    bool allMuted = true;
+    for (const auto &target : documentBatchTargets())
+      if (target.note != nullptr)
+        allMuted = allMuted && target.note->isMuted();
+    return applyBatchResult(
+        documentNoteBatch::setMuted(documentBatchTargets(), !allMuted));
+  }
+
   if (project == nullptr)
     return false;
 
@@ -4704,26 +4929,22 @@ bool PianoRollComponent::shiftNotesBySemitones(
       continue;
 
     const auto semitoneDelta = shiftForNote(*note);
-    if (!semitoneDelta || std::abs(*semitoneDelta) < 1.0e-6f)
+    if (!semitoneDelta)
       continue;
 
-    const float oldMidi = note->getMidiNote();
-    const float offset = note->getPitchOffset();
-    const float oldAdjustedMidi = oldMidi + offset;
-    const float movedAdjustedMidi =
-        juce::jlimit(minMidi, maxMidi,
-                     oldAdjustedMidi + *semitoneDelta);
-    const float movedMidi = movedAdjustedMidi - offset;
-
-    if (std::abs(movedMidi - oldMidi) <= 1.0e-6f)
+    // N3: the clamp and the carried reference are NotePitch::editTarget's, the
+    // same function the document-level batch uses, so a selection gives the
+    // same values whether it is edited one item at a time or all at once.
+    const auto edit = NotePitch::editTarget(*project, *note, *semitoneDelta,
+                                            minMidi, maxMidi);
+    if (!edit)
       continue;
 
     notesToMove.push_back(note);
-    oldMidis.push_back(oldMidi);
-    newMidis.push_back(movedMidi);
+    oldMidis.push_back(note->getMidiNote());
+    newMidis.push_back(edit->midi);
     oldSources.push_back(note->getLastNonMacroMidiNote());
-    newSources.push_back(NotePitch::sourceAfterEdit(
-        *project, *note, note->getLastNonMacroMidiNote(), oldMidi, movedMidi));
+    newSources.push_back(edit->source);
     dirtyStartFrame = std::min(dirtyStartFrame, note->getStartFrame());
     dirtyEndFrame = std::max(dirtyEndFrame, note->getEndFrame());
   }
@@ -5244,6 +5465,87 @@ std::vector<Note *> PianoRollComponent::getSelectedNotes() const
   return selected;
 }
 
+bool PianoRollComponent::hasDocumentSelection() const
+{
+  return documentSelectionAvailable() && !documentNoteSelection->isEmpty();
+}
+
+bool PianoRollComponent::documentBatchApplies() const
+{
+  if (!hasDocumentSelection())
+    return false;
+  // Only a selection that reaches another item needs the batch: everything
+  // inside the active item keeps its own single-item path (and its undo).
+  for (const auto &entry : documentNoteSelection->entries())
+    if (entry.project != nullptr && entry.project != project)
+      return true;
+  return false;
+}
+
+std::vector<documentNoteBatch::Target>
+PianoRollComponent::documentBatchTargets() const
+{
+  if (!documentSelectionAvailable())
+    return {};
+  return documentNoteBatch::targetsOf(*documentNoteSelection, *documentNoteIndex);
+}
+
+void PianoRollComponent::notifyBatchProjects(
+    const std::vector<Project *> &projects)
+{
+  bool activeTouched = false;
+  for (auto *owner : projects)
+  {
+    if (owner == nullptr)
+      continue;
+    if (owner == project)
+    {
+      activeTouched = true;
+      continue;
+    }
+    // The edit is in another item: persist it and ask for its render through
+    // the same target the track drag uses (D-247: whoever dirties, requests).
+    if (!getTrackEditTargets)
+      continue;
+    for (const auto &target : getTrackEditTargets())
+      if (target.project == owner)
+      {
+        if (target.isValid && !target.isValid())
+          continue;
+        if (target.onChanged)
+          target.onChanged(true);
+        break;
+      }
+  }
+  if (activeTouched)
+  {
+    invalidateBasePitchCache();
+    if (onPitchEdited)
+      onPitchEdited();
+    if (onPitchEditFinished)
+      onPitchEditFinished();
+  }
+  // A delete cleared the flags of its notes: the set must drop them.
+  documentNoteSelection->refresh(documentNoteIndex.get());
+  applyDocumentSelection();
+}
+
+bool PianoRollComponent::applyBatchResult(
+    const documentNoteBatch::Result &result)
+{
+  if (result.rejected())
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_rejected"));
+    return false;
+  }
+  if (!result.applied())
+    return false;
+  notifyBatchProjects(result.projects);
+  repaint();
+  return true;
+}
+
 void PianoRollComponent::updatePitchToolHandlesFromSelection()
 {
   // The per-note smart-control cluster was retired (2026-11-22): its
@@ -5493,6 +5795,15 @@ bool PianoRollComponent::glueTargetNote(bool next)
 
 void PianoRollComponent::resetSelection(NoteRestoreMode mode)
 {
+  // N3: the resets are one undoable action over one item's notes; over a
+  // selection that reaches other items they are refused with a notice instead
+  // of restoring a part of it.
+  if (documentBatchApplies())
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_item_bound"));
+    return;
+  }
   auto selected = getSelectedNotes();
   if (selected.empty())
     return;

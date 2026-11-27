@@ -5,6 +5,7 @@
 #include "../Audio/Engine/HostTempoMap.h"
 #include "../Models/Project.h"
 #include "../Models/DocumentNoteSelection.h"
+#include "../Models/DocumentNoteBatch.h"
 #include "../Models/MidiGuideGhosts.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
@@ -94,6 +95,11 @@ public:
   // D-279: Melodyne's Reset Individual Edits categories.
   enum class NoteRestoreMode { Pitch, Formant, Amplitude, Timing, All };
   std::vector<Note *> getInspectorTargets() const;
+  // N3: how many notes an inspector gesture would move (the whole document
+  // selection when it reaches other items) and whether they come from a
+  // selection rather than from the "every note of the item" fallback.
+  int getInspectorTargetCount() const;
+  bool inspectorTargetsAreSelection() const;
   // Value shown for the first target, or nullopt when there are no targets.
   std::optional<float> getInspectorValue(InspectorParam param) const;
   void beginInspectorEdit(InspectorParam param);
@@ -139,6 +145,18 @@ public:
   // (deleted + rest), undoable y con re-render por bloque. Devuelve false si
   // no hay proyecto ni notas que eliminar.
   bool deleteSelection();
+
+  // N3 (D-343): a batch is in force when the document selection reaches an item
+  // other than the active one. Then one operation (pitch nudge, tilt, mute,
+  // delete, quantize) applies to every selected note in its own item, in
+  // (region, note) order. The document-level undo step is N4: while that is
+  // missing, a batch edit is applied without adding its own undo action.
+  bool documentBatchApplies() const;
+  // True when the document selection has any note (track mode with an index).
+  bool hasDocumentSelection() const;
+  // Non-modal notice for a batch that was refused (item-bound operation, or a
+  // quantize that would collapse or overlap a note). Empty when nobody listens.
+  std::function<void(const juce::String &)> onBatchNotice;
 
   // D-267 (T7): reset de una nota por indice, por el mismo camino que el boton
   // y el menu (ResetNoteEditsAction: pitch, formante, amplitud, tiempo, motor y
@@ -625,9 +643,21 @@ private:
   bool inspectorEditActive = false;
   InspectorParam inspectorEditParam = InspectorParam::CorrectPitch;
   std::vector<Note *> inspectorEditNotes;
+  // N3: the item of each note of a batch inspector gesture. Empty means the
+  // classic single-item gesture (every note belongs to `project`).
+  std::vector<Project *> inspectorEditProjects;
   std::vector<TransformParams> inspectorEditOldParams;
   std::vector<float> inspectorEditSourceMidi;
   float correctionTargetFor(float sourceMidi) const;
+  float correctionTargetFor(const Project &owner, float sourceMidi) const;
+  // The item of the note at `index` of an inspector gesture (N3: a batch one
+  // carries one project per note; a single-item one has none recorded).
+  const Project &inspectorOwner(size_t index) const;
+  // N3: the inspector targets of the whole track and the batch plumbing they
+  // share with the note commands.
+  std::vector<documentNoteBatch::Target> documentBatchTargets() const;
+  bool applyBatchResult(const documentNoteBatch::Result &result);
+  void notifyBatchProjects(const std::vector<Project *> &projects);
   bool absoluteDragSnap = true; // Pitch Snap Mode Absolute by default
   // The first click of the current (double-)click landed on a segment. The
   // double-click splits it, after which the double-click point may hit no

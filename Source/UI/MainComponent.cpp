@@ -780,9 +780,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   { return pianoRoll.getInspectorValue(static_cast<InspectorParam>(param)); };
   variAudioInspector.getTargetCount = [this]
   {
-    const auto targets = pianoRoll.getInspectorTargets();
-    const bool selection = !targets.empty() && targets.front()->isSelected();
-    return std::pair<int, bool>{static_cast<int>(targets.size()), selection};
+    return std::pair<int, bool>{pianoRoll.getInspectorTargetCount(),
+                                pianoRoll.inspectorTargetsAreSelection()};
   };
   variAudioInspector.onParamEditBegin = [this](VariAudioInspector::Param param)
   { pianoRoll.beginInspectorEdit(static_cast<InspectorParam>(param)); };
@@ -1291,6 +1290,10 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
+  // N3: a batch the editor refuses (an item-bound operation, or a quantize
+  // that would collapse or overlap a note) says so instead of doing half of it.
+  pianoRoll.onBatchNotice = [this](const juce::String &message)
+  { setStatusMessage(message); };
   // D-279: the canvas menu uses the same two macro paths as the inspector.
   pianoRoll.onCorrectPitchMacroRequested = [this]
   { applyCorrectPitchMacro(); };
@@ -7891,7 +7894,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo(TR("command.quantize_time"), TR("command.quantize_time.desp"),
                    TR("category.macros"), 0);
     result.addDefaultKeypress('t', primaryModifier | juce::ModifierKeys::shiftModifier);
-    result.setActive(project != nullptr);
+    result.setActive(project != nullptr || pianoRoll.hasDocumentSelection());
     break;
 
   case CommandIDs::leveling:
@@ -7925,22 +7928,27 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setInfo(TR("command.delete_notes"), TR("command.delete_notes.desp"),
                    TR("menu.edit"), 0);
     result.addDefaultKeypress(juce::KeyPress::deleteKey, 0);
-    result.setActive(project != nullptr &&
-                     !pianoRoll.getSelectedNotes().empty());
+    // N3: a selection that reaches other items counts too: the delete is a
+    // batch then, and the active item's own list may be empty.
+    result.setActive(pianoRoll.hasDocumentSelection() ||
+                     (project != nullptr &&
+                      !pianoRoll.getSelectedNotes().empty()));
     break;
 
   case CommandIDs::muteNotes:
     result.setInfo(TR("command.mute_notes"), TR("command.mute_notes.desp"),
                    TR("menu.edit"), 0);
-    result.setActive(project != nullptr &&
-                     !pianoRoll.getSelectedNotes().empty());
+    result.setActive(pianoRoll.hasDocumentSelection() ||
+                     (project != nullptr &&
+                      !pianoRoll.getSelectedNotes().empty()));
     break;
 
   case CommandIDs::unmuteNotes:
     result.setInfo(TR("command.unmute_notes"), TR("command.unmute_notes.desp"),
                    TR("menu.edit"), 0);
-    result.setActive(project != nullptr &&
-                     !pianoRoll.getSelectedNotes().empty());
+    result.setActive(pianoRoll.hasDocumentSelection() ||
+                     (project != nullptr &&
+                      !pianoRoll.getSelectedNotes().empty()));
     break;
 
   case CommandIDs::mergeNotes:

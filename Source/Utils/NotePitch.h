@@ -7,6 +7,9 @@
 #include "../Models/Project.h"
 #include "ScaleUtils.h"
 
+#include <cmath>
+#include <optional>
+
 // The only place that writes a note's pitch (Note::midiNote) and its Correct
 // Pitch reference (Note::lastNonMacroMidiNote, "the sung pitch"). Every pitch
 // write in the editor is one of the operations below; the
@@ -45,6 +48,41 @@ inline void restore(Note &note, float midi, float correctionSource)
 {
     note.setMidiNote(midi);
     note.setLastNonMacroMidiNote(correctionSource);
+}
+
+// N3: the result of a relative pitch edit (drag, arrow keys, harmony, guide),
+// worked out before anything is written so a batch can plan first and write
+// only when the whole selection is valid.
+struct PitchEdit
+{
+    float midi = 0.0f;
+    float source = 0.0f;
+};
+
+// Relative move by `semitoneDelta` on the on-screen pitch (midi + visible
+// offset), clamped to the editor range, with the reference carried as an edit
+// keeps it. Null when the note is a rest, the delta is nil, or the clamp leaves
+// the note exactly where it was. The drag, the arrow-key nudge and the
+// document-level batch all come through here, so they cannot disagree.
+inline std::optional<PitchEdit>
+editTarget(const Project &project, const Note &note, float semitoneDelta,
+           float minMidi, float maxMidi)
+{
+    if (note.isRest() || std::abs(semitoneDelta) < 1.0e-6f)
+        return std::nullopt;
+
+    const float oldMidi = note.getMidiNote();
+    const float offset = note.getPitchOffset();
+    const float movedAdjustedMidi =
+        juce::jlimit(minMidi, maxMidi, note.getAdjustedMidiNote() + semitoneDelta);
+    const float movedMidi = movedAdjustedMidi - offset;
+
+    if (std::abs(movedMidi - oldMidi) <= 1.0e-6f)
+        return std::nullopt;
+
+    return PitchEdit{movedMidi,
+                     sourceAfterEdit(project, note, note.getLastNonMacroMidiNote(),
+                                     oldMidi, movedMidi)};
 }
 
 // Correct Pitch itself and the Pitch Center macro: the pitch moves towards

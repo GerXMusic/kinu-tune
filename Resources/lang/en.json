@@ -196,6 +196,8 @@
   "status.rendered": "Last render: {engine}",
   "status.render_failed": "Render failed: {engine}",
   "status.render_none": "Not rendered yet",
+  "notice.batch_rejected": "The batch was not applied: it would collapse or overlap a note.",
+  "notice.batch_item_bound": "That edit works on one item: select notes of a single item.",
   "quantize.pitch_center": "Pitch Center",
   "quantize.pitch_drift": "Pitch Drift",
   "quantize.snap_to_scale": "Snap to Scale",
