@@ -29,14 +29,37 @@ int main() {
   roll.setScrollX(0); roll.setScrollY(0);
   auto regions = std::make_shared<std::vector<MainViewRegionPreview>>();
   MainViewRegionPreview first;
-  first.active = true; first.sourceProject = &a; first.startSeconds = 0; first.endSeconds = 0.5;
+  first.key = "a";
+  first.active = true; first.project = &a; first.startSeconds = 0; first.endSeconds = 0.5;
+  first.sourceStartSeconds = 0; first.sourceEndSeconds = 0.5;
   regions->push_back(first);
   MainViewRegionPreview second;
-  second.project = std::make_shared<Project>(b);
-  second.sourceProject = &b; second.startSeconds = 1; second.endSeconds = 1.5;
+  second.key = "b";
+  // N10 (D-350): the preview borrows the live Project; no window copy.
+  second.project = &b; second.startSeconds = 1; second.endSeconds = 1.5;
+  second.sourceStartSeconds = 0; second.sourceEndSeconds = 0.5;
   second.projectHostOffsetSeconds = 1;
   regions->push_back(second);
   roll.setRegionPreviews(regions);
+  // The canvas draws and hit-tests the document index; these are its notes.
+  std::vector<DocumentNoteRegionSpec> specs;
+  for (const auto& entry : {std::pair<juce::String, Project*>{"a", &a},
+                            std::pair<juce::String, Project*>{"b", &b}}) {
+    DocumentNoteRegionSpec spec;
+    spec.key = entry.first;
+    spec.name = entry.first;
+    spec.modificationKey = entry.first;
+    spec.sourceKey = entry.first + ".wav";
+    spec.hostStartSeconds = 0.0;
+    spec.hostEndSeconds = 0.5;
+    spec.sourceStartSeconds = 0.0;
+    spec.sourceEndSeconds = 0.5;
+    spec.project = entry.second;
+    specs.push_back(spec);
+  }
+  auto noteIndex = buildDocumentNoteIndex("track", specs);
+  auto noteSelection = std::make_shared<DocumentNoteSelection>();
+  roll.setDocumentNoteContext(noteIndex, noteSelection);
   bool bAlive = true;
   int aRenders = 0, bRenders = 0;
   roll.onPitchEditFinished = [&] { ++aRenders; };
@@ -50,7 +73,7 @@ int main() {
   // A newly focused region can be published before its analysis completes.
   // Its canvas then gains notes, but selection must also receive the new
   // source binding without recreating the component/editor.
-  (*regions)[0].sourceProject = nullptr;
+  (*regions)[0].project = nullptr;
   roll.setRegionPreviews(regions);
   CHECK(roll.beginTrackGesture(event(roll, {31, header + 1})));
   roll.updateTrackGesture(event(roll, {220, header + 3*h}));
@@ -59,13 +82,13 @@ int main() {
   a.getNotes()[0].setSelected(false);
   b.getNotes()[0].setSelected(false);
   auto analyzedRegions = std::make_shared<std::vector<MainViewRegionPreview>>(*regions);
-  (*analyzedRegions)[0].sourceProject = &a;
+  (*analyzedRegions)[0].project = &a;
   roll.setRegionPreviews(analyzedRegions);
   CHECK(roll.beginTrackGesture(event(roll, {31, header + 1})));
   roll.updateTrackGesture(event(roll, {220, header + 3*h}));
   roll.finishTrackGesture();
   CHECK(a.getNotes()[0].isSelected() && b.getNotes()[0].isSelected());
-  CHECK(second.project->getNotes()[0].isSelected());
+  CHECK(second.project == &b);
   CHECK(!history.canUndo());
   const float x = PianoRollComponent::pianoKeysWidth + framesToSeconds(10) * roll.getPixelsPerSecond();
   CHECK(roll.beginTrackGesture(event(roll, {x, header + 1.5f*h})));
@@ -88,13 +111,13 @@ int main() {
   auto peers = std::make_shared<std::vector<MainViewRegionPreview>>(*analyzedRegions);
   (*peers)[0].key = "a";
   (*peers)[0].active = true;
-  (*peers)[0].project = std::make_shared<Project>(a);
+  (*peers)[0].project = &a;
   (*peers)[1].key = "b";
   (*peers)[1].active = false;
   (*peers)[1].startSeconds = 0;
   (*peers)[1].endSeconds = 0.5;
   (*peers)[1].projectHostOffsetSeconds = 0;
-  (*peers)[1].project = std::make_shared<Project>(b);
+  (*peers)[1].project = &b;
   roll.setRegionPreviews(peers);
   juce::String routed;
   roll.onInactiveRegionClicked = [&](const juce::String& key) {

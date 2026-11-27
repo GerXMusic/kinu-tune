@@ -2353,6 +2353,10 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
     undoManager->clear();
     for (auto &[regionKey, regionState] : araRegions) {
       juce::ignoreUnused(regionKey);
+      // N10 (D-350): every Project is about to go; the publications that point
+      // into them must go first.
+      if (mainComponent != nullptr && regionState.project)
+        mainComponent->releaseBorrowedProject(regionState.project.get());
       if (regionState.undoManager)
         regionState.undoManager->clear();
     }
@@ -3161,6 +3165,11 @@ void PitchNetAudioProcessor::forgetAraModification(
   for (auto& entry : trackUndoManagers) entry.second->removeContext(key);
   const auto it = araRegions.find(key);
   if (it != araRegions.end()) {
+    // N10 (D-350): the editor's previews and note index borrow this Project's
+    // Notes. Drop them before the Project dies, or a repaint could read freed
+    // memory. The next publication rebuilds both.
+    if (mainComponent != nullptr && it->second.project)
+      mainComponent->releaseBorrowedProject(it->second.project.get());
     if (it->second.undoManager != nullptr)
       it->second.undoManager->clear();
     araRegions.erase(it);
@@ -3435,6 +3444,11 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
         regionKey == activeRegionKey ? activeRegionKey : juce::String();
 
     auto &archivedState = araRegions[regionKey];
+    // N10 (D-350): a replacement destroys the previous Project; drop whatever
+    // the editor published from it first.
+    if (mainComponent != nullptr && archivedState.project &&
+        archivedState.project.get() != project.get())
+      mainComponent->releaseBorrowedProject(archivedState.project.get());
     archivedState.project = std::move(project);
     archivedState.ensureUndoManager()->clear();
     for (auto& entry : trackUndoManagers) entry.second->removeContext(regionKey);

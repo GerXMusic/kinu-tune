@@ -8,25 +8,29 @@
 class Project;
 
 /**
- * Read-only picture of one ARA playback region, for drawing every region of a
- * track on the canvas and in the thumbnail while only one region (the active
- * one) is editable.
+ * One ARA playback region of a track, as track mode draws it.
  *
- * All times are absolute host-timeline seconds. The UI must not depend on the
- * ARA SDK, so the plug-in builds these from each region's own Project and
- * hands them over as plain data.
+ * N10 (D-350): a preview BORROWS the modification's live Project; it owns no
+ * Project and keeps no copy of its notes. The document index, the drawing and
+ * the hit-test therefore read the same Note objects, and an edit lands in the
+ * one place that holds it.
+ *
+ * Lifetime: `project` is a non-owning pointer into the processor's region
+ * store or the canvas. It is valid while the list it belongs to is published.
+ * The publisher republishes the list whenever a region's project pointer, its
+ * revision or its window changes, and the processor drops the published list
+ * before it destroys or replaces a modification's Project
+ * (PitchNetAudioProcessor calls updateRegionPreviews(nullptr) on the two paths
+ * that do). Nothing here may outlive that call.
+ *
+ * All host times are absolute host-timeline seconds. The UI must not depend on
+ * the ARA SDK.
  */
 struct MainViewRegionPreview {
-  struct NoteShape {
-    double startSeconds = 0.0;
-    double endSeconds = 0.0;
-    float midi = 0.0f; // adjusted pitch (includes the note's pitch offset)
-  };
-
   juce::String key;
   juce::String name;
-  double startSeconds = 0.0;
-  double endSeconds = 0.0;
+  double startSeconds = 0.0; // host: first second of the item
+  double endSeconds = 0.0;   // host: one past its last second
   bool active = false;
   // A region of another track the user pinned in the track list. Drawn as
   // notes only (no waveform, pitch curve, boundaries or overview), with the
@@ -36,22 +40,23 @@ struct MainViewRegionPreview {
   // False when the region has not been analysed yet: only its range is known.
   bool hasContent = false;
 
-  std::vector<NoteShape> notes;
+  // The live Project this item shows (the modification's own), borrowed and
+  // never written from here. Null when the item has no analysis yet.
+  Project *project = nullptr;
 
-  // The region's window of its modification's Project, rebased so its time
-  // zero is the window start and cut down to what the note and pitch-curve
-  // renderers read (notes, pitch arrays, the window's audio). Drawn in Track
-  // mode with the same renderers as the active region, then greyed.
-  // projectHostOffsetSeconds is the host time of this Project's zero.
-  std::shared_ptr<Project> project;
-  const Project* sourceProject = nullptr;
-  int sourceFirstFrame = 0;
+  // The item's window inside that Project, in project seconds, taken from the
+  // same ARA start/end the document index publishes so the drawn window and
+  // the indexed notes cannot disagree.
+  double sourceStartSeconds = 0.0;
+  double sourceEndSeconds = 0.0;
+
+  // Host time of the Project's zero: host = project + projectHostOffsetSeconds.
+  // The one offset the drawing and the hit-test place notes with.
   double projectHostOffsetSeconds = 0.0;
 
-  // The region's own audio (first channel, the one the canvas draws),
-  // starting at waveformStartSeconds. Inactive regions are drawn from it with
-  // the same envelope code as the active region, so they look identical.
-  // Shared so republishing previews never copies the audio.
+  // The region's own audio (first channel, the one the overview draws),
+  // starting at waveformStartSeconds. Shared so republishing previews never
+  // copies the audio.
   std::shared_ptr<const std::vector<float>> waveformSamples;
   double waveformSampleRate = 0.0;
   double waveformStartSeconds = 0.0;

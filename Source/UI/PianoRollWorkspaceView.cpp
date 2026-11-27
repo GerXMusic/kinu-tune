@@ -569,6 +569,13 @@ void PianoRollWorkspaceView::setRegionPreviews(
   overviewPanel.setRegionPreviews(withoutPinnedRegions(previews));
 }
 
+void PianoRollWorkspaceView::setDocumentNoteIndex(DocumentNoteIndexPtr index)
+{
+  // The overview draws the inactive items from the same enumeration the canvas
+  // and the hit-test read (N10, D-350); pinned clips are not in it.
+  overviewPanel.setDocumentNoteIndex(std::move(index));
+}
+
 void PianoRollWorkspaceView::refreshOverview()
 {
   if (overviewVisible)

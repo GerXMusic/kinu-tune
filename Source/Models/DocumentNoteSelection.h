@@ -22,8 +22,8 @@
  * file and nowhere else (SourceGuard_note-selection enforces it): applyToNotes()
  * derives every flag of every live project from the set, and every other entry
  * point here (setNoteSelected, selectAllOfProject, clearProject,
- * inheritSelectionToNewNote, copyFlagsToWindow, releaseFlags) ends in that same
- * writer. refresh() is the inverse edge: when a path that cannot see this set
+ * inheritSelectionToNewNote) ends in that same writer. refresh() is the inverse
+ * edge: when a path that cannot see this set
  * (an item click in clip mode, a delete, an undo step) moved the flags, it
  * re-adopts them so the two never drift. A note no window of the track shows
  * cannot enter the set through a marquee or "select all".
@@ -108,13 +108,9 @@ public:
     static void inheritSelectionToNewNote(Project& project, Note& created,
                                           bool selected);
 
-    // The drawing copy of one window (MainViewRegionPreview::project) carries
-    // the flag of the note it was made from; a pinned, non-editable window
-    // carries none. Still a projection of the set, never a second truth: N10
-    // owns the rest of the copy.
-    static void copyFlagsToWindow(Project& window, const Project& source,
-                                  int sourceFirstFrame);
-    static void releaseFlags(Project& window);
+    // The selection needs no window copy to be drawn: N10 (D-350) removed the
+    // copies MainViewRegionPreview used to hold, so the notes the canvas draws
+    // are these same Notes and carry the flag applyToNotes() derives.
 
     bool contains(const Project* project, const Note* note) const;
     bool isEmpty() const { return entries_.empty(); }

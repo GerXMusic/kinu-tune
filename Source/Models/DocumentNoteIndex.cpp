@@ -31,10 +31,10 @@ DocumentNoteWindowFrames documentNoteWindowFrames(double sourceStartSeconds,
     if (frameCount <= 0 || sourceEndSeconds <= sourceStartSeconds)
         return window;
 
-    // Same arithmetic as makeRegionWindowProject(): floor at the start, one
-    // extra frame past the end, both clamped to what the project stores. Using
-    // the same frames is what keeps the index and the drawn window Project
-    // covering exactly the same notes.
+    // Frame window of the item: floor at the start, one extra frame past the
+    // end, both clamped to what the project stores. N10 (D-350) removed the
+    // window Project, so these are the frames the drawing and the hit-test
+    // clip by: the index and the drawing cover the same notes by construction.
     const double framesPerSecond =
         static_cast<double>(SAMPLE_RATE) / static_cast<double>(HOP_SIZE);
     const int firstFrame =
@@ -58,6 +58,32 @@ bool documentNoteBelongsToWindow(const Note& note,
            note.getStartFrame() < window.lastFrame;
 }
 
+bool documentNoteShape(const DocumentNoteRegion& region,
+                       const DocumentNoteRef& ref,
+                       DocumentNoteShape& shape)
+{
+    if (!region.analyzed || ref.note == nullptr || ref.note->isRest())
+        return false;
+
+    const auto& note = *ref.note;
+    const double shift = region.hostStartSeconds - region.sourceStartSeconds;
+    // Same clipping the region preview has always applied: a note is drawn
+    // only over the part of it the item shows.
+    const double start =
+        std::max(region.hostStartSeconds,
+                 static_cast<double>(framesToSeconds(note.getVisualStartFrame())) + shift);
+    const double end =
+        std::min(region.hostEndSeconds,
+                 static_cast<double>(framesToSeconds(note.getVisualEndFrame())) + shift);
+    if (end <= start)
+        return false;
+    shape.startSeconds = start;
+    shape.endSeconds = end;
+    // N10 (D-350): every height goes through NotePitch's accessor.
+    shape.midi = note.getAdjustedMidiNote();
+    return true;
+}
+
 std::vector<DocumentNoteShape>
 documentNoteShapes(const DocumentNoteRegion& region)
 {
@@ -65,23 +91,12 @@ documentNoteShapes(const DocumentNoteRegion& region)
     if (!region.analyzed)
         return shapes;
 
-    const double shift = region.hostStartSeconds - region.sourceStartSeconds;
     shapes.reserve(region.notes.size());
     for (const auto& ref : region.notes)
     {
-        if (ref.note == nullptr || ref.note->isRest())
-            continue;
-        // Same clipping the region preview has always applied: a note is drawn
-        // only over the part of it the item shows.
-        const double start =
-            std::max(region.hostStartSeconds,
-                     static_cast<double>(framesToSeconds(ref.note->getVisualStartFrame())) + shift);
-        const double end =
-            std::min(region.hostEndSeconds,
-                     static_cast<double>(framesToSeconds(ref.note->getVisualEndFrame())) + shift);
-        if (end <= start)
-            continue;
-        shapes.push_back({start, end, ref.note->getAdjustedMidiNote()});
+        DocumentNoteShape shape;
+        if (documentNoteShape(region, ref, shape))
+            shapes.push_back(shape);
     }
     return shapes;
 }

@@ -227,6 +227,7 @@ public:
   }
   void updateRegionPreviews(MainViewRegionPreviewList previews) override;
   void updateDocumentNoteIndex(DocumentNoteIndexPtr index) override;
+  void releaseBorrowedProject(const Project *project) override;
   void setTrackViewModeAvailable(bool available) override;
   bool isTrackViewMode() const override {
     return pianoRollView.isTrackViewMode();

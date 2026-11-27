@@ -76,201 +76,59 @@ void requestClosePreviousEditorWindow(PitchNetAudioProcessorEditor *previous,
 #endif
 
 #if JucePlugin_Enable_ARA
-// A copy of the part of `source` between windowStart and windowEnd
-// (modification seconds), rebased so its time zero is the window's first
-// analysis frame, and holding only what the note and pitch-curve renderers read:
-// notes, pitch arrays and the window's audio (for the notes' inline waveform).
-// No mel spectrogram or original audio, so its size follows the region, not
-// the take. windowZeroSeconds receives the window zero in modification time.
-std::shared_ptr<Project> makeRegionWindowProject(
-    const Project &source, double windowStart, double windowEnd,
-    double &windowZeroSeconds,
-    const std::vector<DocumentNoteRef> *indexNotes = nullptr)
-{
-  windowZeroSeconds = 0.0;
-  const auto &src = source.getAudioData();
-  const int frameCount = static_cast<int>(src.f0.size());
-  if (frameCount <= 0 || windowEnd <= windowStart)
-    return nullptr;
-
-  const double framesPerSecond =
-      static_cast<double>(SAMPLE_RATE) / static_cast<double>(HOP_SIZE);
-  int firstFrame = juce::jlimit(
-      0, frameCount, static_cast<int>(std::floor(windowStart * framesPerSecond)));
-  int lastFrame = juce::jlimit(
-      firstFrame, frameCount,
-      static_cast<int>(std::ceil(windowEnd * framesPerSecond)) + 1);
-  if (lastFrame <= firstFrame)
-    return nullptr;
-  // Keep notes whole: widen the window to every note it touches, so no note
-  // starts before the copy's frame zero (the canvas clips to the region).
-  {
-    const int windowFirst = firstFrame;
-    const int windowLast = lastFrame;
-    const auto widen = [&](const Note &note) {
-      if (note.getEndFrame() > windowFirst && note.getStartFrame() < windowLast)
-      {
-        firstFrame = std::min(firstFrame, note.getStartFrame());
-        lastFrame = std::max(lastFrame, note.getEndFrame());
-      }
-    };
-    // N1 (D-340): the document index already decided which notes this window
-    // shows. Walking it, instead of the whole project, is what makes the drawn
-    // copy and the index cover the same notes.
-    if (indexNotes != nullptr)
-      for (const auto &ref : *indexNotes)
-        if (ref.note != nullptr)
-          widen(*ref.note);
-    else
-      for (const auto &note : source.getNotes())
-        widen(note);
-    firstFrame = juce::jlimit(0, frameCount, firstFrame);
-    lastFrame = juce::jlimit(firstFrame, frameCount, lastFrame);
-  }
-  windowZeroSeconds = framesToSeconds(firstFrame);
-
-  auto window = std::make_shared<Project>();
-  window->setPitchReferenceHz(source.getPitchReferenceHz());
-  auto &dst = window->getAudioData();
-  dst.sampleRate = src.sampleRate;
-
-  const auto sliceFloats = [&](const std::vector<float> &from,
-                               std::vector<float> &to) {
-    const int end = std::min(lastFrame, static_cast<int>(from.size()));
-    if (end > firstFrame)
-      to.assign(from.begin() + firstFrame, from.begin() + end);
-  };
-  const auto sliceBools = [&](const std::vector<bool> &from,
-                              std::vector<bool> &to) {
-    const int end = std::min(lastFrame, static_cast<int>(from.size()));
-    if (end > firstFrame)
-      to.assign(from.begin() + firstFrame, from.begin() + end);
-  };
-  sliceFloats(src.rawF0, dst.rawF0);
-  sliceFloats(src.cleanedF0, dst.cleanedF0);
-  sliceFloats(src.denseF0, dst.denseF0);
-  sliceFloats(src.f0, dst.f0);
-  sliceFloats(src.baseF0, dst.baseF0);
-  sliceFloats(src.basePitch, dst.basePitch);
-  sliceFloats(src.deltaPitch, dst.deltaPitch);
-  sliceBools(src.voicedMask, dst.voicedMask);
-  sliceBools(src.vadMask, dst.vadMask);
-
-  const int numSamples = src.waveform.getNumSamples();
-  if (numSamples > 0 && src.sampleRate > 0 && src.waveform.getNumChannels() > 0)
-  {
-    const int firstSample = juce::jlimit(
-        0, numSamples,
-        static_cast<int>(std::llround(windowZeroSeconds * src.sampleRate)));
-    const int lastSample = juce::jlimit(
-        firstSample, numSamples,
-        static_cast<int>(std::ceil(framesToSeconds(lastFrame) * src.sampleRate)));
-    if (lastSample > firstSample)
-    {
-      dst.waveform.setSize(1, lastSample - firstSample);
-      dst.waveform.copyFrom(0, 0, src.waveform, 0, firstSample,
-                            lastSample - firstSample);
-    }
-  }
-
-  auto &notes = window->getNotes();
-  const auto copyNote = [&](const Note &note) {
-    // Every note touching the region was covered by widening the window; a
-    // note starting before it lies wholly outside the region and is skipped.
-    if (note.getStartFrame() < firstFrame || note.getStartFrame() >= lastFrame)
-      return;
-    Note copy = note;
-    copy.setStartFrame(copy.getStartFrame() - firstFrame);
-    copy.setEndFrame(copy.getEndFrame() - firstFrame);
-    copy.setSrcStartFrame(copy.getSrcStartFrame() - firstFrame);
-    copy.setSrcEndFrame(copy.getSrcEndFrame() - firstFrame);
-    // N9 (D-349): the copy already carries the flag of the note it comes from
-    // (the selection is a projection, not a second truth).
-    notes.push_back(std::move(copy));
-  };
-  if (indexNotes != nullptr)
-    for (const auto &ref : *indexNotes)
-      if (ref.note != nullptr)
-        copyNote(*ref.note);
-  else
-    for (const auto &note : source.getNotes())
-      copyNote(note);
-  return window;
-}
-
-// Snapshot of one playback region's window onto its modification's Project,
-// as plain drawing data placed at the region's host-timeline position.
-// Projects are stored in MODIFICATION time (PR #8), so the window starts at
-// the region's start in the modification and is shifted by
-// (host start - modification start) onto the timeline.
-MainViewRegionPreview buildRegionPreview(
-    const Project &project, double regionStart, double regionEnd,
-    double startInModificationSeconds,
-    const DocumentNoteRegion *indexRegion = nullptr)
-{
+// One item's window of its modification's Project, as the drawing data the
+// canvas and the overview place on the host timeline.
+//
+// N10 (D-350): the preview BORROWS the live Project. No window Project is
+// built and no note is copied, so the document index, the drawing and the
+// hit-test all read the same Note objects. The only thing copied is the item's
+// audio, shared by pointer for the background waveform and the thumbnail; the
+// notes' inline waveform is read from the live Project.
+MainViewRegionPreview buildRegionPreview(Project &project, double regionStart,
+                                         double regionEnd,
+                                         double startInModificationSeconds,
+                                         const DocumentNoteRegion *indexRegion) {
   MainViewRegionPreview preview;
   preview.hasContent = true;
+  preview.project = &project;
 
   const auto &audioData = project.getAudioData();
-  const double shift = regionStart - std::max(0.0, startInModificationSeconds);
   // The source window is the one the index published (ARA's start/end in
-  // modification samples) so the drawing copy and the index cannot disagree
-  // about which notes the item shows.
-  const double localStart =
+  // modification samples) so the drawn window and the indexed notes cannot
+  // disagree. Without an index region (a pinned clip of another track) it is
+  // the region's own span.
+  const double sourceStart =
       indexRegion != nullptr ? indexRegion->sourceStartSeconds
-                             : regionStart - shift;
-  const double localEnd =
-      indexRegion != nullptr ? indexRegion->sourceEndSeconds : regionEnd - shift;
-
-  if (indexRegion != nullptr)
-  {
-    // N1 (D-340): the note shapes come from the index, not from a second walk
-    // of the project.
-    for (const auto &shape : documentNoteShapes(*indexRegion))
-      preview.notes.push_back({shape.startSeconds, shape.endSeconds, shape.midi});
-  }
-  else
-  {
-    for (const auto &note : project.getNotes())
-    {
-      if (note.isRest())
-        continue;
-      const double start =
-          std::max(regionStart, framesToSeconds(note.getVisualStartFrame()) + shift);
-      const double end =
-          std::min(regionEnd, framesToSeconds(note.getVisualEndFrame()) + shift);
-      if (end <= start)
-        continue;
-      preview.notes.push_back({start, end, note.getAdjustedMidiNote()});
-    }
-  }
-
-  preview.project = makeRegionWindowProject(
-      project, localStart, localEnd, preview.projectHostOffsetSeconds,
-      indexRegion != nullptr ? &indexRegion->notes : nullptr);
-  preview.sourceProject = &project;
-  preview.sourceFirstFrame = static_cast<int>(std::llround(
-      preview.projectHostOffsetSeconds * SAMPLE_RATE / HOP_SIZE));
-  if (preview.project != nullptr)
-    preview.projectHostOffsetSeconds += shift;
+                             : std::max(0.0, startInModificationSeconds);
+  const double sourceEnd =
+      indexRegion != nullptr
+          ? indexRegion->sourceEndSeconds
+          : sourceStart + std::max(0.0, regionEnd - regionStart);
+  preview.sourceStartSeconds = std::max(0.0, sourceStart);
+  preview.sourceEndSeconds = std::max(preview.sourceStartSeconds, sourceEnd);
+  // Host time of the Project's zero: the one offset the drawing and the
+  // hit-test place this item's notes with.
+  preview.projectHostOffsetSeconds =
+      indexRegion != nullptr ? indexRegion->offsetSeconds
+                             : regionStart - preview.sourceStartSeconds;
 
   const auto &waveform = audioData.waveform;
   const int numSamples = waveform.getNumSamples();
   const double sampleRate = static_cast<double>(audioData.sampleRate);
-  if (numSamples > 0 && sampleRate > 0.0 && waveform.getNumChannels() > 0)
-  {
+  if (numSamples > 0 && sampleRate > 0.0 && waveform.getNumChannels() > 0) {
     const int firstSample = juce::jlimit(
-        0, numSamples, static_cast<int>(std::floor(localStart * sampleRate)));
+        0, numSamples,
+        static_cast<int>(std::floor(preview.sourceStartSeconds * sampleRate)));
     const int lastSample = juce::jlimit(
         firstSample, numSamples,
-        static_cast<int>(std::ceil(localEnd * sampleRate)));
-    if (lastSample > firstSample)
-    {
+        static_cast<int>(std::ceil(preview.sourceEndSeconds * sampleRate)));
+    if (lastSample > firstSample) {
       const float *data = waveform.getReadPointer(0);
       preview.waveformSamples = std::make_shared<const std::vector<float>>(
           data + firstSample, data + lastSample);
       preview.waveformSampleRate = sampleRate;
-      preview.waveformStartSeconds = firstSample / sampleRate + shift;
+      preview.waveformStartSeconds =
+          firstSample / sampleRate + preview.projectHostOffsetSeconds;
     }
   }
 
@@ -1537,19 +1395,16 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
 
     std::uint64_t revision = 0;
     bool fromCanvas = false;
-    // The active region is drawn live from the canvas; its preview only
-    // carries its range. Siblings of the active modification read the live
-    // canvas Project, other modifications their stored Project.
-    // Track gestures need the live source binding even when the region is
-    // drawn directly from the canvas rather than from a cached window.
+    // N10 (D-350): every item, the active one included, is drawn from the live
+    // Project the modification owns. The active item's Project is the canvas's.
     const Project* sourceProject = audioProcessor.getAraProjectForPreview(
         region->getAudioModification<PitchNetAudioModification>(), revision, fromCanvas);
-    const Project* project = isActive ? nullptr : sourceProject;
+    auto* project = const_cast<Project*>(sourceProject);
 
     RegionPreviewCacheEntry cacheEntry;
     const auto cached = regionPreviewCache.find(regionKey);
     const bool reusable =
-        cached != regionPreviewCache.end() && !isActive &&
+        cached != regionPreviewCache.end() &&
         cached->second.project == project &&
         cached->second.fromCanvas == fromCanvas &&
         cached->second.revision == revision &&
@@ -1578,16 +1433,7 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
     preview.startSeconds = start;
     preview.endSeconds = end;
     preview.active = isActive;
-    if (isActive) {
-      preview.sourceProject = sourceProject;
-      preview.sourceFirstFrame = 0;
-      preview.projectHostOffsetSeconds = start - startInModification;
-    }
     preview.pinned = pinned;
-    if (pinned && preview.project)
-      // N9 (D-349): a pinned window is drawn, not edited: its copy carries no
-      // selection flag. Written by the selection module, the only writer.
-      DocumentNoteSelection::releaseFlags(*preview.project);
     preview.outlineColour = outlineColour;
     previews->push_back(preview);
 

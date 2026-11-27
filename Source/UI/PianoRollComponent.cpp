@@ -37,6 +37,8 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
@@ -741,42 +743,25 @@ void PianoRollComponent::beginMacroCurvePreview(const std::vector<Note*>& notes)
 void PianoRollComponent::beginInactiveMacroPreview(
     const std::vector<TrackPitchMacroTarget>& targets)
 {
-  if (!trackViewMode || !regionPreviews || !inactiveMacroPreviews.empty()) return;
-  for (const auto& region : *regionPreviews) {
-    if (region.active || region.pinned || !region.project) continue;
-    auto target = std::find_if(targets.begin(), targets.end(), [&](const auto& item)
-        { return item.project == region.sourceProject; });
-    if (target == targets.end() || (target->isValid && !target->isValid())) continue;
-    InactiveMacroPreview preview;
-    preview.project = region.project;
-    preview.isValid = target->isValid;
-    std::multimap<int, const Note*> sourceNotes;
-    for (const auto& note : target->project->getNotes())
-      sourceNotes.emplace(note.getStartFrame(), &note);
-    for (auto& display : region.project->getNotes()) {
-      const auto matches = sourceNotes.equal_range(display.getStartFrame() + region.sourceFirstFrame);
-      for (auto it = matches.first; it != matches.second; ++it)
-        if (it->second->getEndFrame() == display.getEndFrame() + region.sourceFirstFrame) {
-          preview.bindings.push_back({&display, it->second,
-                                     display.getMidiNote(), display.getPitchDrift()});
-          break;
-        }
-    }
-    inactiveMacroPreviews.push_back(std::move(preview));
-  }
+  // N10 (D-350): the other items are drawn from their live Projects, so a
+  // track-wide preview needs no bindings. The gesture that is asking for it
+  // already changed those projects' notes; the only thing left is to keep the
+  // inactive layer refreshing while it runs, warning for at most one frame.
+  if (inactiveTrackPreview || targets.empty()) return;
+  inactiveTrackPreview = true;
   lastInactiveMacroUpdate = 0.0;
 }
 
 void PianoRollComponent::endMacroCurvePreview()
 {
   pitchCurveRenderer->endMacroPreview();
-  for (auto& preview : inactiveMacroPreviews)
-    for (const auto& binding : preview.bindings) {
-      NotePitch::applyCorrection(*binding.display, binding.originalMidi);
-      binding.display->setPitchDrift(binding.originalDrift);
-    }
-  inactiveMacroPreviews.clear();
-  inactiveLayer = {};
+  // The notes were mutated and restored by whoever ran the preview; nothing is
+  // mirrored back here any more, only the layer that drew them is dropped.
+  if (inactiveTrackPreview)
+  {
+    inactiveTrackPreview = false;
+    inactiveLayer = {};
+  }
 }
 
 void PianoRollComponent::invalidateBasePitchCache()
@@ -816,7 +801,9 @@ void PianoRollComponent::drawGrid(juce::Graphics &g, bool drawRowBackgrounds,
 
 void PianoRollComponent::drawAudioSourceRegionOverlay(juce::Graphics &g)
 {
-  if (trackViewMode) return;
+  // Track mode reports its boundaries from the region previews; drawing the
+  // canvas Project's own range as well read as a second, stray pair of lines.
+  if (regionPreviews && !regionPreviews->empty()) return;
   if (!project)
     return;
 
@@ -868,18 +855,34 @@ void PianoRollComponent::setRegionPreviews(MainViewRegionPreviewList previews)
     for (const auto &region : *regionPreviews)
       regionPreviewsEndSeconds =
           std::max(regionPreviewsEndSeconds, region.endSeconds);
+  // The active region's window comes from the same list now, so the take's
+  // background span follows a republication instead of only a mode change.
+  waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());
+  invalidateWaveformCache();
+  inactiveLayer = {};
+  pinnedLayer = {};
 
   // The pointer may now sit over a region that changed state.
   if (swallowGestureUntilMouseUp && !isMouseButtonDown())
     swallowGestureUntilMouseUp = false;
 
-  // N2: reused window copies can predate the current selection (the preview
-  // cache is keyed by the project revision, not by selection), so the flags are
-  // mirrored again after every publication.
-  syncSelectionToRegionCopies();
-
   updateScrollBars();
   repaint();
+}
+
+PianoRollComponent::RegionFrame
+PianoRollComponent::frameForRegion(const MainViewRegionPreview &region) const
+{
+  // N10 (D-350): the one rule that maps a preview's Project onto this canvas.
+  // The active region, every inactive one and the pinned ones place their
+  // notes through it; nothing else decides where an item's notes go.
+  RegionFrame frame;
+  frame.zeroProjectSeconds = timelineToProject(region.projectHostOffsetSeconds);
+  frame.scrollX = scrollX - frame.zeroProjectSeconds * pixelsPerSecond;
+  frame.windowStartSeconds = region.sourceStartSeconds;
+  frame.windowEndSeconds =
+      std::max(region.sourceStartSeconds, region.sourceEndSeconds);
+  return frame;
 }
 
 const MainViewRegionPreview *PianoRollComponent::findActiveRegionPreview() const
@@ -888,6 +891,17 @@ const MainViewRegionPreview *PianoRollComponent::findActiveRegionPreview() const
     return nullptr;
   for (const auto &region : *regionPreviews)
     if (region.active)
+      return &region;
+  return nullptr;
+}
+
+const MainViewRegionPreview *PianoRollComponent::findPreviewForKey(
+    const juce::String &key) const
+{
+  if (!regionPreviews)
+    return nullptr;
+  for (const auto &region : *regionPreviews)
+    if (region.key == key)
       return &region;
   return nullptr;
 }
@@ -903,28 +917,47 @@ bool PianoRollComponent::previewContains(const MainViewRegionPreview &region,
 const MainViewRegionPreview* PianoRollComponent::findTrackRegionAtPointer(
     juce::Point<float> point, bool notesOnly) const
 {
-  if (!trackViewMode || !regionPreviews) return nullptr;
+  if (!regionPreviews) return nullptr;
   const double hostTime = projectToTimeline(xToTime(point.x - pianoKeysWidth + scrollX));
   const float worldY = point.y - headerHeight + scrollY;
   const MainViewRegionPreview* background = nullptr;
-  // Stable drawing order, with actual note hits before empty region space.
-  // The routing/bound-region flag must not influence interaction priority.
-  for (auto it = regionPreviews->rbegin(); it != regionPreviews->rend(); ++it) {
-    const auto& region = *it;
-    if (region.pinned || !region.contains(hostTime)) continue;
-    if (!background) background = &region;
-    const bool live = region.sourceProject && region.sourceProject == project;
-    const Project* display = live ? project : region.project.get();
-    if (!display) continue;
-    const double offset = region.projectHostOffsetSeconds -
-        (live ? framesToSeconds(region.sourceFirstFrame) : 0.0);
-    for (const auto& note : display->getNotes()) {
-      if (note.isRest()) continue;
-      const double start = framesToSeconds(note.getVisualStartFrame()) + offset;
-      const double end = framesToSeconds(note.getVisualEndFrame()) + offset;
-      const float top = coordMapper->midiToY(note.getAdjustedMidiNote());
-      if (hostTime >= start && hostTime < end && worldY >= top && worldY < top + pixelsPerSemitone)
-        return &region;
+
+  // The note hit-test walks the document index - the same enumeration the
+  // drawing and notes_debug read - so it sees the live Note objects and never
+  // a copy. Regions are visited in reverse drawing order so the topmost one
+  // wins, as before.
+  if (documentNoteIndex != nullptr) {
+    for (auto regionIt = documentNoteIndex->regions.rbegin();
+         regionIt != documentNoteIndex->regions.rend(); ++regionIt) {
+      const auto& region = *regionIt;
+      const auto* preview = findPreviewForKey(region.key);
+      if (preview == nullptr || preview->pinned || !preview->contains(hostTime))
+        continue;
+      if (!background) background = preview;
+      for (auto noteIt = region.notes.rbegin(); noteIt != region.notes.rend(); ++noteIt) {
+        const auto* note = noteIt->note;
+        if (note == nullptr || note->isRest()) continue;
+        // The note's own frames, placed with the same offset the drawing uses
+        // (frameForRegion): one rule for where an item's notes are.
+        const double start =
+            framesToSeconds(note->getVisualStartFrame()) + preview->projectHostOffsetSeconds;
+        const double end =
+            framesToSeconds(note->getVisualEndFrame()) + preview->projectHostOffsetSeconds;
+        const float top = coordMapper->midiToY(note->getAdjustedMidiNote());
+        if (hostTime >= start && hostTime < end && worldY >= top && worldY < top + pixelsPerSemitone)
+          return preview;
+      }
+    }
+  }
+
+  // Empty space of an item still routes to it, analysed or not: only its
+  // range is needed for that. Pinned clips are never clickable.
+  if (background == nullptr && !notesOnly) {
+    for (auto it = regionPreviews->rbegin(); it != regionPreviews->rend(); ++it) {
+      const auto& region = *it;
+      if (region.pinned || !region.contains(hostTime)) continue;
+      background = &region;
+      break;
     }
   }
   return notesOnly ? nullptr : background;
@@ -932,7 +965,7 @@ const MainViewRegionPreview* PianoRollComponent::findTrackRegionAtPointer(
 
 bool PianoRollComponent::prepareTrackPointer(juce::Point<float> point, bool notesOnly)
 {
-  if (!trackViewMode || !onInactiveRegionClicked || trackGestureActive || isMouseButtonDown()) return false;
+  if (!onInactiveRegionClicked || trackGestureActive || isMouseButtonDown()) return false;
   const float worldX = point.x - pianoKeysWidth + scrollX;
   const float worldY = point.y - headerHeight + scrollY;
   if (hoveredNote && pitchToolHandles && pitchToolHandles->containsLayoutPoint(worldX, worldY))
@@ -940,9 +973,9 @@ bool PianoRollComponent::prepareTrackPointer(juce::Point<float> point, bool note
   if (pitchDrawingHandler_ && pitchDrawingHandler_->hasAnchors()) return false;
   const auto* region = findTrackRegionAtPointer(point, notesOnly);
   if (!region) return false;
-  const double offset = region->projectHostOffsetSeconds - framesToSeconds(region->sourceFirstFrame);
+  const double offset = region->projectHostOffsetSeconds;
   const auto* boundWindow = findActiveRegionPreview();
-  if (region->sourceProject == project && juce::approximatelyEqual(offset, projectToTimeline(0.0)) &&
+  if (region->project == project && juce::approximatelyEqual(offset, projectToTimeline(0.0)) &&
       boundWindow && boundWindow->key == region->key)
     return false;
   const auto key = region->key;
@@ -951,10 +984,45 @@ bool PianoRollComponent::prepareTrackPointer(juce::Point<float> point, bool note
   return before != project || !juce::approximatelyEqual(offset, projectToTimeline(0.0));
 }
 
+std::size_t PianoRollComponent::previewNotesFingerprint(
+    const MainViewRegionPreviewList &previews)
+{
+  if (!previews)
+    return 0;
+  std::size_t hash = 1469598103934665603ull;
+  const auto mix = [&hash](std::uint32_t value) {
+    hash ^= value;
+    hash *= 1099511628211ull;
+  };
+  const auto mixFloat = [&mix](float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    mix(bits);
+  };
+  for (const auto &region : *previews)
+  {
+    if (region.project == nullptr)
+      continue;
+    mix(static_cast<std::uint32_t>(
+        reinterpret_cast<std::uintptr_t>(region.project) & 0xffffffffu));
+    for (const auto &note : region.project->getNotes())
+    {
+      mix(static_cast<std::uint32_t>(note.getStartFrame()));
+      mix(static_cast<std::uint32_t>(note.getEndFrame()));
+      mixFloat(note.getMidiNote());
+      mixFloat(note.getPitchOffset());
+      mixFloat(note.getPitchDrift());
+      mix(static_cast<std::uint32_t>(note.isSelected() ? 1u : 0u));
+      mix(static_cast<std::uint32_t>(note.isMuted() ? 2u : 0u));
+    }
+  }
+  return hash;
+}
+
 void PianoRollComponent::drawInactiveRegionEdits(
     juce::Graphics &g, const juce::Rectangle<int> &mainArea)
 {
-  if (!trackViewMode || !regionPreviews || regionPreviews->empty() ||
+  if (!regionPreviews || regionPreviews->empty() ||
       mainArea.isEmpty() || pixelsPerSecond <= 0.0f)
     return;
 
@@ -972,9 +1040,13 @@ void PianoRollComponent::drawInactiveRegionEdits(
   key.displayOffset = projectToTimeline(0.0);
   key.showDeltaPitch = showDeltaPitch;
   key.showBasePitch = showBasePitch;
+  // N10 (D-350): the notes are live, so the cached layer must follow an edit
+  // made in another item (a track-wide gesture, an undo, another editor) even
+  // when no republication happened. The fingerprint reads the live Notes.
+  key.notesFingerprint = previewNotesFingerprint(regionPreviews);
 
   const double now = juce::Time::getMillisecondCounterHiRes();
-  const bool updateMacro = !inactiveMacroPreviews.empty() &&
+  const bool updateMacro = inactiveTrackPreview &&
                           now - lastInactiveMacroUpdate >= 33.0;
   if (updateMacro) lastInactiveMacroUpdate = now;
   if (!inactiveLayer.isValid() || !(key == inactiveLayerKey) || updateMacro)
@@ -998,48 +1070,24 @@ void PianoRollComponent::drawInactiveRegionEdits(
           region.startSeconds >= visibleHostEnd)
         continue;
 
-      // Draw the region's window as if the canvas were scrolled onto it: the
-      // window project's zero sits at this canvas time.
-      const double zero = timelineToProject(region.projectHostOffsetSeconds);
-      const double localScrollX = scrollX - zero * pixelsPerSecond;
-      coordMapper->setScrollX(localScrollX);
+      // N10 (D-350): one reframing rule for the active region and the
+      // inactive ones, by offset onto the live Project; no window copy.
+      const auto frame = frameForRegion(region);
+      coordMapper->setScrollX(frame.scrollX);
 
       juce::Graphics::ScopedSaveState state(lg);
       lg.addTransform(juce::AffineTransform::translation(
-          static_cast<float>(-localScrollX), static_cast<float>(-scrollY)));
-      const double windowStart =
-          region.startSeconds - region.projectHostOffsetSeconds;
-      const double windowEnd =
-          region.endSeconds - region.projectHostOffsetSeconds;
+          static_cast<float>(-frame.scrollX), static_cast<float>(-scrollY)));
       lg.reduceClipRegion(
           juce::Rectangle<float>(
-              static_cast<float>(windowStart * pixelsPerSecond), 0.0f,
-              static_cast<float>((windowEnd - windowStart) * pixelsPerSecond),
+              static_cast<float>(frame.windowStartSeconds * pixelsPerSecond), 0.0f,
+              static_cast<float>((frame.windowEndSeconds - frame.windowStartSeconds) *
+                                 pixelsPerSecond),
               height)
               .getSmallestIntegerContainer());
 
-      auto* curveRenderer = previewCurveRenderer.get();
-      auto macro = std::find_if(inactiveMacroPreviews.begin(), inactiveMacroPreviews.end(),
-          [&](const auto& item) { return item.project == region.project; });
-      if (macro != inactiveMacroPreviews.end() &&
-          (!macro->isValid || macro->isValid())) {
-        if (!macro->renderer) {
-          macro->renderer = std::make_unique<PitchCurveRenderer>();
-          macro->renderer->setCoordinateMapper(coordMapper.get());
-          macro->renderer->setProject(region.project.get());
-          std::vector<Note*> notes;
-          for (const auto& binding : macro->bindings) notes.push_back(binding.display);
-          macro->renderer->beginMacroPreview(notes);
-        }
-        for (const auto& binding : macro->bindings) {
-          NotePitch::applyCorrection(*binding.display, binding.source->getMidiNote());
-          binding.display->setPitchDrift(binding.source->getPitchDrift());
-        }
-        curveRenderer = macro->renderer.get();
-      } else {
-        previewCurveRenderer->setProject(region.project.get());
-      }
-      previewNoteRenderer->setProject(region.project.get());
+      previewCurveRenderer->setProject(region.project);
+      previewNoteRenderer->setProject(region.project);
       previewNoteRenderer->draw(lg, NoteRenderer::Pass::Body, false, getWidth());
 
       PitchCurveRenderer::Params params;
@@ -1050,7 +1098,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
       params.showCleanedF0Debug = false;
       params.showVocoderF0Debug = false;
       params.componentWidth = getWidth();
-      curveRenderer->draw(lg, params);
+      previewCurveRenderer->draw(lg, params);
     }
 
     coordMapper->setScrollX(savedScrollX);
@@ -1073,7 +1121,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
 void PianoRollComponent::drawPinnedTrackNotes(
     juce::Graphics &g, const juce::Rectangle<int> &mainArea)
 {
-  if (!trackViewMode || !regionPreviews || regionPreviews->empty() ||
+  if (!regionPreviews || regionPreviews->empty() ||
       mainArea.isEmpty() || pixelsPerSecond <= 0.0f)
     return;
 
@@ -1092,6 +1140,7 @@ void PianoRollComponent::drawPinnedTrackNotes(
   key.height = mainArea.getHeight();
   key.previews = regionPreviews.get();
   key.displayOffset = projectToTimeline(0.0);
+  key.notesFingerprint = previewNotesFingerprint(regionPreviews);
 
   if (!pinnedLayer.isValid() || !(key == pinnedLayerKey))
   {
@@ -1119,26 +1168,24 @@ void PianoRollComponent::drawPinnedTrackNotes(
             region.startSeconds >= visibleHostEnd)
           continue;
 
-        // Same placement as drawInactiveRegionEdits().
-        const double zero = timelineToProject(region.projectHostOffsetSeconds);
-        const double localScrollX = scrollX - zero * pixelsPerSecond;
-        coordMapper->setScrollX(localScrollX);
+        // N10 (D-350): the same reframing rule as the inactive items, on the
+        // borrowed live Project of the pinned track.
+        const auto frame = frameForRegion(region);
+        coordMapper->setScrollX(frame.scrollX);
 
         juce::Graphics::ScopedSaveState state(lg);
         lg.addTransform(juce::AffineTransform::translation(
-            static_cast<float>(-localScrollX), static_cast<float>(-scrollY)));
-        const double windowStart =
-            region.startSeconds - region.projectHostOffsetSeconds;
-        const double windowEnd =
-            region.endSeconds - region.projectHostOffsetSeconds;
+            static_cast<float>(-frame.scrollX), static_cast<float>(-scrollY)));
         lg.reduceClipRegion(
             juce::Rectangle<float>(
-                static_cast<float>(windowStart * pixelsPerSecond) - 2.0f, 0.0f,
-                static_cast<float>((windowEnd - windowStart) * pixelsPerSecond) + 4.0f,
+                static_cast<float>(frame.windowStartSeconds * pixelsPerSecond) - 2.0f,
+                0.0f,
+                static_cast<float>((frame.windowEndSeconds - frame.windowStartSeconds) *
+                                   pixelsPerSecond) + 4.0f,
                 height)
                 .getSmallestIntegerContainer());
 
-        previewNoteRenderer->setProject(region.project.get());
+        previewNoteRenderer->setProject(region.project);
         previewNoteRenderer->setFillBodies(!outlines);
         previewNoteRenderer->setOutlineColour(
             outlines ? std::optional<juce::Colour>(region.outlineColour)
@@ -2126,8 +2173,10 @@ std::vector<juce::Rectangle<float>> PianoRollComponent::trackNoteBounds(const No
   std::vector<juce::Rectangle<float>> result;
   if (!regionPreviews) return result;
   for (const auto& region : *regionPreviews) {
-    if (region.pinned || region.sourceProject != &owner) continue;
-    const double offset = region.projectHostOffsetSeconds - framesToSeconds(region.sourceFirstFrame);
+    if (region.pinned || region.project != &owner) continue;
+    // N10 (D-350): the note lives in the owner's Project; this is the host
+    // time of that Project's zero.
+    const double offset = region.projectHostOffsetSeconds;
     const double start = framesToSeconds(note.getVisualStartFrame()) + offset;
     const double end = framesToSeconds(note.getVisualEndFrame()) + offset;
     if (end <= region.startSeconds || start >= region.endSeconds) continue;
@@ -2149,8 +2198,7 @@ void PianoRollComponent::setDocumentNoteContext(
 
 bool PianoRollComponent::selectAllDocumentNotes()
 {
-  if (!trackViewMode || documentNoteIndex == nullptr ||
-      documentNoteSelection == nullptr)
+  if (documentNoteIndex == nullptr || documentNoteSelection == nullptr)
     return false;
   documentNoteSelection->selectAll(*documentNoteIndex);
   applyDocumentSelection();
@@ -2163,26 +2211,8 @@ void PianoRollComponent::applyDocumentSelection()
   // pointers of a previous publication and must not touch this item's notes.
   if (documentSelectionAvailable())
     documentNoteSelection->applyToNotes();
-  syncSelectionToRegionCopies();
   updatePitchToolHandlesFromSelection();
   updatePreviewButtonBounds();
-  repaint();
-}
-
-void PianoRollComponent::syncSelectionToRegionCopies()
-{
-  if (!regionPreviews) return;
-  // N9 (D-349): the copies' flags are a projection of the document selection,
-  // written from the selection module (the only writer of Note::selected).
-  for (const auto& region : *regionPreviews) {
-    if (region.active || region.pinned || !region.project ||
-        !region.sourceProject)
-      continue;
-    DocumentNoteSelection::copyFlagsToWindow(*region.project,
-                                             *region.sourceProject,
-                                             region.sourceFirstFrame);
-  }
-  inactiveLayer = {};
   repaint();
 }
 
@@ -2248,12 +2278,6 @@ void PianoRollComponent::applyItemBoxSelection(const std::vector<Note *> &notes)
   for (auto *note : notes)
     if (note != nullptr)
       DocumentNoteSelection::setNoteSelected(*project, *note, true);
-}
-
-void PianoRollComponent::syncTrackPreviewSelection()
-{
-  // N2: the real notes carry the flags; the copies are only a drawing cache.
-  syncSelectionToRegionCopies();
 }
 
 bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
@@ -2532,12 +2556,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  if (isCanvasPoint(e) && e.mods.isAltDown() && trackViewMode)
+  if (isCanvasPoint(e) && e.mods.isAltDown())
   {
     if (const auto* region = findTrackRegionAtPointer(e.position, true)) {
-      const double offset = region->projectHostOffsetSeconds - framesToSeconds(region->sourceFirstFrame);
+      const double offset = region->projectHostOffsetSeconds;
       const auto* boundWindow = findActiveRegionPreview();
-      if (onInactiveRegionClicked && (region->sourceProject != project ||
+      if (onInactiveRegionClicked && (region->project != project ||
           !juce::approximatelyEqual(offset, projectToTimeline(0.0)) ||
           !boundWindow || boundWindow->key != region->key)) {
         const auto key = region->key;
@@ -2616,15 +2640,15 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     const auto* region = findTrackRegionAtPointer(e.position);
     const bool handleHit = hoveredNote && pitchToolHandles &&
         pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY);
-    const double regionOffset = region ? region->projectHostOffsetSeconds -
-        framesToSeconds(region->sourceFirstFrame) : projectToTimeline(0.0);
+    const double regionOffset = region ? region->projectHostOffsetSeconds
+        : projectToTimeline(0.0);
     const auto* boundWindow = findActiveRegionPreview();
-    if (region && !handleHit && (region->sourceProject != project ||
+    if (region && !handleHit && (region->project != project ||
         !juce::approximatelyEqual(regionOffset, projectToTimeline(0.0)) ||
         !boundWindow || boundWindow->key != region->key))
     {
       const juce::String key = region->key; // previews may be replaced below
-      const auto* requestedProject = region->sourceProject;
+      const auto* requestedProject = region->project;
       const double previousHostScroll = getHostScrollSeconds();
       const double previousScrollY = scrollY;
 
@@ -2650,10 +2674,12 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
       setHoveredNote(nullptr);
     }
-    else if (trackViewMode && project != nullptr && !region && !handleHit)
+    else if (regionPreviews && !regionPreviews->empty() && project != nullptr &&
+             !region && !handleHit)
     {
-      // Outside every region in Track mode: the active take's audio there is
-      // hidden, so nothing may be edited.
+      // Outside every region on this track: the active take's audio there is
+      // hidden, so nothing may be edited. (Previews are published in track
+      // mode only, so this is the track window, not a mode flag.)
       swallowGestureUntilMouseUp = true;
       return;
     }
@@ -3018,7 +3044,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   const bool overHoverControls = hoveredNote &&
       ((pitchToolHandles && pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY)) ||
        findPreviewButtonNoteAt(adjustedX, adjustedY));
-  if (!showZoomCursor && isCanvasPoint(e) && trackViewMode && !overHoverControls &&
+  if (!showZoomCursor && isCanvasPoint(e) && regionPreviews &&
+      !regionPreviews->empty() && !overHoverControls &&
       findTrackRegionAtPointer(e.position) == nullptr)
   {
     setHoveredNote(nullptr);
@@ -3279,7 +3306,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
 
   // An empty-space double click works uniformly across track regions.
   const auto* pointerRegion = findTrackRegionAtPointer(e.position);
-  if (pointerRegion && pointerRegion->sourceProject != project) {
+  if (pointerRegion && pointerRegion->project != project) {
     bool overNote = false;
     if (getTrackEditTargets)
       for (const auto& target : getTrackEditTargets())
@@ -4750,10 +4777,10 @@ bool PianoRollComponent::isEmptyCanvasPoint(juce::Point<float> position)
       pitchToolHandles->containsLayoutPoint(worldX, worldY))
     return false;
 
-  // Track mode: segments of the other regions count as content too. While
-  // other regions are still analysing no targets come back; keep the old
-  // behaviour then (their notes cannot be hit-tested, so do not pan).
-  if (trackViewMode && getTrackEditTargets)
+  // Segments of the other items count as content too. While other regions are
+  // still analysing no targets come back; keep the old behaviour then (their
+  // notes cannot be hit-tested, so do not pan).
+  if (getTrackEditTargets && documentNoteIndex != nullptr)
   {
     if (!mouseDownTrackTargets)
       mouseDownTrackTargets = getTrackEditTargets();
@@ -6672,6 +6699,16 @@ PianoRollComponent::getTrackModeActiveSpan() const
 {
   if (!trackViewMode || project == nullptr)
     return std::nullopt;
+  // N10 (D-350): the active item's window comes from frameForRegion - the same
+  // rule the inactive and pinned items are drawn with - on the same preview
+  // list, not from a second source.
+  if (const auto *active = findActiveRegionPreview();
+      active != nullptr && active->project == project)
+  {
+    const auto frame = frameForRegion(*active);
+    if (frame.windowEndSeconds > frame.windowStartSeconds)
+      return std::make_pair(frame.windowStartSeconds, frame.windowEndSeconds);
+  }
   const auto &ranges = project->getAudioData().playbackRegionRanges;
   if (ranges.empty() || ranges.front().second <= ranges.front().first)
     return std::nullopt;

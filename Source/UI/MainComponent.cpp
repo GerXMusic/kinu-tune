@@ -7555,6 +7555,29 @@ void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {
   pianoRollView.setRegionPreviews(std::move(previews));
 }
 
+void MainComponent::releaseBorrowedProject(const Project *project) {
+  // N10 (D-350): the canvas draws every item from the Project its modification
+  // owns. Before one of them is destroyed, the publications that point into it
+  // must go: the previews (borrowed Project* and Note*) and the index. The next
+  // publication rebuilds both from what is still alive, and the selection
+  // re-adopts the live flags (refresh(nullptr) touches none of them).
+  if (project == nullptr)
+    return;
+  bool borrowed = false;
+  if (documentNoteIndex != nullptr) {
+    for (const auto &region : documentNoteIndex->regions)
+      borrowed = borrowed || region.project == project;
+    for (const auto &ref : documentNoteIndex->notes)
+      borrowed = borrowed || ref.project == project;
+    for (const auto &ref : documentNoteIndex->outsideNotes)
+      borrowed = borrowed || ref.project == project;
+  }
+  if (!borrowed)
+    return;
+  updateRegionPreviews(nullptr);
+  updateDocumentNoteIndex(nullptr);
+}
+
 void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
   // Read-only: the index only supplies enumeration and pointers for the local
   // channel (N1) and the document selection (N2).
@@ -7567,6 +7590,7 @@ void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
     documentNoteSelection->refresh(documentNoteIndex);
   }
   pianoRoll.setDocumentNoteContext(documentNoteIndex, documentNoteSelection);
+  pianoRollView.setDocumentNoteIndex(documentNoteIndex);
 }
 
 void MainComponent::updateTrackList(

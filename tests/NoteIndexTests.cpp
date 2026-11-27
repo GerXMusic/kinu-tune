@@ -8,6 +8,7 @@
 
 #include "../Source/Models/DocumentNoteIndex.h"
 #include "../Source/Models/Project.h"
+#include "../Source/Utils/NotePitch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -332,7 +333,49 @@ void testDrawingMatchesIndex()
     CHECK(near(shapes[0].midi, 65.0f));
 }
 
-// Boundary rule of the window (the one the drawn window Project uses).
+// N10 (D-350): the per-note shape helper (the one the overview draws from) and
+// the batched list are one enumeration, and both read the live Note: a pitch
+// edit lands in the next shape without rebuilding the index.
+void testPerNoteShapeMatchesList()
+{
+    RealCase real;
+    const auto index = buildDocumentNoteIndex("track", real.specs);
+
+    for (const auto& region : index->regions)
+    {
+        const auto shapes = documentNoteShapes(region);
+        std::vector<DocumentNoteShape> rebuilt;
+        for (const auto& ref : region.notes)
+        {
+            DocumentNoteShape shape;
+            if (documentNoteShape(region, ref, shape))
+                rebuilt.push_back(shape);
+        }
+        CHECK(rebuilt.size() == shapes.size());
+        for (size_t i = 0; i < rebuilt.size() && i < shapes.size(); ++i)
+        {
+            CHECK(near(rebuilt[i].startSeconds, shapes[i].startSeconds));
+            CHECK(near(rebuilt[i].endSeconds, shapes[i].endSeconds));
+            CHECK(near(rebuilt[i].midi, shapes[i].midi));
+        }
+    }
+
+    auto& region = index->regions[2];
+    CHECK(!region.notes.empty());
+    Note* note = region.notes.empty() ? nullptr : region.notes.front().note;
+    CHECK(note != nullptr);
+    if (note != nullptr)
+    {
+        const float previous = note->getMidiNote();
+        const float before = documentNoteShapes(region).front().midi;
+        NotePitch::applyCorrection(*note, previous + 2.0f);
+        const float after = documentNoteShapes(region).front().midi;
+        CHECK(near(after, before + 2.0f, 1.0e-4));
+        NotePitch::applyCorrection(*note, previous);
+    }
+}
+
+// Boundary rule of the item's window (what the drawing and the hit-test clip by).
 void testWindowBoundaries()
 {
     const int frames = frameFor(20.0);
@@ -364,6 +407,7 @@ int main()
     testSiblingWindowsDeduplicate();
     testItemSwitchLosesNothing();
     testDrawingMatchesIndex();
+    testPerNoteShapeMatchesList();
     testWindowBoundaries();
 
     std::printf("NoteIndexTests: ok\n");

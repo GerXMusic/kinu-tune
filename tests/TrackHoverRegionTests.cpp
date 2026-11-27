@@ -102,7 +102,9 @@ int main()
     first.active = true;
     first.startSeconds = 0.0;
     first.endSeconds = 0.5;
-    first.sourceProject = &item0;
+    first.project = &item0;
+    first.sourceStartSeconds = 0.0;
+    first.sourceEndSeconds = 0.5;
     first.projectHostOffsetSeconds = 0.0;
     first.hasContent = true;
     previews->push_back(first);
@@ -111,8 +113,10 @@ int main()
     second.active = false;
     second.startSeconds = 1.0;
     second.endSeconds = 1.5;
-    second.sourceProject = &item1;
-    second.project = std::make_shared<Project>(item1);
+    // N10 (D-350): the preview borrows the live Project; no window copy.
+    second.project = &item1;
+    second.sourceStartSeconds = 0.0;
+    second.sourceEndSeconds = 0.5;
     second.projectHostOffsetSeconds = 1.0;
     second.hasContent = true;
     previews->push_back(second);

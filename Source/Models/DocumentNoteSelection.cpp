@@ -416,26 +416,6 @@ void DocumentNoteSelection::inheritSelectionToNewNote(Project& project,
         writeFlag(created, true);
 }
 
-void DocumentNoteSelection::copyFlagsToWindow(Project& window,
-                                              const Project& source,
-                                              int sourceFirstFrame)
-{
-    for (auto& copy : window.getNotes())
-        for (const auto& note : source.getNotes())
-            if (note.getStartFrame() == copy.getStartFrame() + sourceFirstFrame &&
-                note.getEndFrame() == copy.getEndFrame() + sourceFirstFrame)
-            {
-                writeFlag(copy, note.isSelected());
-                break;
-            }
-}
-
-void DocumentNoteSelection::releaseFlags(Project& window)
-{
-    for (auto& note : window.getNotes())
-        writeFlag(note, false);
-}
-
 void DocumentNoteSelection::attachProjects(
     const std::vector<Project*>& projects)
 {

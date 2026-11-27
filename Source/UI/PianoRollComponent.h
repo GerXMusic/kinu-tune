@@ -372,6 +372,9 @@ public:
   // widens to the song, the active take is clipped to its region, and the
   // other regions (setRegionPreviews) are drawn and clickable. Clip mode is
   // the plain source view.
+  // N10 (D-350): this is a WINDOW flag only. Which notes exist and where they
+  // are drawn is decided by the published previews/index, never by the mode:
+  // in clip mode nothing is published, so the same code paths see nothing.
   void setTrackViewMode(bool shouldShowTrack);
   bool isTrackViewMode() const { return trackViewMode; }
   void centerOnPitchRange(float minMidi, float maxMidi);
@@ -557,8 +560,24 @@ private:
   void drawInactiveRegionEdits(juce::Graphics &g,
                                const juce::Rectangle<int> &mainArea);
   const MainViewRegionPreview *findActiveRegionPreview() const;
+  const MainViewRegionPreview *findPreviewForKey(const juce::String &key) const;
   bool previewContains(const MainViewRegionPreview &region,
                        double projectSeconds) const;
+  // N10 (D-350): where a preview's Project sits on this canvas. The active
+  // region, every inactive one and the pinned ones are placed through this one
+  // rule, so there is a single answer for "which x is this note".
+  struct RegionFrame {
+    double zeroProjectSeconds = 0.0; // Project zero, in canvas time
+    double scrollX = 0.0;            // canvas scroll that puts it there
+    double windowStartSeconds = 0.0; // the item's window, Project time
+    double windowEndSeconds = 0.0;
+  };
+  RegionFrame frameForRegion(const MainViewRegionPreview &region) const;
+  // Cheap hash of the geometry and pitch of every note the previews borrow.
+  // The inactive layer is a cache of a drawing of live Notes, so it must know
+  // when one of them changed without a republication.
+  static std::size_t
+  previewNotesFingerprint(const MainViewRegionPreviewList &previews);
   double clampScrollX(double x) const;
   // The active region's span in project time, only in Track mode.
   std::optional<std::pair<double, double>> getTrackModeActiveSpan() const;
@@ -721,6 +740,9 @@ private:
     float pixelsPerSecond = 0.0f, pixelsPerSemitone = 0.0f;
     int width = 0, height = 0;
     const void *previews = nullptr;
+    // N10 (D-350): the layer draws live Notes, so it must be rebuilt when one
+    // of them changes even if the preview list was not republished.
+    std::size_t notesFingerprint = 0;
     bool showDeltaPitch = false, showBasePitch = false;
     bool operator==(const InactiveLayerKey &o) const
     {
@@ -729,22 +751,16 @@ private:
              pixelsPerSecond == o.pixelsPerSecond &&
              pixelsPerSemitone == o.pixelsPerSemitone && width == o.width &&
              height == o.height && previews == o.previews &&
+             notesFingerprint == o.notesFingerprint &&
              showDeltaPitch == o.showDeltaPitch &&
              showBasePitch == o.showBasePitch;
     }
   };
-  struct InactiveMacroPreview {
-    struct Binding {
-      Note* display;
-      const Note* source;
-      float originalMidi, originalDrift;
-    };
-    std::shared_ptr<Project> project;
-    std::function<bool()> isValid;
-    std::vector<Binding> bindings;
-    std::unique_ptr<PitchCurveRenderer> renderer;
-  };
-  std::vector<InactiveMacroPreview> inactiveMacroPreviews;
+  // True while a track-wide preview (a macro drag, the quantize dialog) is
+  // running. N10 (D-350): the items are drawn from their live Projects, so no
+  // bindings or copies are kept; the flag only keeps the inactive layer
+  // refreshing while the notes are being previewed.
+  bool inactiveTrackPreview = false;
   double lastInactiveMacroUpdate = 0.0;
   struct TrackGestureNote {
     Note* note;
@@ -767,11 +783,8 @@ private:
   };
   std::vector<TrackSelectionPair> trackBoxInitialSelection;
   std::vector<juce::Rectangle<float>> trackNoteBounds(const Note&, const Project&) const;
-  void syncTrackPreviewSelection();
-  // N2: writes the document selection into the real notes and mirrors the
-  // flags onto the read-only window copies track mode draws.
+  // N2: writes the document selection into the real notes.
   void applyDocumentSelection();
-  void syncSelectionToRegionCopies();
   // N9 (D-349): the only ways a gesture changes the selection. In track mode
   // they write the document set; in clip mode the item's flags are its own
   // truth and the selection module writes them.
@@ -785,8 +798,9 @@ private:
   // pending. Deduplicated by Project*; emptied by flushBatchRenders().
   documentRenderBatch::Gesture pendingBatchRenders;
   bool documentSelectionAvailable() const {
-    return trackViewMode && documentNoteIndex != nullptr &&
-           documentNoteSelection != nullptr;
+    // N10 (D-350): the published index is what says this track has a document;
+    // the mode flag no longer decides it (clip mode publishes no index).
+    return documentNoteIndex != nullptr && documentNoteSelection != nullptr;
   }
   // N8 (D-348): owners of getInspectorTargets(), aligned one to one. With no
   // document they are all the active project. Never a copy of an edit.

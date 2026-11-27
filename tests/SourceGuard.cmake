@@ -14,6 +14,11 @@
 # note-selection:   Note::selected is derived from the document selection, so it
 #                   is written only in Source/Models/DocumentNoteSelection.cpp
 #                   (D-349): one owner, one writer.
+# region-copies:    a track-mode preview borrows the live Project and copies no
+#                   notes (D-350). Source/UI/RegionPreview.h may not hold a
+#                   Project by value nor own one through a smart pointer, so the
+#                   index, the drawing and the hit-test keep reading the same
+#                   Note objects.
 # audition-output:  the engine's audition loop is sounded only through
 #                   Source/UI/Main/AuditionOutput.h, so a new kind of audition
 #                   takes the output over from the previous one.
@@ -44,6 +49,35 @@ elseif("${RULE}" STREQUAL "note-selection")
                 "${SOURCE_DIR}/Models/DocumentNoteSelection.cpp")
     set(pattern "setSelected[ \t]*\\(")
     set(hint "Note::selected is derived from the document selection. Use DocumentNoteSelection::setNoteSelected / setFromPairs / toggle / selectAll, or Project::selectAllNotes / deselectAllNotes (see Source/Models/DocumentNoteSelection.h).")
+elseif("${RULE}" STREQUAL "region-copies")
+    # N10 (D-350): one source of truth. The preview that track mode draws from
+    # borrows the modification's live Project; owning one (by value, unique_ptr
+    # or shared_ptr) is how the second universe of notes came back before. This
+    # rule looks at the one file that defines the preview, because it is about
+    # what the preview is allowed to hold.
+    set(preview_file "${SOURCE_DIR}/UI/RegionPreview.h")
+    if(NOT EXISTS "${preview_file}")
+        message(FATAL_ERROR "SourceGuard (region-copies): ${preview_file} not found")
+    endif()
+    file(STRINGS "${preview_file}" preview_lines)
+    set(violations "")
+    foreach(line IN LISTS preview_lines)
+        string(REGEX REPLACE "//.*$" "" code "${line}")
+        # An owning smart pointer to a Project, or a Project stored by value.
+        if(code MATCHES "(unique_ptr|shared_ptr)[ \t]*<[ \t]*(const[ \t]+)?Project[ \t]*>" OR
+           code MATCHES "(^|[^A-Za-z0-9_*>])Project[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*[=;{}]")
+            string(STRIP "${line}" shown)
+            string(APPEND violations "  UI/RegionPreview.h: ${shown}\n")
+        endif()
+    endforeach()
+    if(violations)
+        message(FATAL_ERROR
+            "SourceGuard (region-copies) found an owned Project in the region preview:\n"
+            "${violations}"
+            "MainViewRegionPreview must borrow the live Project (Project*), not own a copy; see Source/UI/RegionPreview.h and D-350.")
+    endif()
+    message(STATUS "SourceGuard (region-copies): passed")
+    return()
 elseif("${RULE}" STREQUAL "audition-output")
     set(scan_dir "${SOURCE_DIR}")
     set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h"

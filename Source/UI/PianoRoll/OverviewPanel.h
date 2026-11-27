@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
+#include "../../Models/DocumentNoteIndex.h"
 #include "../../Models/Project.h"
 #include "../../Utils/Constants.h"
 #include "../../Utils/UI/Theme.h"
@@ -46,6 +47,13 @@ public:
     regionPreviews = std::move(previews);
     invalidateThumbnailCache();
   }
+  // N10 (D-350): the notes of the inactive items are enumerated from the
+  // document index - the same real Notes the canvas draws - instead of a copy
+  // of their geometry kept in the preview.
+  void setDocumentNoteIndex(DocumentNoteIndexPtr index) {
+    noteIndex = std::move(index);
+    invalidateThumbnailCache();
+  }
   void setShowSegmentsDebug(bool show) {
     showSegmentsDebug = show;
     invalidateThumbnailCache();
@@ -88,6 +96,7 @@ private:
 
   Project *project = nullptr;
   MainViewRegionPreviewList regionPreviews;
+  DocumentNoteIndexPtr noteIndex;
   juce::Image staticCache;
   ViewState cachedViewState;
   bool cacheDirty = true;

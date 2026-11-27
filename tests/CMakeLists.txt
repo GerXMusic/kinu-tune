@@ -237,6 +237,13 @@ target_link_libraries(TrackHoverRegionTests PRIVATE pitchnet_ui)
 target_compile_features(TrackHoverRegionTests PRIVATE cxx_std_17)
 add_test(NAME TrackHoverRegionTests COMMAND TrackHoverRegionTests)
 
+# N10 (D-350): una sola copia de las notas y un solo camino de dibujo. El preview
+# presta el Project vivo; indice, dibujo y hit-test leen los mismos Note*.
+add_executable(RegionPreviewSingleSourceTests RegionPreviewSingleSourceTests.cpp)
+target_link_libraries(RegionPreviewSingleSourceTests PRIVATE pitchnet_ui)
+target_compile_features(RegionPreviewSingleSourceTests PRIVATE cxx_std_17)
+add_test(NAME RegionPreviewSingleSourceTests COMMAND RegionPreviewSingleSourceTests)
+
 # N8 (D-348): conteo y texto del objetivo a nivel de documento (caso real
 # 262+29, ventanas 0/7/77/70/110) y valores mixtos.
 add_executable(DocumentInspectorTests DocumentInspectorTests.cpp)
@@ -349,7 +356,7 @@ if(WIN32 AND ONNXRUNTIME_DLLS)
 endif()
 
 # Calls that must go through one entry point (see SourceGuard.cmake).
-foreach(guard_rule IN ITEMS pitch-writes note-selection audition-output render-controllers)
+foreach(guard_rule IN ITEMS pitch-writes note-selection region-copies audition-output render-controllers)
     add_test(NAME SourceGuard_${guard_rule}
              COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
                      -DRULE=${guard_rule}

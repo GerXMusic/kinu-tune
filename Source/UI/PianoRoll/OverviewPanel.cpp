@@ -270,6 +270,30 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
   float maxPitch = std::numeric_limits<float>::lowest();
   bool hasNotePitch = false;
 
+  // N10 (D-350): the inactive items' notes are the index's own Notes, clipped
+  // to each item. Nothing is copied: the shapes are computed here, per paint.
+  const auto forEachInactiveShape =
+      [this](auto &&callback) {
+        if (noteIndex == nullptr)
+          return;
+        for (const auto &region : noteIndex->regions) {
+          bool active = false;
+          if (regionPreviews)
+            for (const auto &preview : *regionPreviews)
+              if (preview.key == region.key) {
+                active = preview.active;
+                break;
+              }
+          if (active)
+            continue;
+          for (const auto &ref : region.notes) {
+            DocumentNoteShape shape;
+            if (documentNoteShape(region, ref, shape))
+              callback(shape);
+          }
+        }
+      };
+
   if (project != nullptr) {
     for (const auto &note : project->getNotes()) {
       if (note.isRest())
@@ -289,17 +313,11 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       }
     }
   }
-  if (hasPreviews) {
-    for (const auto &region : *regionPreviews) {
-      if (region.active)
-        continue;
-      for (const auto &note : region.notes) {
-        minPitch = std::min(minPitch, note.midi);
-        maxPitch = std::max(maxPitch, note.midi);
-        hasNotePitch = true;
-      }
-    }
-  }
+  forEachInactiveShape([&](const DocumentNoteShape &shape) {
+    minPitch = std::min(minPitch, shape.midi);
+    maxPitch = std::max(maxPitch, shape.midi);
+    hasNotePitch = true;
+  });
 
   if (!hasNotePitch)
     return;
@@ -317,23 +335,17 @@ void OverviewPanel::paintStaticContent(juce::Graphics &g) {
       juce::jlimit(1.0f, 5.0f, content.getHeight() / pitchRange);
   const float thickness = juce::jlimit(1.0f, 3.0f, noteHeight);
 
-  if (hasPreviews) {
-    for (const auto &region : *regionPreviews) {
-      if (region.active)
-        continue;
-      for (const auto &note : region.notes) {
-        if (note.endSeconds <= note.startSeconds)
-          continue;
-        const auto noteColour = getNoteGradientColours().side;
-        const float x1 = timeToOverviewX(hostToProject(note.startSeconds));
-        const float x2 = timeToOverviewX(hostToProject(note.endSeconds));
-        const float y = noteRangeY(note.midi, minPitch, maxPitch, content);
-        // Same as the active region's notes, but grey.
-        g.setColour(noteColour.withSaturation(0.0f).withAlpha(0.9f));
-        g.drawLine(x1, y, x2, y, thickness);
-      }
-    }
-  }
+  forEachInactiveShape([&](const DocumentNoteShape &note) {
+    if (note.endSeconds <= note.startSeconds)
+      return;
+    const auto noteColour = getNoteGradientColours().side;
+    const float x1 = timeToOverviewX(hostToProject(note.startSeconds));
+    const float x2 = timeToOverviewX(hostToProject(note.endSeconds));
+    const float y = noteRangeY(note.midi, minPitch, maxPitch, content);
+    // Same as the active region's notes, but grey.
+    g.setColour(noteColour.withSaturation(0.0f).withAlpha(0.9f));
+    g.drawLine(x1, y, x2, y, thickness);
+  });
 
   if (project != nullptr) {
     for (const auto &note : project->getNotes()) {

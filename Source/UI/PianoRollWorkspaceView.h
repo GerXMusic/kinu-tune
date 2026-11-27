@@ -29,6 +29,9 @@ public:
   void setOverviewVisible(bool visible);
   std::function<void(bool)> onOverviewVisibilityChanged;
   void setRegionPreviews(MainViewRegionPreviewList previews);
+  // N10 (D-350): the overview draws the inactive items from the document
+  // index (the real Notes), so it is published here too.
+  void setDocumentNoteIndex(DocumentNoteIndexPtr index);
   // Clip / Track mode (ARA only). The toggle itself lives in the toolbar.
   void setTrackViewModeAvailable(bool available);
   void setTrackViewMode(bool track);

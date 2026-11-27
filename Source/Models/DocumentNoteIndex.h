@@ -106,7 +106,8 @@ struct DocumentNoteRegionSpec
     int savedNotes = -1;
 };
 
-/** Analysis-frame window of one region, the same one the window Project uses. */
+/** Analysis-frame window of one region, the one the drawing and the hit-test
+    clip by. */
 struct DocumentNoteWindowFrames
 {
     int firstFrame = 0;
@@ -115,8 +116,8 @@ struct DocumentNoteWindowFrames
 };
 
 /** Frame window of [sourceStart, sourceEnd) clamped to a project of frameCount
-    analysis frames. Mirrors makeRegionWindowProject() so the index and the
-    drawing copy always cover the same frames. */
+    analysis frames. N10 (D-350): the drawing and the hit-test clip by these
+    frames, so the index and what is drawn always cover the same notes. */
 DocumentNoteWindowFrames documentNoteWindowFrames(double sourceStartSeconds,
                                                   double sourceEndSeconds,
                                                   int frameCount);
@@ -133,6 +134,14 @@ struct DocumentNoteShape
     double endSeconds = 0.0;
     float midi = 0.0f;
 };
+
+/** Visible rectangle of one indexed note on the host timeline, clipped to its
+    region. False when the note draws nothing there (a rest, a note with no
+    pointer, or one lying wholly outside the window). N10 (D-350): the overview
+    draws through this, so no note geometry is copied into a preview. */
+bool documentNoteShape(const DocumentNoteRegion& region,
+                       const DocumentNoteRef& ref,
+                       DocumentNoteShape& shape);
 
 std::vector<DocumentNoteShape>
 documentNoteShapes(const DocumentNoteRegion& region);

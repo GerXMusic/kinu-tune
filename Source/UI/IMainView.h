@@ -135,6 +135,13 @@ public:
    */
   virtual void updateDocumentNoteIndex(DocumentNoteIndexPtr index) = 0;
   /**
+   * N10 (D-350): the previews and the note index borrow the Note objects of a
+   * Project. Called right before the plug-in destroys that Project, so no view
+   * keeps a pointer past its owner. Dropping the publications is enough: the
+   * next publication rebuilds them, and the selection re-adopts the live flags.
+   */
+  virtual void releaseBorrowedProject(const Project *project) = 0;
+  /**
    * Called with a region key when the user clicks inside an inactive region on
    * the canvas (empty space or one of its notes). Unlike a host selection
    * change, the handler must not scroll or refit the view: the user clicked on what is
