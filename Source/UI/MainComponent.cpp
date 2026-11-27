@@ -2372,10 +2372,19 @@ void MainComponent::pollMcpControl()
       // notes of a project no window shows are listed apart instead of being
       // dropped.
       const auto &index = documentNoteIndex;
+      // N2: the published selection is the document truth; adopting the live
+      // flags first keeps the report honest even if a click moved them after
+      // the last index publication.
+      if (documentNoteSelection != nullptr && index != nullptr)
+        documentNoteSelection->refresh(index.get());
+      auto *selection = documentNoteSelection.get();
       juce::Array<juce::var> regionsArray;
       juce::Array<juce::var> sourcesArray;
       juce::Array<juce::var> notesArray;
       juce::Array<juce::var> outsideArray;
+      juce::Array<juce::var> selectionRegionsArray;
+      juce::Array<juce::var> selectionSourcesArray;
+      juce::Array<juce::var> selectionNotesArray;
 
       if (index != nullptr)
       {
@@ -2396,6 +2405,14 @@ void MainComponent::pollMcpControl()
           object->setProperty("saved_notes", region.savedNotes);
           object->setProperty("notes_in_window", region.notesInWindow);
           regionsArray.add(juce::var(object));
+
+          if (selection != nullptr) {
+            auto selectedRegion = new juce::DynamicObject();
+            selectedRegion->setProperty("key", region.key);
+            selectedRegion->setProperty("count",
+                                        selection->countForRegion(region.key));
+            selectionRegionsArray.add(juce::var(selectedRegion));
+          }
         }
         for (const auto &source : index->sources)
         {
@@ -2407,6 +2424,14 @@ void MainComponent::pollMcpControl()
           object->setProperty("outside_notes", source.outsideNotes);
           object->setProperty("analyzed", source.analyzed);
           sourcesArray.add(juce::var(object));
+
+          if (selection != nullptr) {
+            auto selectedSource = new juce::DynamicObject();
+            selectedSource->setProperty("source", source.sourceKey);
+            selectedSource->setProperty("count",
+                                        selection->countForSource(source.sourceKey));
+            selectionSourcesArray.add(juce::var(selectedSource));
+          }
         }
         for (const auto &ref : index->notes)
         {
@@ -2428,9 +2453,23 @@ void MainComponent::pollMcpControl()
             object->setProperty("midi", ref.note->getMidiNote());
             object->setProperty("adjusted_midi",
                                 ref.note->getAdjustedMidiNote());
-            object->setProperty("selected", ref.note->isSelected());
+            object->setProperty("selected",
+                                selection != nullptr
+                                    ? selection->contains(ref.project, ref.note)
+                                    : ref.note->isSelected());
           }
           notesArray.add(juce::var(object));
+
+          if (selection != nullptr &&
+              selection->contains(ref.project, ref.note)) {
+            auto selectedNote = new juce::DynamicObject();
+            selectedNote->setProperty("region_index", ref.regionIndex);
+            selectedNote->setProperty("start_frame", ref.firstFrame);
+            selectedNote->setProperty("end_frame", ref.lastFrame);
+            if (ref.note != nullptr)
+              selectedNote->setProperty("midi", ref.note->getMidiNote());
+            selectionNotesArray.add(juce::var(selectedNote));
+          }
         }
         for (const auto &ref : index->outsideNotes)
         {
@@ -2462,6 +2501,23 @@ void MainComponent::pollMcpControl()
       response->setProperty("sources", juce::var(sourcesArray));
       response->setProperty("notes", juce::var(notesArray));
       response->setProperty("outside", juce::var(outsideArray));
+      // N2: the document selection — total and the same total split the two
+      // ways the index publishes it (per window and per source).
+      auto selectionObject = new juce::DynamicObject();
+      selectionObject->setProperty("has_index", index != nullptr);
+      selectionObject->setProperty("total",
+                                   selection != nullptr ? selection->size() : 0);
+      selectionObject->setProperty(
+          "revision",
+          selection != nullptr
+              ? static_cast<juce::int64>(selection->getRevision())
+              : 0);
+      selectionObject->setProperty("regions", juce::var(selectionRegionsArray));
+      selectionObject->setProperty("sources", juce::var(selectionSourcesArray));
+      selectionObject->setProperty("notes", juce::var(selectionNotesArray));
+      response->setProperty("selection", juce::var(selectionObject));
+      response->setProperty("selected_notes",
+                            selection != nullptr ? selection->size() : 0);
       response->setProperty("ok", true);
     }
     else if (command == "grid_debug")
@@ -7494,8 +7550,14 @@ void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {
 
 void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
   // Read-only: the index only supplies enumeration and pointers for the local
-  // channel (N1) and, from N2 on, the document selection.
+  // channel (N1) and the document selection (N2).
   documentNoteIndex = std::move(index);
+  if (documentNoteSelection != nullptr) {
+    // Re-adopts the live flags and drops anything a deleted item or a reloaded
+    // project took away, so the selection never outlives its notes.
+    documentNoteSelection->refresh(documentNoteIndex.get());
+  }
+  pianoRoll.setDocumentNoteContext(documentNoteIndex, documentNoteSelection);
 }
 
 void MainComponent::updateTrackList(
@@ -7963,6 +8025,10 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     return true;
 
   case CommandIDs::selectAll:
+    // N2: in track mode the document selection is the target, so "select all"
+    // reaches the notes of every item of the track (both takes, deduplicated).
+    if (pianoRoll.selectAllDocumentNotes())
+      return true;
     if (auto *project = getProject())
     {
       project->selectAllNotes();

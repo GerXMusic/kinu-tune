@@ -4,6 +4,7 @@
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/Engine/HostTempoMap.h"
 #include "../Models/Project.h"
+#include "../Models/DocumentNoteSelection.h"
 #include "../Models/MidiGuideGhosts.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
@@ -468,6 +469,17 @@ public:
   void setRegionPreviews(MainViewRegionPreviewList previews);
   std::function<void(const juce::String &)> onInactiveRegionClicked;
 
+  // N2 (D-340): the document-level note index and selection, owned by the
+  // view. Both may be null (clip mode, or a track that is not analysed yet).
+  // The selection is the truth for marquee, shift-click and "select all" in
+  // track mode; Note::selected is derived from it.
+  void setDocumentNoteContext(DocumentNoteIndexPtr index,
+                              std::shared_ptr<DocumentNoteSelection> selection);
+  // Track "select all": every visible note of every item of the track. Returns
+  // false when there is no document index (clip mode), so the caller falls back
+  // to the active project.
+  bool selectAllDocumentNotes();
+
 private:
   enum class NoteRenderPass
   {
@@ -681,9 +693,24 @@ private:
   // beginTrackGesture.
   std::optional<std::vector<TrackPitchMacroTarget>> mouseDownTrackTargets;
   std::vector<TrackGestureNote> trackGestureNotes;
-  std::vector<const Note*> trackBoxInitialSelection;
+  struct TrackSelectionPair {
+    Project* project = nullptr;
+    Note* note = nullptr;
+  };
+  std::vector<TrackSelectionPair> trackBoxInitialSelection;
   std::vector<juce::Rectangle<float>> trackNoteBounds(const Note&, const Project&) const;
   void syncTrackPreviewSelection();
+  // N2: writes the document selection into the real notes and mirrors the
+  // flags onto the read-only window copies track mode draws.
+  void applyDocumentSelection();
+  void syncSelectionToRegionCopies();
+  DocumentNoteIndexPtr documentNoteIndex;
+  std::shared_ptr<DocumentNoteSelection> documentNoteSelection;
+  bool documentSelectionAvailable() const {
+    return trackViewMode && documentNoteIndex != nullptr &&
+           documentNoteSelection != nullptr;
+  }
+
   InactiveLayerKey inactiveLayerKey;
   juce::Image inactiveLayer;
   InactiveLayerKey pinnedLayerKey;

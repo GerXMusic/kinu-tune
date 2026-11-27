@@ -873,6 +873,11 @@ void PianoRollComponent::setRegionPreviews(MainViewRegionPreviewList previews)
   if (swallowGestureUntilMouseUp && !isMouseButtonDown())
     swallowGestureUntilMouseUp = false;
 
+  // N2: reused window copies can predate the current selection (the preview
+  // cache is keyed by the project revision, not by selection), so the flags are
+  // mirrored again after every publication.
+  syncSelectionToRegionCopies();
+
   updateScrollBars();
   repaint();
 }
@@ -2134,24 +2139,59 @@ std::vector<juce::Rectangle<float>> PianoRollComponent::trackNoteBounds(const No
   return result;
 }
 
-void PianoRollComponent::syncTrackPreviewSelection()
+void PianoRollComponent::setDocumentNoteContext(
+    DocumentNoteIndexPtr index,
+    std::shared_ptr<DocumentNoteSelection> selection)
 {
-  if (regionPreviews)
-    for (const auto& region : *regionPreviews) {
-      if (region.active || region.pinned || !region.project || !region.sourceProject) continue;
-      auto target = std::find_if(trackGestureTargets.begin(), trackGestureTargets.end(),
-          [&](const auto& item) { return item.project == region.sourceProject; });
-      if (target == trackGestureTargets.end() || (target->isValid && !target->isValid())) continue;
-      for (auto& copy : region.project->getNotes())
-        for (const auto& note : target->project->getNotes())
-          if (note.getStartFrame() == copy.getStartFrame() + region.sourceFirstFrame &&
-              note.getEndFrame() == copy.getEndFrame() + region.sourceFirstFrame) {
-            copy.setSelected(note.isSelected());
-            break;
-          }
-    }
+  documentNoteIndex = std::move(index);
+  documentNoteSelection = std::move(selection);
+}
+
+bool PianoRollComponent::selectAllDocumentNotes()
+{
+  if (!trackViewMode || documentNoteIndex == nullptr ||
+      documentNoteSelection == nullptr)
+    return false;
+  documentNoteSelection->selectAll(*documentNoteIndex);
+  applyDocumentSelection();
+  return true;
+}
+
+void PianoRollComponent::applyDocumentSelection()
+{
+  // Only a live document may derive the flags: without an index the set holds
+  // pointers of a previous publication and must not touch this item's notes.
+  if (documentSelectionAvailable())
+    documentNoteSelection->applyToNotes();
+  syncSelectionToRegionCopies();
+  updatePitchToolHandlesFromSelection();
+  updatePreviewButtonBounds();
+  repaint();
+}
+
+void PianoRollComponent::syncSelectionToRegionCopies()
+{
+  if (!regionPreviews) return;
+  for (const auto& region : *regionPreviews) {
+    if (region.active || region.pinned || !region.project ||
+        !region.sourceProject)
+      continue;
+    for (auto& copy : region.project->getNotes())
+      for (const auto& note : region.sourceProject->getNotes())
+        if (note.getStartFrame() == copy.getStartFrame() + region.sourceFirstFrame &&
+            note.getEndFrame() == copy.getEndFrame() + region.sourceFirstFrame) {
+          copy.setSelected(note.isSelected());
+          break;
+        }
+  }
   inactiveLayer = {};
   repaint();
+}
+
+void PianoRollComponent::syncTrackPreviewSelection()
+{
+  // N2: the real notes carry the flags; the copies are only a drawing cache.
+  syncSelectionToRegionCopies();
 }
 
 bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
@@ -2167,12 +2207,13 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
   if ((hoveredNote && pitchToolHandles && pitchToolHandles->containsLayoutPoint(worldX, worldY)) ||
       findPreviewButtonNoteAt(worldX, worldY)) return false;
   Note* hit = nullptr;
+  Project* hitOwner = nullptr;
   std::vector<Project*> selectedOwners;
   trackGestureNotes.clear();
   for (auto& target : trackGestureTargets) {
     for (auto* note : collectPitchMacroNotes(*target.project, true, target.frames)) {
       for (const auto& bounds : trackNoteBounds(*note, *target.project))
-        if (bounds.contains(e.position)) hit = note;
+        if (bounds.contains(e.position)) { hit = note; hitOwner = target.project; }
       if (note->isSelected()) {
         trackGestureNotes.push_back({note, target.project, note->getMidiNote(), note->getMidiNote(),
                                      note->getLastNonMacroMidiNote(), note->getLastNonMacroMidiNote()});
@@ -2183,8 +2224,13 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
   }
   const bool additive = e.mods.isCommandDown() || e.mods.isCtrlDown() || e.mods.isShiftDown();
   if (hit && additive) {
-    hit->setSelected(!hit->isSelected());
-    syncTrackPreviewSelection();
+    // N2: shift/cmd-click toggles the document selection, so it reaches notes
+    // of any item of the track and the same take cannot count twice.
+    if (documentSelectionAvailable())
+      documentNoteSelection->toggle(hitOwner, hit, *documentNoteIndex);
+    else
+      hit->setSelected(!hit->isSelected());
+    applyDocumentSelection();
     trackGestureNotes.clear();
   } else if (hit && hit->isSelected() && selectedOwners.size() > 1) {
     std::vector<Note*> activeNotes;
@@ -2195,18 +2241,32 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
   } else if (!hit) {
     trackBoxSelecting = true;
     trackBoxInitialSelection.clear();
-    if (additive)
-      for (const auto& item : trackGestureNotes) trackBoxInitialSelection.push_back(item.note);
-    if (!additive)
-      for (auto& target : trackGestureTargets)
-        for (auto& note : target.project->getNotes()) note.setSelected(false);
+    if (additive) {
+      if (documentSelectionAvailable())
+        for (const auto& entry : documentNoteSelection->entries())
+          trackBoxInitialSelection.push_back({entry.project, entry.note});
+      else
+        for (const auto& item : trackGestureNotes)
+          trackBoxInitialSelection.push_back({item.owner, item.note});
+    }
+    if (!additive) {
+      if (documentSelectionAvailable())
+        documentNoteSelection->clear();
+      else
+        for (auto& target : trackGestureTargets)
+          for (auto& note : target.project->getNotes()) note.setSelected(false);
+    }
     trackGestureNotes.clear();
-    syncTrackPreviewSelection();
+    applyDocumentSelection();
   } else {
-    if (!hit->isSelected())
-      for (auto& target : trackGestureTargets)
-        for (auto& note : target.project->getNotes()) note.setSelected(false);
-    syncTrackPreviewSelection();
+    if (!hit->isSelected()) {
+      if (documentSelectionAvailable())
+        documentNoteSelection->clear();
+      else
+        for (auto& target : trackGestureTargets)
+          for (auto& note : target.project->getNotes()) note.setSelected(false);
+    }
+    applyDocumentSelection();
     return false;
   }
   trackGestureActive = true;
@@ -2218,18 +2278,38 @@ void PianoRollComponent::updateTrackGesture(const juce::MouseEvent& e)
 {
   trackGestureEnd = e.position;
   if (trackBoxSelecting) {
+    // N2: the marquee writes the document selection, so one rectangle can
+    // select notes of several items (and of both takes) and a note shown by two
+    // sibling windows still counts once.
     const auto rect = juce::Rectangle<float>(trackGestureStart, trackGestureEnd);
+    const bool useDocument = documentSelectionAvailable();
+    std::vector<std::pair<Project*, Note*>> wanted;
+    wanted.reserve(trackBoxInitialSelection.size());
+    for (const auto& initial : trackBoxInitialSelection)
+      if (initial.project != nullptr && initial.note != nullptr)
+        wanted.push_back({initial.project, initial.note});
     for (auto& target : trackGestureTargets) {
       if (target.isValid && !target.isValid()) continue;
       for (auto* note : collectPitchMacroNotes(*target.project, true, target.frames)) {
-        bool selected = std::find(trackBoxInitialSelection.begin(), trackBoxInitialSelection.end(), note)
-                        != trackBoxInitialSelection.end();
+        bool selected = std::any_of(
+            trackBoxInitialSelection.begin(), trackBoxInitialSelection.end(),
+            [&](const TrackSelectionPair& initial) {
+              return initial.project == target.project && initial.note == note;
+            });
         for (const auto& bounds : trackNoteBounds(*note, *target.project))
           selected |= rect.intersects(bounds);
-        note->setSelected(selected);
+        if (selected)
+          wanted.push_back({target.project, note});
+        else if (!useDocument)
+          note->setSelected(false);
       }
     }
-    syncTrackPreviewSelection();
+    if (useDocument)
+      documentNoteSelection->setFromPairs(wanted, *documentNoteIndex);
+    else
+      for (const auto& pair : wanted)
+        pair.second->setSelected(true);
+    applyDocumentSelection();
   } else {
     float delta = (trackGestureStart.y - e.position.y) / pixelsPerSemitone;
     // One offset for every note, resolved on the first note's on-screen pitch
@@ -2676,7 +2756,10 @@ void PianoRollComponent::applyCanvasMenuChoice(int choice)
     return;
   if (choice == 7)
   {
-    project->selectAllNotes();
+    // N2: in track mode "select all" is the whole document (every visible note
+    // of every item, deduplicated); in clip mode it stays the active project.
+    if (!selectAllDocumentNotes())
+      project->selectAllNotes();
     updatePitchToolHandlesFromSelection();
     updatePreviewButtonBounds();
     repaint();

@@ -789,6 +789,12 @@ private:
   // edits them). Null in clip mode or outside ARA.
   DocumentNoteIndexPtr documentNoteIndex;
 
+  // N2 (D-340): the document selection the index enumerates. Shared with the
+  // piano roll, which writes it from the marquee, shift-click and select-all;
+  // Note::selected is derived from it and notes_debug publishes it.
+  std::shared_ptr<DocumentNoteSelection> documentNoteSelection =
+      std::make_shared<DocumentNoteSelection>();
+
   // D-311: MIDI guides (song level, quarters in the project; ghosts in project
   // seconds for the canvas).
   std::vector<PianoRollComponent::MidiGuideGhost>

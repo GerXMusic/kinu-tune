@@ -50,6 +50,9 @@ set(PITCHNET_TEST_SOURCES
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp
+    # N2 (D-340): la seleccion del documento (marquesina, shift-clic, seleccionar
+    # todo en pista, dedupe de ventanas hermanas y poda al desaparecer un project).
+    NoteSelectionTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
