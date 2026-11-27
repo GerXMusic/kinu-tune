@@ -21,13 +21,22 @@
  * a SIDECAR file next to the user's application data, and the host archive
  * keeps carrying the old `midiGuides` copy for compatibility (one version).
  *
- * Identity: ARA exposes no host project path (no .rpp name, no project folder),
- * so the closest stable stand-in is the set of audio sources of the ARA
- * document - their persistent IDs are the media paths the host restores with
- * the project. midiGuideDisk::projectKeyFromSources() hashes that set, and the
- * track key the store already uses (document + track name + ordinal, D-358)
- * completes the key. Two projects with different media never share a file; two
- * tracks of one project never share a file.
+ * Identity (R11b, D-365): ARA exposes no host project path (no .rpp name, no
+ * project folder), and it exposes no persistent file path either: measured in
+ * R11, the audio source persistent IDs changed on every reopen and produced
+ * three different document fingerprints for the same media. What survives is
+ * the source NAME the host restores with the project. The document key is the
+ * fingerprint of those names and the track key is Models/TrackIdentity's
+ * `src:<fingerprint>|name:<track>`; no address, pointer or ordinal of the
+ * session is part of either. Two projects with different media never share a
+ * file; two tracks of one project never share a file.
+ *
+ * Legacy migration: a sidecar written before R11b carries a track key that
+ * starts with "doc:" (the ARADocument address). When the stable key has no
+ * file, load() adopts those files for the same track (same name after
+ * "|name:"), merges them by guide id, rewrites them under the stable key and
+ * renames each legacy file to "<file>.bak". Nothing is deleted; the bytes stay
+ * for the user and only one live file per track remains.
  *
  * Write: temporary sibling + atomic replace (juce::TemporaryFile ->
  * replaceFileIn), so a reader never sees half a file and a crash leaves the
@@ -46,8 +55,9 @@ inline constexpr const char* kFileExtension = ".json";
 // product folder; the live import uses guides/live next to it).
 juce::File defaultDirectory();
 
-// Deterministic fingerprint of one ARA document from its audio sources'
-// persistent IDs. Order-independent; empty input gives an empty key.
+// Deterministic fingerprint of one ARA document from its audio sources' stable
+// identities (the names ARA exposes), never from their persistent IDs.
+// Order-independent; empty input gives an empty key.
 juce::String projectKeyFromSources(std::vector<juce::String> sourceIds);
 
 // One file per (document fingerprint, track key).
@@ -84,14 +94,27 @@ public:
                        const juce::String &trackKey) const;
 
     // Atomic replace. Returns false (and fills error when given) if the file
-    // could not be written; the previous copy is left untouched.
+    // could not be written; the previous copy is left untouched. On success
+    // the legacy "doc:" sidecars of the same track are retired to .bak, so a
+    // track never ends up with two live keys (D-365).
     bool save(const juce::String &projectKey, const juce::String &trackKey,
               const std::vector<GuideSource> &guides,
               juce::String *error = nullptr);
 
+    // Reads the file for the key. When that file does not exist yet, adopts
+    // the legacy "doc:" sidecars of the same track, materialises them under
+    // the key and returns them (status loaded), so the first reopen after the
+    // R11b fix recovers the guide instead of starting empty.
     MidiGuideLoadResult load(const juce::String &projectKey,
                              const juce::String &trackKey) const;
 
 private:
+    bool writeGuides(const juce::String &projectKey,
+                     const juce::String &trackKey,
+                     const std::vector<GuideSource> &guides,
+                     juce::String *error) const;
+    void retireLegacyFiles(const juce::String &trackKey,
+                           const juce::File &keep) const;
+
     juce::File directory;
 };

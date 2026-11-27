@@ -5,6 +5,7 @@
 
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/Constants.h"
+#include "AraSourceIdentity.h"
 #include "PluginProcessor.h"
 #include "PitchNetAudioModification.h"
 #include "../UI/IMainView.h"
@@ -2125,22 +2126,19 @@ void PitchNetDocumentController::refreshMidiGuideDocumentKey() {
   }
 
   // ARA exposes no host project path. The audio sources of the document are
-  // the only stable per-project data it hands over (their persistent IDs are
-  // the media the host restores with the project), so the fingerprint is
-  // built from them. Empty until the host creates the sources: nothing is read
-  // or written then, and the key is retried on every source event.
-  std::vector<juce::String> sourceIds;
+  // the only stable per-project data it hands over, and the stable datum is
+  // their NAME (the media the host restores with the project), not the
+  // persistent ID: measured in R11, the IDs changed on every reopen and the
+  // document key followed them, so the sidecar was written under a key that
+  // never came back (D-365). Empty until the host creates the sources: nothing
+  // is read or written then, and the key is retried on every source event.
+  std::vector<juce::String> sourceIdentities;
   if (currentDocument != nullptr)
-    for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>())
-      if (source != nullptr) {
-        const juce::String id(source->getPersistentID());
-        if (id.isNotEmpty())
-          sourceIds.push_back(id);
-      }
+    sourceIdentities = araIdentity::documentSourceIdentities(*currentDocument);
 
-  const auto key = sourceIds.empty()
+  const auto key = sourceIdentities.empty()
                        ? juce::String()
-                       : midiGuideDisk::projectKeyFromSources(sourceIds);
+                       : midiGuideDisk::projectKeyFromSources(sourceIdentities);
   if (key == midiGuideDocumentKey)
     return;
   midiGuideDocumentKey = key;

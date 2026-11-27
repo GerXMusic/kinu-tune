@@ -57,6 +57,9 @@ set(PITCHNET_TEST_SOURCES
     # R7 (D-360): la guia sobrevive a cerrar y reabrir el proyecto por un
     # sidecar JSON atomico (el archivo ARA no es de fiar, D-346).
     MidiGuideStorePersistenceTests.cpp
+    # R11b (D-365): la clave del sidecar es la huella de las fuentes (nombre
+    # ARA) + nombre de pista; reapertura y migracion del legacy `doc:`.
+    MidiGuideStoreIdentityTests.cpp
     # R8 (D-361): el plan de aplicacion por pista (SCOPE=A) resuelve que item y
     # nota recibe cada nota de guia, con motivos de skip, sin escribir nada.
     MidiGuideTrackPlanTests.cpp

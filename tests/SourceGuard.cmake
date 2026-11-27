@@ -147,6 +147,51 @@ elseif("${RULE}" STREQUAL "region-copies")
     message(STATUS "SourceGuard (region-copies): passed")
     return()
 elseif("${RULE}" STREQUAL "midi-guides")
+    # R11b (D-365): the sidecar key may only be derived from data that survives
+    # closing and reopening the project. Measured in R11: the address of the
+    # ARADocument and the audio source persistent IDs both changed on every
+    # reopen, so the key was orphaned and the guide disappeared. The two files
+    # that derive the key therefore may not name an address, a pointer, the
+    # document object or a persistent ID - and the track key may not fall back
+    # to the legacy "doc:" prefix.
+    foreach(identity_file IN ITEMS
+            "${SOURCE_DIR}/Models/TrackIdentity.cpp"
+            "${SOURCE_DIR}/Models/MidiGuidePersistence.cpp")
+        if(NOT EXISTS "${identity_file}")
+            message(FATAL_ERROR "SourceGuard (midi-guides): ${identity_file} not found")
+        endif()
+        file(STRINGS "${identity_file}" identity_lines)
+        set(identity_violations "")
+        foreach(line IN LISTS identity_lines)
+            string(REGEX REPLACE "\"([^\"\\\\]|\\\\.)*\"" "\"\"" code "${line}")
+            string(REGEX REPLACE "//.*$" "" code "${code}")
+            if(code MATCHES "reinterpret_cast|uintptr_t|getDocument[ \t]*\\(|getPersistentID[ \t]*\\(")
+                string(STRIP "${line}" shown)
+                get_filename_component(identity_name "${identity_file}" NAME)
+                string(APPEND identity_violations "  ${identity_name}: ${shown}\n")
+            endif()
+        endforeach()
+        if(identity_violations)
+            message(FATAL_ERROR
+                "SourceGuard (midi-guides) found a session identity in the guide key:\n"
+                "${identity_violations}"
+                "The key is the audio-source fingerprint plus the track name (Source/Models/TrackIdentity.h); addresses, pointers and persistent IDs change on reopen (see D-365).")
+        endif()
+    endforeach()
+
+    # The legacy prefix is READ by the migration only; deriving a new key from
+    # it again is the bug this phase fixed.
+    file(STRINGS "${SOURCE_DIR}/Models/TrackIdentity.cpp" identity_lines)
+    foreach(line IN LISTS identity_lines)
+        if(line MATCHES "\"doc:")
+            string(STRIP "${line}" shown)
+            message(FATAL_ERROR
+                "SourceGuard (midi-guides): the track key may not use the legacy 'doc:' prefix:\n"
+                "  Models/TrackIdentity.cpp: ${shown}\n"
+                "See D-365.")
+        endif()
+    endforeach()
+
     # R5b (D-356): the guide is the DOCUMENT's. Project::getMidiGuides is only
     # the compatibility cache (old JSON/host archive) and the one-time migration
     # source; reading or writing it anywhere else is how the guide became a
