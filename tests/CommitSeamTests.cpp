@@ -20,6 +20,7 @@
 #include "../Source/Models/Project.h"
 #include "../Source/Utils/Constants.h"
 #include "../Source/Utils/PitchCurveProcessor.h"
+#include "CommitSeamChecks.h"
 #include "TestAssert.h"
 
 #include <algorithm>
@@ -27,6 +28,11 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+
+using commitSeamChecks::maxAbsDiff;
+using commitSeamChecks::maxAbsDiffOutside;
+using commitSeamChecks::midiHz;
+using commitSeamChecks::renderAndWait;
 
 namespace {
 
@@ -39,10 +45,6 @@ constexpr int kNote1End = 350;
 constexpr int kUnvoicedFrom = kNote1End;
 constexpr float kNote0Midi = 57.0f; // A3, 220 Hz
 constexpr float kNote1Midi = 59.0f; // B3, ~246.9 Hz
-
-float midiHz(float midi) {
-  return 440.0f * std::pow(2.0f, (midi - 69.0f) / 12.0f);
-}
 
 // A sung two-note phrase: a harmonic tone whose frequency follows the notes,
 // silent outside the voiced span. The source F0 and the note grid describe the
@@ -109,32 +111,6 @@ Project makeProject() {
   return project;
 }
 
-bool renderAndWait(Project &project, SynthesisEngineType engine,
-                   const char *label) {
-  IncrementalSynthesizer synthesizer;
-  synthesizer.setProject(&project);
-  synthesizer.setSynthesisEngine(engine);
-
-  std::atomic<bool> finished{false};
-  std::atomic<bool> success{false};
-  synthesizer.synthesizeRegion(
-      nullptr, [&](bool ok) {
-        success.store(ok);
-        finished.store(true);
-      });
-
-  const double deadline = juce::Time::getMillisecondCounterHiRes() + 30000.0;
-  while (!finished.load() &&
-         juce::Time::getMillisecondCounterHiRes() < deadline) {
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
-  }
-  if (!finished.load()) {
-    std::cout << label << ": render did not finish in 30 s\n";
-    return false;
-  }
-  return success.load();
-}
-
 // Apply the edit the way the UI does: move note 0 one semitone, rebuild the
 // target curve and mark the note plus its F0 window.
 void editNote0(Project &project) {
@@ -142,28 +118,6 @@ void editNote0(Project &project) {
   project.getNotes()[0].markDirty();
   PitchCurveProcessor::rebuildBaseFromNotes(project);
   project.markNoteEditDirtyRange(kNote0Start, kNote0End);
-}
-
-float maxAbsDiff(const juce::AudioBuffer<float> &a,
-                 const juce::AudioBuffer<float> &b, int firstSample,
-                 int lastSample) {
-  float worst = 0.0f;
-  const int n = std::min({a.getNumSamples(), b.getNumSamples(), lastSample});
-  for (int i = std::max(0, firstSample); i < n; ++i)
-    worst = std::max(worst, std::abs(a.getSample(0, i) - b.getSample(0, i)));
-  return worst;
-}
-
-float maxAbsDiffOutside(const juce::AudioBuffer<float> &a,
-                        const juce::AudioBuffer<float> &b, int firstSample,
-                        int lastSample) {
-  float worst = 0.0f;
-  const int n = std::min(a.getNumSamples(), b.getNumSamples());
-  for (int i = 0; i < firstSample; ++i)
-    worst = std::max(worst, std::abs(a.getSample(0, i) - b.getSample(0, i)));
-  for (int i = std::max(firstSample, lastSample); i < n; ++i)
-    worst = std::max(worst, std::abs(a.getSample(0, i) - b.getSample(0, i)));
-  return worst;
 }
 
 void checkEngine(SynthesisEngineType engine, const char *name,

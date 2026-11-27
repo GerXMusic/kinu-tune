@@ -6,6 +6,7 @@
 #include "../Models/Project.h"
 #include "../Models/DocumentNoteSelection.h"
 #include "../Models/DocumentNoteBatch.h"
+#include "../Models/DocumentRenderBatch.h"
 #include "../Models/MidiGuideGhosts.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
@@ -669,6 +670,21 @@ private:
       const std::function<documentNoteBatch::Result(
           const std::vector<documentNoteBatch::Target> &)> &operation);
   void notifyBatchProjects(const std::vector<Project *> &projects);
+  // N5 (D-345): the render of a batch, one request per item. The gesture queues
+  // its affected items and flushes once, so one Project reached by two windows
+  // or by two operations of the same gesture is rendered once (D-247: whoever
+  // dirties the audio requests its render). See Models/DocumentRenderBatch.h.
+  void queueBatchRenders(const std::vector<Project *> &projects);
+  void flushBatchRenders();
+  bool requestBatchRender(
+      const documentRenderBatch::Request &request,
+      const std::vector<TrackPitchMacroTarget> &targets);
+  // Every item of the batch has a path to its render. Checked before the
+  // operation writes: a batch applied without that path would be heard mute.
+  bool batchRenderPathAvailable(const std::vector<Project *> &projects) const;
+  // The track items as the backend publishes them (one per modification). Asked
+  // once per flush instead of once per affected item.
+  std::vector<TrackPitchMacroTarget> batchRenderTargets() const;
   // N4: the non-modal message that says what a batch applied and in how many
   // items (and that it is undone in one step).
   void announceBatchApplied(int notes, int items);
@@ -754,6 +770,9 @@ private:
   void syncSelectionToRegionCopies();
   DocumentNoteIndexPtr documentNoteIndex;
   std::shared_ptr<DocumentNoteSelection> documentNoteSelection;
+  // N5 (D-345): the items of the open batch gesture whose render is still
+  // pending. Deduplicated by Project*; emptied by flushBatchRenders().
+  documentRenderBatch::Gesture pendingBatchRenders;
   bool documentSelectionAvailable() const {
     return trackViewMode && documentNoteIndex != nullptr &&
            documentNoteSelection != nullptr;

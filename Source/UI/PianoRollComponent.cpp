@@ -4147,6 +4147,18 @@ void PianoRollComponent::beginInspectorEdit(InspectorParam param)
     for (auto *owner : inspectorEditProjects)
       if (std::find(owners.begin(), owners.end(), owner) == owners.end())
         owners.push_back(owner);
+    // N5 (D-345): the gesture is refused before it writes when one of its items
+    // cannot ask for its render yet: applied mute it would be worse than not
+    // applied (D-247).
+    if (!batchRenderPathAvailable(owners))
+    {
+      inspectorEditNotes.clear();
+      inspectorEditProjects.clear();
+      inspectorBatchBefore.clear();
+      if (onBatchNotice)
+        onBatchNotice(TR("notice.batch_render_pending"));
+      return;
+    }
     inspectorBatchBefore = documentNoteBatch::captureStates(owners);
   }
   else
@@ -5569,35 +5581,122 @@ void PianoRollComponent::notifyBatchProjects(
     if (owner == nullptr)
       continue;
     if (owner == project)
-    {
       activeTouched = true;
-      continue;
-    }
-    // The edit is in another item: persist it and ask for its render through
-    // the same target the track drag uses (D-247: whoever dirties, requests).
-    if (!getTrackEditTargets)
-      continue;
-    for (const auto &target : getTrackEditTargets())
-      if (target.project == owner)
-      {
-        if (target.isValid && !target.isValid())
-          continue;
-        if (target.onChanged)
-          target.onChanged(true);
-        break;
-      }
   }
   if (activeTouched)
   {
     invalidateBasePitchCache();
     if (onPitchEdited)
       onPitchEdited();
-    if (onPitchEditFinished)
-      onPitchEditFinished();
   }
+  // N5 (D-345): the render is not asked for per window nor per note: the items
+  // that changed go into the gesture's queue, deduplicated by Project, and the
+  // flush sends one request for each (D-247: whoever dirties the audio requests
+  // its render). Three cuts of one take are one request, not three.
+  queueBatchRenders(projects);
   // A delete cleared the flags of its notes: the set must drop them.
   documentNoteSelection->refresh(documentNoteIndex.get());
   applyDocumentSelection();
+  flushBatchRenders();
+}
+
+std::vector<TrackPitchMacroTarget> PianoRollComponent::batchRenderTargets() const
+{
+  if (!getTrackEditTargets)
+    return {};
+  return getTrackEditTargets();
+}
+
+bool PianoRollComponent::batchRenderPathAvailable(
+    const std::vector<Project *> &projects) const
+{
+  if (projects.empty())
+    return true;
+  // No backend target provider at all: this editor publishes no track audio (it
+  // is not the plug-in in track mode), so an item of the document cannot be left
+  // mute and there is nothing to request.
+  if (!getTrackEditTargets)
+    return true;
+  const auto targets = batchRenderTargets();
+  for (auto *owner : projects)
+  {
+    if (owner == nullptr)
+      continue;
+    // The active item renders through the editor itself (markRenderDirty and the
+    // canvas request), which is the path a single-item edit already uses.
+    if (owner == project && onPitchEditFinished)
+      continue;
+    const auto target = std::find_if(
+        targets.begin(), targets.end(),
+        [owner](const TrackPitchMacroTarget &candidate)
+        { return candidate.project == owner; });
+    const bool usable = target != targets.end() &&
+                        !(target->isValid && !target->isValid()) &&
+                        bool(target->onChanged);
+    if (!usable)
+      return false;
+  }
+  return true;
+}
+
+void PianoRollComponent::queueBatchRenders(
+    const std::vector<Project *> &projects)
+{
+  for (auto *owner : projects)
+    if (owner != nullptr)
+      pendingBatchRenders.add(owner, owner == project);
+}
+
+bool PianoRollComponent::requestBatchRender(
+    const documentRenderBatch::Request &request,
+    const std::vector<TrackPitchMacroTarget> &targets)
+{
+  auto *owner = request.project;
+  if (owner == nullptr)
+    return false;
+  // The active item: the editor's own path (D-249), the same one a single-item
+  // edit uses. It marks the dirty range and schedules the render: one request.
+  if (request.active && onPitchEditFinished)
+  {
+    onPitchEditFinished();
+    return true;
+  }
+  // No provider: nothing publishes this item's audio, so there is no request to
+  // make and no mute to prevent (the editor is not the ARA track).
+  if (!getTrackEditTargets)
+    return true;
+  for (const auto &target : targets)
+    if (target.project == owner)
+    {
+      if (target.isValid && !target.isValid())
+        return false;
+      if (!target.onChanged)
+        return false;
+      // The backend target persists the item's archive and asks the backend for
+      // the render of this modification (the same path the track drag uses).
+      target.onChanged(true);
+      return true;
+    }
+  return false;
+}
+
+void PianoRollComponent::flushBatchRenders()
+{
+  if (pendingBatchRenders.empty())
+    return;
+  const auto requests = pendingBatchRenders.take();
+  // Once per flush, not once per item: building the targets walks the host's
+  // regions and can trigger an analysis request.
+  const auto targets = batchRenderTargets();
+  const auto outcome = documentRenderBatch::flush(
+      requests,
+      [this, &targets](const documentRenderBatch::Request &request)
+      { return requestBatchRender(request, targets); });
+  if (!outcome.complete() && onBatchNotice)
+    // A dirty item without a request is heard mute (D-247). It should not
+    // happen — the paths that write check this before writing — but saying it
+    // is better than leaving the user with an item that never updates.
+    onBatchNotice(TR("notice.batch_render_pending"));
 }
 
 bool PianoRollComponent::applyDocumentBatch(
@@ -5606,6 +5705,15 @@ bool PianoRollComponent::applyDocumentBatch(
         const std::vector<documentNoteBatch::Target> &)> &operation)
 {
   const auto targets = documentBatchTargets();
+  // N5 (D-345): nothing is written until every item of the batch has a path to
+  // its render. An edit applied without it would be heard mute or stale (D-247),
+  // and undoing it afterwards is not what the user asked for.
+  if (!batchRenderPathAvailable(documentNoteBatch::projectsOf(targets)))
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_render_pending"));
+    return false;
+  }
   // N4: the record has to exist before the operation writes. It covers every
   // note of every item the selection reaches, because a quantize also moves the
   // shared boundaries of unselected neighbours.

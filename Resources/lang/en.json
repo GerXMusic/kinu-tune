@@ -199,6 +199,7 @@
   "notice.batch_rejected": "The batch was not applied: it would collapse or overlap a note.",
   "notice.batch_item_bound": "That edit works on one item: select notes of a single item.",
   "notice.batch_applied": "Applied to {n} notes across {items} items · undone in one step.",
+  "notice.batch_render_pending": "That edit needs the item's render: wait for the track to finish loading and try again.",
   "quantize.pitch_center": "Pitch Center",
   "quantize.pitch_drift": "Pitch Drift",
   "quantize.snap_to_scale": "Snap to Scale",

@@ -59,6 +59,9 @@ set(PITCHNET_TEST_SOURCES
     # N4 (D-344): un gesto en lote es UN paso de undo del documento (undo/redo
     # exactos, vecinas del cuantizar incluidas, y el mensaje de la UI).
     BatchUndoTests.cpp
+    # N5 (D-345): el render de un gesto en lote, una peticion por item afectado
+    # (ni una por nota ni por ventana), sin items mudos y sin tocar los demas.
+    BatchRenderTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
@@ -124,6 +127,10 @@ target_link_libraries(ProjectTempoPersistenceTests PRIVATE pitchnet_ui)
 # N4: el gesto del inspector y el aviso no modal son del editor, asi que el test
 # maneja el PianoRollComponent real (pitchnet_ui).
 target_link_libraries(BatchUndoTests PRIVATE pitchnet_ui)
+
+# N5: las peticiones de render salen del camino real del editor (piano roll,
+# undo y destinos de la pista) y ademas se renderiza en audio: pitchnet_ui.
+target_link_libraries(BatchRenderTests PRIVATE pitchnet_ui)
 
 # TimingAudioTests (M4 v1): mide S1/S2 en audio con FCPE y los motores reales.
 target_compile_definitions(TimingAudioTests PRIVATE
