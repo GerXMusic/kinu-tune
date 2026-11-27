@@ -14,6 +14,7 @@
 #include "../Audio/IO/MidiGuideImporter.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Models/MidiGuideRegionScope.h"
+#include "../Models/GuideApplicationPlan.h"
 #include "PianoRoll/TempoGridView.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/NotePitch.h"
@@ -2620,7 +2621,16 @@ void MainComponent::pollMcpControl()
     }
     else if (command == "apply_midi_guide")
     {
-      applyMidiGuide();
+      // R9 (D-362): scope "track" (default, SCOPE=A) applies to every item of
+      // the track; "active" keeps R1's active-item apply. The report says what
+      // was applied, what was skipped (and why), the undo step's name and the
+      // items touched.
+      const auto report =
+          applyMidiGuideWithScope(request.getProperty("scope", "track")
+                                      .toString());
+      if (auto *reportObject = report.getDynamicObject())
+        for (const auto &property : reportObject->getProperties())
+          response->setProperty(property.name, property.value);
       response->setProperty("status", midiGuidePanel.getStatusText());
       response->setProperty("ok", true);
     }
@@ -7088,113 +7098,266 @@ void MainComponent::refreshMidiGuideUi()
 
 void MainComponent::applyMidiGuide()
 {
+  // R9 (D-362): Apply is SCOPE=A by default: the guide belongs to the track, so
+  // the button applies to every item of the track. R1's active-item behaviour is
+  // still reachable through the local channel with scope="active".
+  applyMidiGuideWithScope("track");
+}
+
+juce::var
+MainComponent::applyMidiGuideWithScope(const juce::String &requestedScope)
+{
+  const juce::String scope = requestedScope == "active" ? "active" : "track";
+
+  // Published by the local channel: what was applied, what was skipped and by
+  // which reason, the undo step's name and the items that were touched.
+  auto *reportObject = new juce::DynamicObject();
+  reportObject->setProperty("scope", scope);
+  reportObject->setProperty("matched", 0);
+  reportObject->setProperty("changed", 0);
+  auto *skipped = new juce::DynamicObject();
+  skipped->setProperty("no_item", 0);
+  skipped->setProperty("not_analyzed", 0);
+  skipped->setProperty("different_source", 0);
+  skipped->setProperty("no_match", 0);
+  reportObject->setProperty("skipped", juce::var(skipped));
+  reportObject->setProperty("undo_name", juce::String());
+  reportObject->setProperty("items", juce::var(juce::Array<juce::var>()));
+  reportObject->setProperty("render_path_missing", false);
+  juce::var report(reportObject);
+
   auto *project = getProject();
   if (project == nullptr)
-    return;
+    return report;
 
-  // R5b/D-356: the guide is the document's; Apply still edits the active item
-  // only (R1/D-313). The store is the only read path.
+  // R5b/D-356: the guide is the document's; the store is the only read path.
   const auto *guide = midiGuideStore->at(selectedMidiGuide);
   if (guide == nullptr)
   {
     midiGuidePanel.setStatusText(TR("midi.empty"));
-    return;
+    return report;
   }
   if (guide->notes.empty())
-    return;
+    return report;
 
   const HostTempoMap fallback = HostTempoMap::constant(
       cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
   const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
 
-  // R1/D-313: the guide covers the track, but Apply only edits the active item.
-  // The source window is the ARA playback region this project holds; the host
-  // window is that interval on the timeline, where the guide slots live.
-  const auto windows =
-      midiGuideScopeWindowsFor(*project, pianoRoll.projectToTimeline(0.0));
-  auto plan =
-      planMidiGuideScope(*project, *guide, tempo, windows, SAMPLE_RATE, HOP_SIZE);
-
-  if (windows.valid && plan.slots.empty())
+  if (scope == "active")
   {
-    // Nothing to match inside the active item: say so and touch nothing, so the
-    // audio is not marked dirty for a no-op. R5b/D-356: the two windows are
-    // named, not crossed: %1-%2 are the GUIDE's host span, %3-%4 the active
-    // item's host span (its source window is the same interval minus the
-    // offset, so it is not repeated here).
-    juce::String outside = TR("midi.outside_item");
-    outside = outside.replace(
-        "%1", juce::String(plan.report.guideHostStartSeconds, 3));
-    outside = outside.replace("%2", juce::String(plan.report.guideHostEndSeconds, 3));
-    outside = outside.replace(
-        "%3", juce::String(windows.hostStartSeconds(), 3));
-    outside = outside.replace("%4",
-                              juce::String(windows.hostEndSeconds(), 3));
-    midiGuidePanel.setStatusText(outside);
-    return;
-  }
+    // R1/D-313: unchanged. The source window is the ARA playback region this
+    // project holds; the host window is that interval on the timeline, where
+    // the guide slots live.
+    const auto windows =
+        midiGuideScopeWindowsFor(*project, pianoRoll.projectToTimeline(0.0));
+    auto plan = planMidiGuideScope(*project, *guide, tempo, windows, SAMPLE_RATE,
+                                   HOP_SIZE);
 
-  auto &notes = project->getNotes();
-  const auto &changes = plan.changes;
+    const int skippedOutside =
+        !windows.valid ? 0
+                       : static_cast<int>(plan.report.guideNotes) -
+                             static_cast<int>(plan.slots.size());
+    skipped->setProperty("no_item", skippedOutside);
 
-  int matched = 0;
-  if (!changes.empty())
-  {
-    std::vector<Note *> targetNotes;
-    std::vector<float> oldMidis, newMidis, oldSources, newSources;
-    targetNotes.reserve(changes.size());
-
-    for (const auto &change : changes)
+    if (windows.valid && plan.slots.empty())
     {
-      auto &note = notes[static_cast<size_t>(change.noteIndex)];
-
-      const float oldMidi = note.getMidiNote();
-      const float oldSource = note.getLastNonMacroMidiNote();
-      const float target = static_cast<float>(change.targetPitch);
-      // D-312: only the centre moves. sourceAfterEdit keeps the Correct Pitch
-      // reference consistent, exactly like a drag; deltaPitch and pitchOffset
-      // are never touched here.
-      const float newSource = NotePitch::sourceAfterEdit(
-          *project, note, oldSource, oldMidi, target);
-
-      targetNotes.push_back(&note);
-      oldMidis.push_back(oldMidi);
-      newMidis.push_back(target);
-      oldSources.push_back(oldSource);
-      newSources.push_back(newSource);
+      // Nothing to match inside the active item: say so and touch nothing, so
+      // the audio is not marked dirty for a no-op. R5b/D-356: the two windows
+      // are named, not crossed: %1-%2 are the GUIDE's host span, %3-%4 the
+      // active item's host span (its source window is the same interval minus
+      // the offset, so it is not repeated here).
+      juce::String outside = TR("midi.outside_item");
+      outside = outside.replace(
+          "%1", juce::String(plan.report.guideHostStartSeconds, 3));
+      outside = outside.replace(
+          "%2", juce::String(plan.report.guideHostEndSeconds, 3));
+      outside = outside.replace(
+          "%3", juce::String(windows.hostStartSeconds(), 3));
+      outside = outside.replace("%4",
+                                juce::String(windows.hostEndSeconds(), 3));
+      midiGuidePanel.setStatusText(outside);
+      return report;
     }
 
-    matched = static_cast<int>(targetNotes.size());
-    auto action = std::make_unique<MidiGuideApplyAction>(
-        std::move(targetNotes), std::move(oldMidis), std::move(newMidis),
-        std::move(oldSources), std::move(newSources),
-        [this](const std::vector<Note *> &)
-        {
-          // D-285: moving the centres without rebuilding the base leaves the
-          // white curve at the old pitch (measured: 4,4 st of disagreement
-          // after one apply). undoing a guide has to rebuild it too, so it
-          // lives in the action's callback, not in the commit path.
-          if (auto *changedProject = getProject())
-            PitchCurveProcessor::rebuildBaseFromNotes(*changedProject);
-          pianoRoll.repaint();
-          pianoRollView.repaint();
-        },
-        juce::String(TR("midi.apply")) + " MIDI");
-    action->redo();
-    if (undoManager)
-      undoManager->addAction(std::move(action));
+    auto &notes = project->getNotes();
+    const auto &changes = plan.changes;
 
-    markRenderDirty();
-    notifyProjectDataChanged();
-    // D-247: every path that marks the audio dirty must ask for the render.
-    if (isPluginMode() && onPitchEditFinished)
-      onPitchEditFinished();
+    int matched = 0;
+    int changed = 0;
+    if (!changes.empty())
+    {
+      std::vector<Note *> targetNotes;
+      std::vector<float> oldMidis, newMidis, oldSources, newSources;
+      targetNotes.reserve(changes.size());
+
+      for (const auto &change : changes)
+      {
+        auto &note = notes[static_cast<size_t>(change.noteIndex)];
+
+        const float oldMidi = note.getMidiNote();
+        const float oldSource = note.getLastNonMacroMidiNote();
+        const float target = static_cast<float>(change.targetPitch);
+        // D-312: only the centre moves. sourceAfterEdit keeps the Correct Pitch
+        // reference consistent, exactly like a drag; deltaPitch and pitchOffset
+        // are never touched here.
+        const float newSource = NotePitch::sourceAfterEdit(
+            *project, note, oldSource, oldMidi, target);
+
+        targetNotes.push_back(&note);
+        oldMidis.push_back(oldMidi);
+        newMidis.push_back(target);
+        oldSources.push_back(oldSource);
+        newSources.push_back(newSource);
+        if (std::abs(target - oldMidi) > 1.0e-4f)
+          ++changed;
+      }
+
+      matched = static_cast<int>(targetNotes.size());
+      const juce::String undoName = juce::String(TR("midi.apply")) + " MIDI";
+      auto action = std::make_unique<MidiGuideApplyAction>(
+          std::move(targetNotes), std::move(oldMidis), std::move(newMidis),
+          std::move(oldSources), std::move(newSources),
+          [this](const std::vector<Note *> &)
+          {
+            // D-285: moving the centres without rebuilding the base leaves the
+            // white curve at the old pitch (measured: 4,4 st of disagreement
+            // after one apply). undoing a guide has to rebuild it too, so it
+            // lives in the action's callback, not in the commit path.
+            if (auto *changedProject = getProject())
+              PitchCurveProcessor::rebuildBaseFromNotes(*changedProject);
+            pianoRoll.repaint();
+            pianoRollView.repaint();
+          },
+          undoName);
+      action->redo();
+      if (undoManager)
+        undoManager->addAction(std::move(action));
+
+      markRenderDirty();
+      notifyProjectDataChanged();
+      // D-247: every path that marks the audio dirty must ask for the render.
+      if (isPluginMode() && onPitchEditFinished)
+        onPitchEditFinished();
+
+      reportObject->setProperty("undo_name", undoName);
+    }
+
+    reportObject->setProperty("matched", matched);
+    reportObject->setProperty("changed", changed);
+    // The edit layer of the active item, if the document index knows it.
+    juce::Array<juce::var> items;
+    if (documentNoteIndex != nullptr)
+      for (const auto &region : documentNoteIndex->regions)
+        if (region.project == project)
+        {
+          items.add(region.modificationKey);
+          break;
+        }
+    reportObject->setProperty("items", juce::var(items));
+
+    juce::String status;
+    status << matched << "/" << static_cast<int>(plan.audio.size()) << " "
+           << (matched == 1 ? "note" : "notes");
+    midiGuidePanel.setStatusText(status);
+    return report;
   }
 
+  // SCOPE=A (D-361/D-362): every item of the track, whatever source it shows.
+  // The index is the document's own enumeration; in clip mode (no index) the
+  // one project this instance holds is the whole track.
+  std::vector<GuideApplicationRegion> regions;
+  if (documentNoteIndex != nullptr)
+  {
+    regions.reserve(documentNoteIndex->regions.size());
+    for (const auto &region : documentNoteIndex->regions)
+    {
+      GuideApplicationRegion entry;
+      entry.modificationKey = region.modificationKey;
+      entry.sourceKey = region.sourceKey;
+      entry.hostStartSeconds = region.hostStartSeconds;
+      entry.hostEndSeconds = region.hostEndSeconds;
+      entry.sourceStartSeconds = region.sourceStartSeconds;
+      entry.sourceEndSeconds = region.sourceEndSeconds;
+      entry.offsetSeconds = region.offsetSeconds;
+      entry.project = region.project;
+      regions.push_back(entry);
+    }
+  }
+  if (regions.empty())
+  {
+    GuideApplicationRegion entry;
+    entry.modificationKey = "active";
+    const auto windows =
+        midiGuideScopeWindowsFor(*project, pianoRoll.projectToTimeline(0.0));
+    if (windows.valid)
+    {
+      entry.hostStartSeconds = windows.hostStartSeconds();
+      entry.hostEndSeconds = windows.hostEndSeconds();
+      entry.sourceStartSeconds = windows.sourceStartSeconds;
+      entry.sourceEndSeconds = windows.sourceEndSeconds;
+      entry.offsetSeconds = windows.offsetSeconds;
+    }
+    else
+    {
+      // No ARA window: the guide resolves against the whole project, which is
+      // what R1 does when its windows are invalid.
+      entry.hostStartSeconds = -1.0e9;
+      entry.hostEndSeconds = 1.0e9;
+      entry.offsetSeconds = 0.0;
+    }
+    entry.project = project;
+    regions.push_back(entry);
+  }
+
+  MidiGuideSampling sampling;
+  sampling.sampleRate = SAMPLE_RATE;
+  sampling.hopSize = HOP_SIZE;
+  const auto plan = planGuideApplication(*guide, tempo, regions, sampling);
+
+  const juce::String undoName = TR("midi.undo_track");
+  auto result = pianoRoll.applyMidiGuidePlanToTrack(plan, undoName);
+
+  reportObject->setProperty("matched", result.matchedNotes);
+  reportObject->setProperty("changed", result.changedNotes);
+  skipped->setProperty("no_item", result.skippedNoItem);
+  skipped->setProperty("not_analyzed", result.skippedNotAnalyzed);
+  skipped->setProperty("different_source", result.skippedDifferentSource);
+  skipped->setProperty("no_match", result.skippedNoMatch);
+  reportObject->setProperty("undo_name", result.undoName);
+  reportObject->setProperty("render_path_missing", result.renderPathMissing);
+  juce::Array<juce::var> touched;
+  for (const auto &key : result.modificationKeys)
+    touched.add(key);
+  reportObject->setProperty("items", juce::var(touched));
+
   juce::String status;
-  status << matched << "/" << static_cast<int>(plan.audio.size()) << " "
-         << (matched == 1 ? "note" : "notes");
+  if (result.renderPathMissing)
+  {
+    status = TR("midi.track_render_missing");
+  }
+  else if (result.changedNotes == 0)
+  {
+    status = TR("midi.track_nothing");
+    status = status.replace("%1", juce::String(result.skippedNoItem));
+    status = status.replace("%2", juce::String(result.skippedNotAnalyzed));
+    status = status.replace("%3", juce::String(result.skippedDifferentSource));
+    status = status.replace("%4", juce::String(result.skippedNoMatch));
+  }
+  else
+  {
+    status = TR("midi.track_applied");
+    status = status.replace("%1", juce::String(result.matchedNotes));
+    status = status.replace("%2", juce::String(result.changedNotes));
+    status = status.replace(
+        "%3", juce::String(static_cast<int>(result.modificationKeys.size())));
+    status = status.replace("%4", juce::String(result.skippedNoItem));
+    status = status.replace("%5", juce::String(result.skippedNotAnalyzed));
+    status = status.replace("%6", juce::String(result.skippedDifferentSource));
+    status = status.replace("%7", juce::String(result.skippedNoMatch));
+  }
   midiGuidePanel.setStatusText(status);
+  return report;
 }
 
 

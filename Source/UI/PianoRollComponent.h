@@ -7,7 +7,9 @@
 #include "../Models/DocumentNoteSelection.h"
 #include "../Models/DocumentNoteBatch.h"
 #include "../Models/DocumentRenderBatch.h"
+#include "../Models/GuideApplicationPlan.h"
 #include "../Models/MidiGuideGhosts.h"
+#include "../Models/MidiGuideTrackApply.h"
 #include "../Utils/Constants.h"
 #include "../Utils/HarmonyUtils.h"
 #include "../Utils/TransformParams.h"
@@ -283,6 +285,15 @@ public:
   // Undo Manager
   void setUndoManager(PitchUndoManager *manager);
   PitchUndoManager *getUndoManager() const { return undoManager; }
+
+  // R9 (D-362): writes a track-wide MIDI-guide plan. Every item of the plan is
+  // written (SCOPE=A), the whole gesture is ONE undo step (DocumentBatchAction,
+  // D-344) and each touched item gets its own render request (D-247). Nothing is
+  // written when an item has no path to its render. The pairings come from the
+  // plan only; no matching happens here.
+  MidiGuideTrackApplyResult
+  applyMidiGuidePlanToTrack(const GuideApplicationPlan &plan,
+                            const juce::String &undoName);
 
   // Cursor
   void setCursorTime(double time);

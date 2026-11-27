@@ -332,6 +332,9 @@ public:
 private:
   // tests/AuditionHandoffTests.cpp drives the audition hand-offs directly.
   friend struct MainComponentTestAccess;
+  // R9 (D-362): Apply with an explicit scope ("track" = SCOPE=A, the default;
+  // "active" = R1). Returns the JSON report the local channel publishes.
+  juce::var applyMidiGuideWithScope(const juce::String &scope);
   void openFile();
   void exportFile();
   void exportMidiFile();

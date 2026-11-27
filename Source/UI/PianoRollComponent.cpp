@@ -5965,6 +5965,57 @@ void PianoRollComponent::flushBatchRenders()
     onBatchNotice(TR("notice.batch_render_pending"));
 }
 
+MidiGuideTrackApplyResult PianoRollComponent::applyMidiGuidePlanToTrack(
+    const GuideApplicationPlan &plan, const juce::String &undoName)
+{
+  // The items the plan reaches, in its order, deduplicated.
+  std::vector<Project *> items;
+  for (const auto &modification : plan.modifications)
+  {
+    auto *owner = const_cast<Project *>(modification.project);
+    if (owner != nullptr &&
+        std::find(items.begin(), items.end(), owner) == items.end())
+      items.push_back(owner);
+  }
+
+  // N5 (D-345): nothing is written until every item has a path to its render.
+  // A guide applied without it would be heard stale or mute (D-247).
+  if (!items.empty() && !batchRenderPathAvailable(items))
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_render_pending"));
+    auto blocked = summarizeGuideApplicationPlan(plan, undoName);
+    blocked.renderPathMissing = true;
+    return blocked;
+  }
+
+  auto result = applyMidiGuideTrackPlan(plan, undoName);
+  if (result.changes.empty())
+    return result;
+
+  // N4 (D-344): one gesture, one document-level undo step. The record of the
+  // touched notes was captured before the write by the model layer; undo and
+  // redo put every item back and ask for their render through the same notify.
+  if (undoManager)
+  {
+    auto safe = juce::Component::SafePointer<PianoRollComponent>(this);
+    auto notify = [safe](const std::vector<Project *> &projects)
+    {
+      if (!safe)
+        return;
+      safe->notifyBatchProjects(projects);
+      safe->repaint();
+    };
+    undoManager->addAction(
+        std::make_unique<documentNoteBatch::DocumentBatchAction>(
+            std::move(result.changes), std::move(notify), undoName));
+  }
+
+  notifyBatchProjects(result.projects);
+  repaint();
+  return result;
+}
+
 bool PianoRollComponent::applyDocumentBatch(
     const juce::String &undoName,
     const std::function<documentNoteBatch::Result(

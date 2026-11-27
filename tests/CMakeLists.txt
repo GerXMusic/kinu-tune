@@ -60,6 +60,9 @@ set(PITCHNET_TEST_SOURCES
     # R8 (D-361): el plan de aplicacion por pista (SCOPE=A) resuelve que item y
     # nota recibe cada nota de guia, con motivos de skip, sin escribir nada.
     MidiGuideTrackPlanTests.cpp
+    # R9 (D-362): el plan se aplica por pista (SCOPE=A) por el camino real del
+    # editor, como UN paso de undo del documento; lo que se salta se cuenta.
+    MidiGuideTrackApplyTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp
@@ -144,6 +147,10 @@ target_link_libraries(ProjectTempoPersistenceTests PRIVATE pitchnet_ui)
 # N4: el gesto del inspector y el aviso no modal son del editor, asi que el test
 # maneja el PianoRollComponent real (pitchnet_ui).
 target_link_libraries(BatchUndoTests PRIVATE pitchnet_ui)
+
+# R9 (D-362): el camino real es MainComponent::applyMidiGuide -> plan + undo
+# compuesto + render por item, asi que el test enlaza pitchnet_ui.
+target_link_libraries(MidiGuideTrackApplyTests PRIVATE pitchnet_ui)
 
 # N5: las peticiones de render salen del camino real del editor (piano roll,
 # undo y destinos de la pista) y ademas se renderiza en audio: pitchnet_ui.
