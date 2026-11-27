@@ -82,3 +82,19 @@ public:
 private:
     std::vector<MidiGuideGhost> ghosts;
 };
+
+/**
+ * V1 (guia MIDI, medir antes de arreglar): how many ghosts overlap a window of
+ * the PROJECT axis, both ends inclusive (a ghost that starts exactly at the
+ * window end counts) and an inverted window counts 0.
+ *
+ * The layer stores HOST seconds, so the window is mapped with the display
+ * offset the canvas is showing (project = host - offset). The fourth parameter
+ * is defaulted to 0 so the function stays callable with the three-argument
+ * shape the phase fixes; the UI and the tests pass the real offset.
+ *
+ * Read-only: no store, no project, no repaint.
+ */
+std::size_t countMidiGuideGhostsInProjectWindow(
+    const MidiGuideGhostLayer& layer, double startProject, double endProject,
+    double timelineDisplayOffsetSeconds = 0.0);

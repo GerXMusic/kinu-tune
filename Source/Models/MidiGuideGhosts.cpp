@@ -46,6 +46,30 @@ midiGuideGhostsFor(const GuideSource& guide, const HostTempoMap& tempoMap)
     return ghosts;
 }
 
+std::size_t countMidiGuideGhostsInProjectWindow(
+    const MidiGuideGhostLayer& layer, double startProject, double endProject,
+    double timelineDisplayOffsetSeconds)
+{
+    if (startProject > endProject)
+        return 0;
+
+    std::size_t count = 0;
+    for (const auto& ghost : layer.all())
+    {
+        const double ghostStart =
+            midiGuideGhostProjectSeconds(ghost.startHostSeconds,
+                                         timelineDisplayOffsetSeconds);
+        const double ghostEnd =
+            midiGuideGhostProjectSeconds(ghost.endHostSeconds,
+                                         timelineDisplayOffsetSeconds);
+        // Inclusive overlap: touching either end still counts.
+        if (ghostEnd < startProject || ghostStart > endProject)
+            continue;
+        ++count;
+    }
+    return count;
+}
+
 void MidiGuideGhostLayer::set(std::vector<MidiGuideGhost> newGhosts)
 {
     ghosts = std::move(newGhosts);

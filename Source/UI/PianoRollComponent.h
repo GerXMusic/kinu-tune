@@ -346,6 +346,20 @@ public:
   const MidiGuideGhostLayer &getMidiGuideGhosts() const {
     return midiGuideGhosts;
   }
+  // V1 (guia MIDI, medir antes de arreglar): the window the canvas is actually
+  // showing, in project seconds: [scrollX, scrollX + visibleWidth] / pps. The
+  // ghost painter still clips with [0, getWidth()/pps] (content seconds), which
+  // is the suspect; these helpers only publish numbers, they fix nothing.
+  std::pair<double, double> getVisibleProjectRange() const;
+  // Ghosts overlapping the visible TIME window (pitch ignored).
+  std::size_t getMidiGuideGhostsInViewCount() const;
+  // Ghosts overlapping the visible time window AND the visible pitch range.
+  std::size_t getMidiGuideGhostsVisibleCount() const;
+  // Ghosts the last paint counted as painted: they passed the current clip and
+  // also overlap the visible time window. 0 before the first paint.
+  int getMidiGuideGhostsPaintedLast() const {
+    return midiGuideGhostsPaintedLast;
+  }
   void setTimelineGridDivision(TimelineGridDivision division);
   // R3: the current grid division in quarter notes (1.0 = quarter).
   double getTimelineGridQuarterNotes() const;
@@ -886,6 +900,8 @@ private:
   // D-311/R2: MIDI guide ghosts (read-only overlay under the notes), stored in
   // host seconds; see MidiGuideGhosts.h.
   MidiGuideGhostLayer midiGuideGhosts;
+  // V1: measurement only, written by drawMidiGuideGhosts.
+  int midiGuideGhostsPaintedLast = 0;
   TimelineGridDivision &timelineGridDivision = viewState.timelineGridDivision;
   bool &timelineSnapCycle = viewState.timelineSnapCycle;
   bool &cycleEditEnabled = viewState.cycleEditEnabled;

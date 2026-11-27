@@ -2138,9 +2138,74 @@ void MainComponent::pollMcpControl()
     response->setProperty("ok", false);
 
     const auto command = request.getProperty("command", "").toString();
+    // V1 (guia MIDI): the view block guide_debug and view_set both publish.
+    // Read-only: it describes the window the canvas is showing, so the probe
+    // can tell "not in view" from "not painted" from "not in the store".
+    const auto writeViewReport = [this](juce::DynamicObject &out) {
+      const auto range = pianoRoll.getVisibleProjectRange();
+      const auto &ghosts = pianoRoll.getMidiGuideGhosts();
+      const double offset = pianoRoll.projectToTimeline(0.0);
+      const double pitchPps =
+          std::max(1.0, static_cast<double>(pianoRoll.getPixelsPerSemitone()));
+      const double pitchTop =
+          static_cast<double>(MAX_MIDI_NOTE) -
+          pianoRoll.getScrollY() / pitchPps;
+      const double pitchBottom =
+          static_cast<double>(MAX_MIDI_NOTE) -
+          (pianoRoll.getScrollY() +
+           static_cast<double>(pianoRoll.getVisibleContentHeight())) /
+              pitchPps;
+      double ghostPitchMin = 0.0;
+      double ghostPitchMax = 0.0;
+      if (!ghosts.empty())
+      {
+        ghostPitchMin = ghosts.all().front().pitch;
+        ghostPitchMax = ghosts.all().front().pitch;
+        for (const auto &ghost : ghosts.all())
+        {
+          ghostPitchMin = std::min(ghostPitchMin,
+                                   static_cast<double>(ghost.pitch));
+          ghostPitchMax = std::max(ghostPitchMax,
+                                   static_cast<double>(ghost.pitch));
+        }
+      }
+
+      out.setProperty("view_pps",
+                      static_cast<double>(pianoRoll.getPixelsPerSecond()));
+      out.setProperty("view_scroll_x", pianoRoll.getScrollX());
+      out.setProperty("view_visible_width",
+                      pianoRoll.getVisibleContentWidth());
+      out.setProperty("view_project_start", range.first);
+      out.setProperty("view_project_end", range.second);
+      out.setProperty("view_host_start",
+                      pianoRoll.projectToTimeline(range.first));
+      out.setProperty("view_host_end",
+                      pianoRoll.projectToTimeline(range.second));
+      out.setProperty("view_pitch_top", pitchTop);
+      out.setProperty("view_pitch_bottom", pitchBottom);
+      out.setProperty(
+          "ghost_in_view",
+          static_cast<int>(pianoRoll.getMidiGuideGhostsInViewCount()));
+      out.setProperty(
+          "ghost_visible",
+          static_cast<int>(pianoRoll.getMidiGuideGhostsVisibleCount()));
+      out.setProperty("ghost_painted_last",
+                      pianoRoll.getMidiGuideGhostsPaintedLast());
+      out.setProperty("ghost_project_first",
+                      ghosts.empty() ? 0.0
+                                     : ghosts.firstHostSeconds() - offset);
+      out.setProperty("ghost_project_last",
+                      ghosts.empty() ? 0.0
+                                     : ghosts.lastHostSeconds() - offset);
+      out.setProperty("ghost_pitch_min", ghostPitchMin);
+      out.setProperty("ghost_pitch_max", ghostPitchMax);
+      out.setProperty("active_offset", offset);
+      out.setProperty("track_view", pianoRoll.isTrackViewMode());
+    };
     const bool allowedWithoutProject =
         command == "ui_state" || command == "paint_history" ||
-        command == "reset_ui_trace" || command == "notes_debug";
+        command == "reset_ui_trace" || command == "notes_debug" ||
+        command == "view_set";
     if (project == nullptr && !allowedWithoutProject)
       response->setProperty("error", "El editor no tiene un proyecto analizado.");
     else if (command == "list_notes")
@@ -2359,6 +2424,9 @@ void MainComponent::pollMcpControl()
                               static_cast<int>(ghosts.size()));
         response->setProperty("ghost_host_first", ghosts.firstHostSeconds());
         response->setProperty("ghost_host_last", ghosts.lastHostSeconds());
+        // V1: the visible window and what was really painted (see
+        // PianoRollComponent::getVisibleProjectRange).
+        writeViewReport(*response);
 
         if (hasGuide)
         {
@@ -2388,6 +2456,65 @@ void MainComponent::pollMcpControl()
         }
         response->setProperty("ok", true);
       }
+    }
+    else if (command == "view_set")
+    {
+      // V1 (guia MIDI, medir antes de arreglar): move the canvas with its
+      // public setters so the probe can reproduce a scroll/zoom/height state
+      // without scripting the mouse (D-126). No project, no undo: this is a
+      // view setting, exactly like the scrollbars.
+      const auto numberProperty = [&request](const char *name,
+                                             double &valueOut) {
+        const auto value = request.getProperty(name, juce::var());
+        if (!value.isInt() && !value.isDouble())
+          return false;
+        valueOut = static_cast<double>(value);
+        return true;
+      };
+
+      double value = 0.0;
+      if (numberProperty("pixels_per_second", value))
+        pianoRoll.setPixelsPerSecond(static_cast<float>(value));
+      if (numberProperty("pixels_per_semitone", value))
+        pianoRoll.setPixelsPerSemitone(static_cast<float>(value));
+
+      bool centeredTime = false;
+      double centerSeconds = 0.0;
+      if (numberProperty("center_project_seconds", value))
+      {
+        centerSeconds = value;
+        centeredTime = true;
+      }
+      else if (numberProperty("center_host_seconds", value))
+      {
+        centerSeconds = pianoRoll.timelineToProject(value);
+        centeredTime = true;
+      }
+      if (centeredTime)
+      {
+        const double pps =
+            static_cast<double>(pianoRoll.getPixelsPerSecond());
+        pianoRoll.setScrollX(
+            centerSeconds * pps -
+            static_cast<double>(pianoRoll.getVisibleContentWidth()) * 0.5);
+      }
+      else if (numberProperty("scroll_x", value))
+      {
+        pianoRoll.setScrollX(value);
+      }
+
+      if (numberProperty("center_pitch", value))
+      {
+        const double pitchPps =
+            static_cast<double>(pianoRoll.getPixelsPerSemitone());
+        pianoRoll.setScrollY(
+            (static_cast<double>(MAX_MIDI_NOTE) - value) * pitchPps -
+            static_cast<double>(pianoRoll.getVisibleContentHeight()) * 0.5);
+      }
+
+      pianoRoll.repaint();
+      writeViewReport(*response);
+      response->setProperty("ok", true);
     }
     else if (command == "notes_debug")
     {

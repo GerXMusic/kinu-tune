@@ -3912,8 +3912,63 @@ void PianoRollComponent::setMidiGuideGhosts(std::vector<MidiGuideGhost> ghosts)
   repaint();
 }
 
+std::pair<double, double> PianoRollComponent::getVisibleProjectRange() const
+{
+  // Content x = screen x - pianoKeysWidth + scrollX, so the first content
+  // column on screen is scrollX and the last is scrollX + visibleWidth.
+  const double pps =
+      pixelsPerSecond > 0.0f ? static_cast<double>(pixelsPerSecond) : 1.0;
+  return {static_cast<double>(scrollX) / pps,
+          (static_cast<double>(scrollX) +
+           static_cast<double>(getVisibleContentWidth())) /
+              pps};
+}
+
+std::size_t PianoRollComponent::getMidiGuideGhostsInViewCount() const
+{
+  const auto range = getVisibleProjectRange();
+  const double offset =
+      coordMapper != nullptr ? coordMapper->getTimelineDisplayOffset() : 0.0;
+  return countMidiGuideGhostsInProjectWindow(midiGuideGhosts, range.first,
+                                             range.second, offset);
+}
+
+std::size_t PianoRollComponent::getMidiGuideGhostsVisibleCount() const
+{
+  if (coordMapper == nullptr)
+    return 0;
+
+  // Same pitch window the paint uses: content y in [scrollY, scrollY + height].
+  const double pps = static_cast<double>(pixelsPerSemitone);
+  if (pps <= 0.0)
+    return 0;
+  const double pitchTop = MAX_MIDI_NOTE - static_cast<double>(scrollY) / pps;
+  const double pitchBottom =
+      MAX_MIDI_NOTE -
+      (static_cast<double>(scrollY) +
+       static_cast<double>(getVisibleContentHeight())) /
+          pps;
+
+  const auto range = getVisibleProjectRange();
+  const double offset = coordMapper->getTimelineDisplayOffset();
+  std::size_t count = 0;
+  for (const auto &ghost : midiGuideGhosts.all())
+  {
+    const double start =
+        coordMapper->timelineToProject(ghost.startHostSeconds);
+    const double end = coordMapper->timelineToProject(ghost.endHostSeconds);
+    if (end < range.first || start > range.second)
+      continue;
+    if (ghost.pitch < pitchBottom || ghost.pitch > pitchTop)
+      continue;
+    ++count;
+  }
+  return count;
+}
+
 void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
 {
+  midiGuideGhostsPaintedLast = 0;
   if (midiGuideGhosts.empty() || coordMapper == nullptr)
     return;
 
@@ -3922,6 +3977,9 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
   const juce::Colour ghostColour(0xFF35C4CF);
   const double visibleStart = xToTime(0.0f);
   const double visibleEnd = xToTime(static_cast<float>(getWidth()));
+  // V1: the window really on screen. Kept apart from the clip above on
+  // purpose: the clip is not changed in this phase, the count is.
+  const auto onScreen = getVisibleProjectRange();
 
   const float dashLengths[] = {4.0f, 3.0f};
   juce::PathStrokeType stroke(1.2f);
@@ -3941,6 +3999,12 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
 
     if (endProject < visibleStart || startProject > visibleEnd)
       continue;
+
+    // V1: what is actually on screen. A ghost the wrong clip lets through but
+    // which sits outside [scrollX, scrollX + visibleWidth] is not visible.
+    if (endProject < onScreen.first || startProject > onScreen.second)
+      continue;
+    ++midiGuideGhostsPaintedLast;
 
     const float x = timeToX(startProject);
     const float right = timeToX(endProject);

@@ -285,6 +285,14 @@ target_link_libraries(RegionUniformLooksTests PRIVATE pitchnet_ui)
 target_compile_features(RegionUniformLooksTests PRIVATE cxx_std_17)
 add_test(NAME RegionUniformLooksTests COMMAND RegionUniformLooksTests)
 
+# V1 (guia MIDI): instrumentacion de la visibilidad de los fantasmas. Mide
+# ghost_count / in_view / visible / painted_last / pixeles cian y DOCUMENTA el
+# comportamiento actual; V2 lo actualiza a painted == in_view.
+add_executable(MidiGuideVisibilityTests MidiGuideVisibilityTests.cpp)
+target_link_libraries(MidiGuideVisibilityTests PRIVATE pitchnet_ui)
+target_compile_features(MidiGuideVisibilityTests PRIVATE cxx_std_17)
+add_test(NAME MidiGuideVisibilityTests COMMAND MidiGuideVisibilityTests)
+
 # N12 (D-354): la tira de overview es estado de vista; cambiar de item no la
 # toca, el toggle del usuario si, y el campo del JSON sigue por compatibilidad.
 add_executable(OverviewIndependenceTests OverviewIndependenceTests.cpp)
