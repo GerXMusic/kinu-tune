@@ -167,7 +167,11 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     secondNote.setLyric(note->getLyric());
     secondNote.setPhoneme(note->getPhoneme());
     secondNote.setVolumeDb(note->getVolumeDb());
-    secondNote.setSelected(note->isSelected());
+    // N9 (D-349): the half does not copy the flag here. addNote() may move every
+    // Note of the project, so the selection set is rebuilt from the flags right
+    // after the insert and the new half inherits through it
+    // (inheritSelectionToNewNote, below).
+    const bool inheritSelection = note->isSelected();
     secondNote.setVibrato(note->getVibrato());
     secondNote.setPitchDrift(note->getPitchDrift());
     secondNote.setFormantShift(note->getFormantShift());
@@ -301,7 +305,9 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     Note firstNote = *note;
 
     // Add the second note to project
-    project->addNote(secondNote);
+    if (Note* secondAdded = project->addNote(secondNote); secondAdded != nullptr)
+        DocumentNoteSelection::inheritSelectionToNewNote(*project, *secondAdded,
+                                                         inheritSelection);
 
     // Create undo action - don't pass callback to avoid lifetime issues
     // UI refresh is handled by UndoManager's onUndoRedo callback

@@ -79,7 +79,7 @@ private:
     {
     public:
         void setOptions(std::vector<juce::String> labels);
-        void setSelected(int index, bool notify);
+        void selectRow(int index, bool notify);
         void setRowEnabled(int index, bool enabled);
         // D-309: colour dot of a row (engine colour, or the global engine's
         // colour for "Seguir global"). Empty = the old neutral dot.

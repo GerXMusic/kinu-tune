@@ -17,13 +17,21 @@
  * once. It points at the real Notes the index publishes; it copies nothing and
  * owns no edits, exactly like DocumentNoteIndex.
  *
- * Division of labour with Note::selected: this set is the document truth for
- * the marquee, shift-click and "select all" of track mode, and what
- * notes_debug publishes. Note::selected stays the cheap per-note cache the
- * renderers and the edit handlers read, and is derived from the set by
- * applyToNotes(). refresh() is the inverse edge: when a legacy path (a click in
- * the active item, a split, a merge) moved the flags, it re-adopts them so the
- * two never drift. A note no window of the track shows cannot enter the set.
+ * Division of labour with Note::selected (N9, D-349): this set is the ONLY
+ * owner of the selection. Note::selected is a derived view, written from this
+ * file and nowhere else (SourceGuard_note-selection enforces it): applyToNotes()
+ * derives every flag of every live project from the set, and every other entry
+ * point here (setNoteSelected, selectAllOfProject, clearProject,
+ * inheritSelectionToNewNote, copyFlagsToWindow, releaseFlags) ends in that same
+ * writer. refresh() is the inverse edge: when a path that cannot see this set
+ * (an item click in clip mode, a delete, an undo step) moved the flags, it
+ * re-adopts them so the two never drift. A note no window of the track shows
+ * cannot enter the set through a marquee or "select all".
+ *
+ * Clip mode publishes no index (N1): there is no document yet, so the item's
+ * own flags are its truth and the writers here write them directly. Switching
+ * between both modes does not clear the selection: the flags hold it while the
+ * set is not published, and the next refresh() re-adopts it.
  */
 struct DocumentNoteSelectionEntry
 {
@@ -39,11 +47,29 @@ struct DocumentNoteSelectionEntry
 class DocumentNoteSelection
 {
 public:
+    DocumentNoteSelection() = default;
+    // Detaches the projects it adopted, so no Project keeps a pointer to a set
+    // that is going away.
+    ~DocumentNoteSelection();
+
+    DocumentNoteSelection(const DocumentNoteSelection&) = delete;
+    DocumentNoteSelection& operator=(const DocumentNoteSelection&) = delete;
+
     // Re-adopts the live Note::selected flags, restricted to what the index's
     // windows show, and drops anything whose Project/Note no longer exists (an
-    // item deleted or a project reloaded). Null clears the set and keeps the
-    // live projects so applyToNotes() can still release the flags.
+    // item deleted or a project reloaded). Null means "no document published"
+    // (clip mode): the set is emptied, every adopted project is detached and no
+    // flag is touched, so the item keeps its own selection.
     void refresh(const DocumentNoteIndex* index);
+
+    // Same, owning a copy of the shared publication so the index the set derives
+    // its region keys from cannot be destroyed under it.
+    void refresh(const DocumentNoteIndexPtr& index)
+    {
+        refresh(index.get());
+        if (index != nullptr)
+            index_ = index;
+    }
 
     // Empties the set; the notes keep being released through applyToNotes().
     void clear();
@@ -61,6 +87,35 @@ public:
     // removes the note. Returns false when the note is not in the document.
     bool toggle(Project* project, Note* note, const DocumentNoteIndex& index);
 
+    // The item's own "select all" and "deselect all" (Project::selectAllNotes /
+    // Project::deselectAllNotes end here). With a published document they are
+    // set changes: only the notes a window of that item shows can enter, and
+    // every flag is derived again.
+    static void selectAllOfProject(Project& project, bool includeRests);
+    static void clearProject(Project& project);
+
+    // One note, from a click, a "select this note first" of a context menu, a
+    // delete or an undo/redo step. This is the only single-note entry point: it
+    // mutates the set when the project has a published document and writes the
+    // item's own flag when it does not.
+    static void setNoteSelected(Project& project, Note& note, bool selected);
+
+    // A structural edit (a split) gave the project a new note. addNote() may
+    // have moved every Note of the project, so the pointers this set kept are
+    // not trustworthy any more: they are dropped and the flags re-adopted. The
+    // new half inherits the flag of the half it comes from, through here (the
+    // index that names the region keys is republished right after).
+    static void inheritSelectionToNewNote(Project& project, Note& created,
+                                          bool selected);
+
+    // The drawing copy of one window (MainViewRegionPreview::project) carries
+    // the flag of the note it was made from; a pinned, non-editable window
+    // carries none. Still a projection of the set, never a second truth: N10
+    // owns the rest of the copy.
+    static void copyFlagsToWindow(Project& window, const Project& source,
+                                  int sourceFirstFrame);
+    static void releaseFlags(Project& window);
+
     bool contains(const Project* project, const Note* note) const;
     bool isEmpty() const { return entries_.empty(); }
     int size() const { return static_cast<int>(entries_.size()); }
@@ -75,6 +130,7 @@ public:
 
     // Derives Note::selected: true only for the notes of the set, false for
     // every other note (and for tombstones/rests) of every live project.
+    // THE single writer of Note::selected (D-349).
     void applyToNotes() const;
 
     // Bumped by every membership change; lets a view know the set moved.
@@ -87,8 +143,21 @@ private:
                                                 const DocumentNoteRef& ref);
     bool replace(std::vector<DocumentNoteSelectionEntry> next,
                  std::vector<Project*> projects);
+    // Region key of the note when the published index lists it, empty when it
+    // does not (a note a split just created).
+    void addEntry(Project& project, Note& note);
+    void dropEntriesOfProject(const Project& project);
+    void adoptProjectFlags(Project& project);
+    bool noteIsPublished(const Project& project, const Note& note) const;
+    void attachProjects(const std::vector<Project*>& projects);
+    void detachProjects();
 
     std::vector<DocumentNoteSelectionEntry> entries_;
     std::vector<Project*> projects_;
+    // The index the set was last derived from. Kept so a single note can be
+    // added with its region keys; the Notes themselves are never copied.
+    DocumentNoteIndexPtr index_;
+    // Projects whose noteSelection points here, so they can be detached.
+    std::vector<Project*> adopted_;
     std::uint64_t revision_ = 0;
 };

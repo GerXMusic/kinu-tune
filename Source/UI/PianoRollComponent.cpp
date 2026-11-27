@@ -2172,20 +2172,82 @@ void PianoRollComponent::applyDocumentSelection()
 void PianoRollComponent::syncSelectionToRegionCopies()
 {
   if (!regionPreviews) return;
+  // N9 (D-349): the copies' flags are a projection of the document selection,
+  // written from the selection module (the only writer of Note::selected).
   for (const auto& region : *regionPreviews) {
     if (region.active || region.pinned || !region.project ||
         !region.sourceProject)
       continue;
-    for (auto& copy : region.project->getNotes())
-      for (const auto& note : region.sourceProject->getNotes())
-        if (note.getStartFrame() == copy.getStartFrame() + region.sourceFirstFrame &&
-            note.getEndFrame() == copy.getEndFrame() + region.sourceFirstFrame) {
-          copy.setSelected(note.isSelected());
-          break;
-        }
+    DocumentNoteSelection::copyFlagsToWindow(*region.project,
+                                             *region.sourceProject,
+                                             region.sourceFirstFrame);
   }
   inactiveLayer = {};
   repaint();
+}
+
+void PianoRollComponent::selectOnlyNote(Project *owner, Note *note)
+{
+  // N9 (D-349): every "this note becomes the selection" gesture lands here. In
+  // track mode the document set is the target (and the rest of the document is
+  // released); in clip mode the item's own flags are.
+  if (owner == nullptr || note == nullptr)
+    return;
+  if (documentSelectionAvailable())
+  {
+    documentNoteSelection->setFromPairs({{owner, note}}, *documentNoteIndex);
+    applyDocumentSelection();
+    return;
+  }
+  owner->deselectAllNotes();
+  DocumentNoteSelection::setNoteSelected(*owner, *note, true);
+}
+
+void PianoRollComponent::toggleNoteSelection(Project *owner, Note *note)
+{
+  if (owner == nullptr || note == nullptr)
+    return;
+  if (documentSelectionAvailable())
+  {
+    documentNoteSelection->toggle(owner, note, *documentNoteIndex);
+    applyDocumentSelection();
+    return;
+  }
+  DocumentNoteSelection::setNoteSelected(*owner, *note, !note->isSelected());
+}
+
+void PianoRollComponent::clearNoteSelection()
+{
+  // The whole document when it is published, the active item otherwise.
+  if (documentSelectionAvailable())
+  {
+    documentNoteSelection->clear();
+    applyDocumentSelection();
+    return;
+  }
+  if (project != nullptr)
+    project->deselectAllNotes();
+}
+
+void PianoRollComponent::applyItemBoxSelection(const std::vector<Note *> &notes)
+{
+  if (project == nullptr)
+    return;
+  if (documentSelectionAvailable())
+  {
+    std::vector<std::pair<Project *, Note *>> pairs;
+    pairs.reserve(notes.size());
+    for (auto *note : notes)
+      if (note != nullptr)
+        pairs.push_back({project, note});
+    documentNoteSelection->setFromPairs(pairs, *documentNoteIndex);
+    applyDocumentSelection();
+    return;
+  }
+  project->deselectAllNotes();
+  for (auto *note : notes)
+    if (note != nullptr)
+      DocumentNoteSelection::setNoteSelected(*project, *note, true);
 }
 
 void PianoRollComponent::syncTrackPreviewSelection()
@@ -2229,7 +2291,7 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
     if (documentSelectionAvailable())
       documentNoteSelection->toggle(hitOwner, hit, *documentNoteIndex);
     else
-      hit->setSelected(!hit->isSelected());
+      DocumentNoteSelection::setNoteSelected(*hitOwner, *hit, !hit->isSelected());
     applyDocumentSelection();
     trackGestureNotes.clear();
   } else if (hit && hit->isSelected() && selectedOwners.size() > 1) {
@@ -2254,7 +2316,7 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
         documentNoteSelection->clear();
       else
         for (auto& target : trackGestureTargets)
-          for (auto& note : target.project->getNotes()) note.setSelected(false);
+          target.project->deselectAllNotes();
     }
     trackGestureNotes.clear();
     applyDocumentSelection();
@@ -2264,7 +2326,7 @@ bool PianoRollComponent::beginTrackGesture(const juce::MouseEvent& e)
         documentNoteSelection->clear();
       else
         for (auto& target : trackGestureTargets)
-          for (auto& note : target.project->getNotes()) note.setSelected(false);
+          target.project->deselectAllNotes();
     }
     applyDocumentSelection();
     return false;
@@ -2300,15 +2362,17 @@ void PianoRollComponent::updateTrackGesture(const juce::MouseEvent& e)
           selected |= rect.intersects(bounds);
         if (selected)
           wanted.push_back({target.project, note});
-        else if (!useDocument)
-          note->setSelected(false);
       }
     }
     if (useDocument)
       documentNoteSelection->setFromPairs(wanted, *documentNoteIndex);
     else
+    {
+      for (auto& target : trackGestureTargets)
+        target.project->deselectAllNotes();
       for (const auto& pair : wanted)
-        pair.second->setSelected(true);
+        DocumentNoteSelection::setNoteSelected(*pair.first, *pair.second, true);
+    }
     applyDocumentSelection();
   } else {
     float delta = (trackGestureStart.y - e.position.y) / pixelsPerSemitone;
@@ -2677,8 +2741,7 @@ void PianoRollComponent::showCanvasMenuAt(juce::Point<int> screenPoint, Note* no
           if (std::find(selected.begin(), selected.end(), clickedNote) !=
               selected.end())
             return;
-          safeThis->project->deselectAllNotes();
-          clickedNote->setSelected(true);
+          safeThis->selectOnlyNote(safeThis->project, clickedNote);
           safeThis->updatePitchToolHandlesFromSelection();
           safeThis->repaint();
         };
@@ -3280,8 +3343,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
       if (!isNoteTopZone(*note, adjustedY) &&
           !(pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0))
       {
-        project->deselectAllNotes();
-        note->setSelected(true);
+        selectOnlyNote(project, note);
         beginInspectorEdit(InspectorParam::CorrectPitch);
         setInspectorEditValue(100.0f);
         endInspectorEdit();
@@ -4811,8 +4873,7 @@ bool PianoRollComponent::selectAdjacentSegment(bool next)
                           : anchor + (next ? 1 : -1);
   target = juce::jlimit(0, static_cast<int>(ordered.size()) - 1, target);
 
-  project->deselectAllNotes();
-  ordered[static_cast<size_t>(target)]->setSelected(true);
+  selectOnlyNote(project, ordered[static_cast<size_t>(target)]);
   updatePitchToolHandlesFromSelection();
   if (onNoteSelected)
     onNoteSelected(ordered[static_cast<size_t>(target)]);
@@ -4829,7 +4890,7 @@ void PianoRollComponent::selectFollowingSamePitch(Note &note)
   for (auto &other : project->getNotes())
     if (!other.isRest() && other.getStartFrame() >= note.getStartFrame() &&
         static_cast<int>(std::round(other.getAdjustedMidiNote())) == pitch)
-      other.setSelected(true);
+      DocumentNoteSelection::setNoteSelected(*project, other, true);
   updatePitchToolHandlesFromSelection();
   repaint();
 }
@@ -4999,12 +5060,13 @@ bool PianoRollComponent::deleteSelection()
   {
     if (note == nullptr || note->isRest() || note->isDeleted())
       continue;
-    entries.push_back({note, note->isDeleted(), note->isRest(),
-                       note->isSelected(), /*afterDeleted=*/true,
-                       /*afterRest=*/true, /*afterSelected=*/false});
+    NoteDeleteAction::Entry entry{note, note->isDeleted(), note->isRest(),
+                                  note->isSelected(), /*afterDeleted=*/true,
+                                  /*afterRest=*/true, /*afterSelected=*/false};
+    entries.push_back(entry);
     note->setDeleted(true);
     note->setRest(true);
-    note->setSelected(false);
+    DocumentNoteSelection::setNoteSelected(*project, *note, false);
     note->markDirty();
     note->markSynthDirty();
     dirtyStart = dirtyStart < 0 ? note->getStartFrame()

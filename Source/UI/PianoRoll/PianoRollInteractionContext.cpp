@@ -128,3 +128,25 @@ void PianoRollInteractionContext::selectFollowingSamePitch(Note &note)
 {
   component.selectFollowingSamePitch(note);
 }
+
+void PianoRollInteractionContext::selectOnlyNote(Project *owner, Note *note)
+{
+  component.selectOnlyNote(owner, note);
+}
+
+void PianoRollInteractionContext::toggleNoteSelection(Project *owner,
+                                                      Note *note)
+{
+  component.toggleNoteSelection(owner, note);
+}
+
+void PianoRollInteractionContext::clearNoteSelection()
+{
+  component.clearNoteSelection();
+}
+
+void PianoRollInteractionContext::applyItemBoxSelection(
+    const std::vector<Note *> &notes)
+{
+  component.applyItemBoxSelection(notes);
+}

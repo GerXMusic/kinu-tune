@@ -162,9 +162,14 @@ int main()
     CHECK(routed == "it1");
     CHECK(roll.getProject() == &item1);
     CHECK((*previews)[1].active);
-    // And the inspector still counts the document, not the new active item.
-    CHECK(roll.getInspectorTargetCount() == 3);
-    CHECK(roll.getInspectorTargetItemCount() == 2);
+    // And the inspector speaks about the document: the click selected its note
+    // (N9, D-349: a click changes the selection through its owner, so nothing
+    // writes a flag the set does not know), and the objective is that selection
+    // of the document, not the notes of the newly active item.
+    CHECK(roll.getInspectorTargetCount() == 1);
+    CHECK(roll.getInspectorTargetItemCount() == 1);
+    CHECK(roll.inspectorTargetsAreSelection());
+    CHECK(roll.getInspectorTargets()[0] == &item1.getNotes()[0]);
 
     std::cout << "Track hover region tests passed\n";
     return 0;

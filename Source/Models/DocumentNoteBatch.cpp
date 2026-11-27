@@ -360,7 +360,9 @@ Result deleteNotes(const std::vector<Target>& targets)
                 continue;
             note->setDeleted(true);
             note->setRest(true);
-            note->setSelected(false);
+            // N9 (D-349): a tombstone cannot be selected; the set drops it and
+            // the flags are derived again by the selection module.
+            DocumentNoteSelection::setNoteSelected(*group.project, *note, false);
             plan.notes.push_back(note);
             plan.dirtyStart = std::min(plan.dirtyStart, note->getStartFrame());
             plan.dirtyEnd = std::max(plan.dirtyEnd, note->getEndFrame());

@@ -8,6 +8,8 @@
 #include <memory>
 #include <utility>
 
+class DocumentNoteSelection;
+
 /**
  * Container for audio data and extracted features.
  */
@@ -183,7 +185,9 @@ public:
     // Notes
     std::vector<Note> &getNotes() { return notes; }
     const std::vector<Note> &getNotes() const { return notes; }
-    void addNote(Note note);
+    // N9 (D-349): returns the inserted note, which is not always the last one:
+    // the vector stays sorted by start frame.
+    Note *addNote(Note note);
     void clearNotes() { notes.clear(); }
 
     // D-311: MIDI guides materialized in the project. Song-level, stored in
@@ -224,6 +228,12 @@ public:
     bool hasRegionEdits() const;
     void selectAllNotes(bool includeRests = false);
     void deselectAllNotes();
+    // N9 (D-349): the document selection owns the selection. When the document
+    // is published it points at its set here, so this item's select-all /
+    // deselect-all are set changes; nullptr means clip mode (or an item no
+    // window shows), where this project's flags are their own truth. Never
+    // freed here, and the set detaches itself before it goes away.
+    DocumentNoteSelection *noteSelection = nullptr;
     void clearAllDirty();
     // D-251 (S4): limpia solo lo que este pase renderizó. Una edición que
     // llega mientras el render está en vuelo no estaba en @p dirtyNotes y

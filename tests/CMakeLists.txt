@@ -62,6 +62,10 @@ set(PITCHNET_TEST_SOURCES
     # N5 (D-345): el render de un gesto en lote, una peticion por item afectado
     # (ni una por nota ni por ventana), sin items mudos y sin tocar los demas.
     BatchRenderTests.cpp
+    # N9 (D-349): la seleccion tiene un solo dueno (DocumentNoteSelection) y
+    # Note::selected es vista derivada; aqui se pina que toda operacion deja las
+    # banderas coincidiendo con el conjunto.
+    DocumentSelectionSingleSourceTests.cpp
     NoteGainCurveTests.cpp
     NonAraLifecycleTests.cpp
     OriginalWaveformRestoreTests.cpp
@@ -345,7 +349,7 @@ if(WIN32 AND ONNXRUNTIME_DLLS)
 endif()
 
 # Calls that must go through one entry point (see SourceGuard.cmake).
-foreach(guard_rule IN ITEMS pitch-writes audition-output render-controllers)
+foreach(guard_rule IN ITEMS pitch-writes note-selection audition-output render-controllers)
     add_test(NAME SourceGuard_${guard_rule}
              COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
                      -DRULE=${guard_rule}

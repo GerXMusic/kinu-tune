@@ -2,6 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
+#include "../../Models/DocumentNoteSelection.h"
 #include "../../Undo/UndoActions.h"
 #include "CoordinateMapper.h"
 #include <functional>

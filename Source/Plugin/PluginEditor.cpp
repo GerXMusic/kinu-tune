@@ -2,6 +2,7 @@
 #include "HostCompatibility.h"
 #include "../Models/Project.h"
 #include "../Models/DocumentNoteIndex.h"
+#include "../Models/DocumentNoteSelection.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
 #include "../Undo/ContextUndoAction.h"
@@ -183,7 +184,8 @@ std::shared_ptr<Project> makeRegionWindowProject(
     copy.setEndFrame(copy.getEndFrame() - firstFrame);
     copy.setSrcStartFrame(copy.getSrcStartFrame() - firstFrame);
     copy.setSrcEndFrame(copy.getSrcEndFrame() - firstFrame);
-    copy.setSelected(note.isSelected()); // Track selection spans all projects
+    // N9 (D-349): the copy already carries the flag of the note it comes from
+    // (the selection is a projection, not a second truth).
     notes.push_back(std::move(copy));
   };
   if (indexNotes != nullptr)
@@ -1583,7 +1585,9 @@ void PitchNetAudioProcessorEditor::publishAraRegionPreviews(
     }
     preview.pinned = pinned;
     if (pinned && preview.project)
-      for (auto& note : preview.project->getNotes()) note.setSelected(false);
+      // N9 (D-349): a pinned window is drawn, not edited: its copy carries no
+      // selection flag. Written by the selection module, the only writer.
+      DocumentNoteSelection::releaseFlags(*preview.project);
     preview.outlineColour = outlineColour;
     previews->push_back(preview);
 

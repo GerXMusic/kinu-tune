@@ -7561,8 +7561,10 @@ void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
   documentNoteIndex = std::move(index);
   if (documentNoteSelection != nullptr) {
     // Re-adopts the live flags and drops anything a deleted item or a reloaded
-    // project took away, so the selection never outlives its notes.
-    documentNoteSelection->refresh(documentNoteIndex.get());
+    // project took away, so the selection never outlives its notes. N9 (D-349):
+    // the set also becomes the selection owner of these projects here, and
+    // releases the ones that left the track (clip mode publishes no index).
+    documentNoteSelection->refresh(documentNoteIndex);
   }
   pianoRoll.setDocumentNoteContext(documentNoteIndex, documentNoteSelection);
 }

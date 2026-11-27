@@ -9,6 +9,14 @@
 namespace
 {
 using NoteKey = std::pair<const Project*, const Note*>;
+
+// THE writer of Note::selected (N9, D-349). Nothing outside this file may call
+// Note::setSelected: SourceGuard_note-selection fails the build if something
+// does. Every entry point below ends here.
+void writeFlag(Note& note, bool selected)
+{
+    note.setSelected(selected);
+}
 }
 
 std::vector<Project*> DocumentNoteSelection::projectsOf(
@@ -66,6 +74,9 @@ bool DocumentNoteSelection::replace(
             }
     entries_ = std::move(next);
     projects_ = std::move(projects);
+    // A project that stops being published stops consulting this set (clip
+    // mode, an item that left the track): its own flags are its truth again.
+    attachProjects(projects_);
     if (changed)
         ++revision_;
     return changed;
@@ -75,9 +86,20 @@ void DocumentNoteSelection::refresh(const DocumentNoteIndex* index)
 {
     if (index == nullptr)
     {
-        clear();
+        // No document published: nothing may be derived from a set that points
+        // at a previous publication.
+        if (!entries_.empty())
+        {
+            entries_.clear();
+            ++revision_;
+        }
+        index_.reset();
+        projects_.clear();
+        detachProjects();
         return;
     }
+
+    index_ = std::shared_ptr<const DocumentNoteIndex>(index, [](const auto*) {});
 
     std::vector<DocumentNoteSelectionEntry> next;
     std::set<NoteKey> seen;
@@ -239,6 +261,201 @@ void DocumentNoteSelection::applyToNotes() const
         selected.insert(entry.note);
     for (auto* project : projects_)
         for (auto& note : project->getNotes())
-            note.setSelected(!note.isRest() && !note.isDeleted() &&
-                             selected.count(&note) > 0);
+            writeFlag(note, !note.isRest() && !note.isDeleted() &&
+                                selected.count(&note) > 0);
 }
+
+void DocumentNoteSelection::addEntry(Project& project, Note& note)
+{
+    if (findIndex(&project, &note) >= 0)
+        return;
+    DocumentNoteSelectionEntry entry;
+    entry.project = &project;
+    entry.note = &note;
+    if (index_ != nullptr)
+        for (const auto& ref : index_->notes)
+            if (ref.project == &project && ref.note == &note)
+            {
+                entry = entryFrom(*index_, ref);
+                break;
+            }
+    entries_.push_back(entry);
+}
+
+void DocumentNoteSelection::dropEntriesOfProject(const Project& project)
+{
+    entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+                                  [&project](const DocumentNoteSelectionEntry& entry)
+                                  { return entry.project == &project; }),
+                   entries_.end());
+}
+
+void DocumentNoteSelection::adoptProjectFlags(Project& project)
+{
+    // Only the pointers are rebuilt: the flags travel with the values, so they
+    // are what survives a reallocation. Region keys come back from the next
+    // refresh() (the republication of the index).
+    for (auto& note : project.getNotes())
+        if (note.isSelected() && !note.isRest() && !note.isDeleted())
+        {
+            DocumentNoteSelectionEntry entry;
+            entry.project = &project;
+            entry.note = &note;
+            entries_.push_back(entry);
+        }
+    if (std::find(projects_.begin(), projects_.end(), &project) ==
+        projects_.end())
+        projects_.push_back(&project);
+}
+
+bool DocumentNoteSelection::noteIsPublished(const Project& project,
+                                            const Note& note) const
+{
+    if (index_ == nullptr)
+        return false;
+    for (const auto& ref : index_->notes)
+        if (ref.project == &project && ref.note == &note)
+            return true;
+    return false;
+}
+
+void DocumentNoteSelection::selectAllOfProject(Project& project,
+                                               bool includeRests)
+{
+    if (auto* owner = project.noteSelection)
+    {
+        for (auto& note : project.getNotes())
+        {
+            if (note.isDeleted() || note.isRest())
+                continue;
+            // A published document selects what a window shows, not what the
+            // project stores (measured: 5 of 246 are in no window).
+            if (!owner->noteIsPublished(project, note))
+                continue;
+            owner->addEntry(project, note);
+        }
+        ++owner->revision_;
+        owner->applyToNotes();
+        return;
+    }
+
+    for (auto& note : project.getNotes())
+    {
+        if (note.isDeleted())
+            continue;
+        if (!includeRests && note.isRest())
+            continue;
+        writeFlag(note, true);
+    }
+}
+
+void DocumentNoteSelection::clearProject(Project& project)
+{
+    if (auto* owner = project.noteSelection)
+    {
+        owner->dropEntriesOfProject(project);
+        // The project stays live (an empty selection still derives its flags).
+        if (std::find(owner->projects_.begin(), owner->projects_.end(),
+                      &project) == owner->projects_.end())
+            owner->projects_.push_back(&project);
+        ++owner->revision_;
+        owner->applyToNotes();
+        return;
+    }
+
+    for (auto& note : project.getNotes())
+        writeFlag(note, false);
+}
+
+void DocumentNoteSelection::setNoteSelected(Project& project, Note& note,
+                                            bool selected)
+{
+    auto* owner = project.noteSelection;
+    if (owner == nullptr)
+    {
+        // No document published (clip mode, offline): the item's flag is its
+        // own truth, written here so there is still a single writer.
+        if (note.isSelected() != selected)
+            writeFlag(note, selected);
+        return;
+    }
+
+    if (selected && (note.isRest() || note.isDeleted()))
+        selected = false;
+    const int at = owner->findIndex(&project, &note);
+    bool changed = false;
+    if (selected && at < 0)
+    {
+        owner->addEntry(project, note);
+        changed = true;
+    }
+    else if (!selected && at >= 0)
+    {
+        owner->entries_.erase(owner->entries_.begin() + at);
+        changed = true;
+    }
+    if (changed)
+        ++owner->revision_;
+    owner->applyToNotes();
+}
+
+void DocumentNoteSelection::inheritSelectionToNewNote(Project& project,
+                                                      Note& created,
+                                                      bool selected)
+{
+    if (auto* owner = project.noteSelection)
+    {
+        owner->dropEntriesOfProject(project);
+        if (selected)
+            writeFlag(created, true);
+        owner->adoptProjectFlags(project);
+        ++owner->revision_;
+        return;
+    }
+    if (selected)
+        writeFlag(created, true);
+}
+
+void DocumentNoteSelection::copyFlagsToWindow(Project& window,
+                                              const Project& source,
+                                              int sourceFirstFrame)
+{
+    for (auto& copy : window.getNotes())
+        for (const auto& note : source.getNotes())
+            if (note.getStartFrame() == copy.getStartFrame() + sourceFirstFrame &&
+                note.getEndFrame() == copy.getEndFrame() + sourceFirstFrame)
+            {
+                writeFlag(copy, note.isSelected());
+                break;
+            }
+}
+
+void DocumentNoteSelection::releaseFlags(Project& window)
+{
+    for (auto& note : window.getNotes())
+        writeFlag(note, false);
+}
+
+void DocumentNoteSelection::attachProjects(
+    const std::vector<Project*>& projects)
+{
+    detachProjects();
+    for (auto* project : projects)
+    {
+        if (project == nullptr ||
+            std::find(adopted_.begin(), adopted_.end(), project) != adopted_.end())
+            continue;
+        project->noteSelection = this;
+        adopted_.push_back(project);
+    }
+}
+
+void DocumentNoteSelection::detachProjects()
+{
+    for (auto* project : adopted_)
+        if (project != nullptr && project->noteSelection == this)
+            project->noteSelection = nullptr;
+    adopted_.clear();
+}
+
+DocumentNoteSelection::~DocumentNoteSelection() { detachProjects(); }

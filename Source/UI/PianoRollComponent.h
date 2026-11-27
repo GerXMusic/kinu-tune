@@ -275,8 +275,7 @@ public:
   // Extends the plugin canvas to include the furthest host playhead position.
   bool extendTimelineTo(double endSeconds);
   Project *getProject() const { return project; }
-  std::vector<Note *> getSelectedNotes() const;
-  PianoRollInteractionContext &getInteractionContext()
+  std::vector<Note *> getSelectedNotes() const;  PianoRollInteractionContext &getInteractionContext()
   {
     return *interactionContext;
   }
@@ -773,6 +772,13 @@ private:
   // flags onto the read-only window copies track mode draws.
   void applyDocumentSelection();
   void syncSelectionToRegionCopies();
+  // N9 (D-349): the only ways a gesture changes the selection. In track mode
+  // they write the document set; in clip mode the item's flags are its own
+  // truth and the selection module writes them.
+  void selectOnlyNote(Project *owner, Note *note);
+  void toggleNoteSelection(Project *owner, Note *note);
+  void clearNoteSelection();
+  void applyItemBoxSelection(const std::vector<Note *> &notes);
   DocumentNoteIndexPtr documentNoteIndex;
   std::shared_ptr<DocumentNoteSelection> documentNoteSelection;
   // N5 (D-345): the items of the open batch gesture whose render is still

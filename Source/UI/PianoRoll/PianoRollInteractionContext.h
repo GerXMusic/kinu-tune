@@ -82,6 +82,11 @@ public:
   PitchEditor::DragSnapKind resolveDragSnapKind(const juce::ModifierKeys &mods) const;
   void setHoveredNote(Note *note);
   void selectFollowingSamePitch(Note &note);
+  // N9 (D-349): the selection has one owner; the handlers go through these.
+  void selectOnlyNote(Project *owner, Note *note);
+  void toggleNoteSelection(Project *owner, Note *note);
+  void clearNoteSelection();
+  void applyItemBoxSelection(const std::vector<Note *> &notes);
 
 private:
   PianoRollComponent &component;

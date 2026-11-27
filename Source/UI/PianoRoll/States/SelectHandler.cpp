@@ -101,7 +101,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   if (note && (e.mods.isCommandDown() || e.mods.isCtrlDown()))
   {
     // Cmd-click toggles the segment in the selection without dragging.
-    note->setSelected(!note->isSelected());
+    // N9 (D-349): the selection has one owner, so this is a set change.
+    owner_.toggleNoteSelection(project, note);
     owner_.updatePitchToolHandlesFromSelection();
     if (owner_.onNoteSelected)
       owner_.onNoteSelected(note);
@@ -113,9 +114,10 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   {
     // VariAudio: clicking a segment selects it (and only it); Shift-click adds
     // it to the selection and drags the whole selection.
-    if (!e.mods.isShiftDown())
-      project->deselectAllNotes();
-    note->setSelected(true);
+    if (e.mods.isShiftDown())
+      owner_.toggleNoteSelection(project, note);
+    else
+      owner_.selectOnlyNote(project, note);
     if (owner_.onNoteSelected)
       owner_.onNoteSelected(note);
   }
@@ -186,7 +188,7 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   else
   {
     // Clicked on empty area - start box selection
-    project->deselectAllNotes();
+    owner_.clearNoteSelection();
     owner_.updatePitchToolHandlesFromSelection();
     owner_.boxSelector->startSelection(worldX, worldY);
     owner_.repaint();
@@ -354,11 +356,9 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   if (owner_.boxSelector->isSelecting())
   {
     owner_.boxSelector->updateSelection(worldX, worldY);
-    project->deselectAllNotes();
     auto notesInRect = owner_.boxSelector->getNotesInRect(
         project, owner_.coordMapper.get());
-    for (auto *note : notesInRect)
-      note->setSelected(true);
+    owner_.applyItemBoxSelection(notesInRect);
 
     if (shouldRepaint)
     {
@@ -641,10 +641,7 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   {
     auto notesInRect = owner_.boxSelector->getNotesInRect(
         project, owner_.coordMapper.get());
-    for (auto *note : notesInRect)
-    {
-      note->setSelected(true);
-    }
+    owner_.applyItemBoxSelection(notesInRect);
     owner_.boxSelector->setLastSelectionFromBox(!notesInRect.empty());
     owner_.boxSelector->endSelection();
     owner_.updatePitchToolHandlesFromSelection();

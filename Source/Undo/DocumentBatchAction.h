@@ -6,6 +6,7 @@
 
 #include "UndoableAction.h"
 #include "../Models/DocumentNoteBatch.h"
+#include "../Models/DocumentNoteSelection.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -80,7 +81,8 @@ struct NoteState
         target.setMuted(muted);
         target.setDeleted(deleted);
         target.setRest(rest);
-        target.setSelected(selected);
+        // N9 (D-349): the selection flag is not written here; the caller routes
+        // it through DocumentNoteSelection::setNoteSelected.
         target.setStartFrame(startFrame);
         target.setEndFrame(endFrame);
     }
@@ -223,6 +225,10 @@ private:
                 const auto &state = redo ? change.after : change.before;
                 const auto &other = redo ? change.before : change.after;
                 state.applyTo(*state.note);
+                // N9 (D-349): the selection travels through its owner, so undo
+                // and redo restore it there instead of writing the flag.
+                DocumentNoteSelection::setNoteSelected(*project, *state.note,
+                                                       state.selected);
                 state.note->markDirty();
                 state.note->markSynthDirty();
                 notes.push_back(state.note);

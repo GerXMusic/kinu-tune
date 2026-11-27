@@ -1,6 +1,7 @@
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Utils/Constants.h"
 #include "Project.h"
+#include "DocumentNoteSelection.h"
 #include "../Utils/Constants.h"
 #include "../Utils/PitchCurveProcessor.h"
 #include <algorithm>
@@ -49,7 +50,7 @@ Project::Project()
 {
 }
 
-void Project::addNote(Note note)
+Note* Project::addNote(Note note)
 {
     // Timeline consumers (including note preview context) expect neighboring
     // notes to also be neighboring elements. A split creates its tail after
@@ -61,7 +62,10 @@ void Project::addNote(Note note)
         {
             return start < existing.getStartFrame();
         });
-    notes.insert(insertAt, std::move(note));
+    // N9 (D-349): the inserted note is returned so the caller that has to derive
+    // its selection (a split) does not guess where it landed: the vector stays
+    // sorted by start frame, so it is not necessarily the last element.
+    return &*notes.insert(insertAt, std::move(note));
 }
 
 Note *Project::getNoteAtFrame(int frame)
@@ -115,22 +119,16 @@ bool Project::removeNoteByStartFrame(int startFrame)
 
 void Project::deselectAllNotes()
 {
-    for (auto &note : notes)
-        note.setSelected(false);
+    // N9 (D-349): the selection has one owner. With a published document this
+    // is a set change (only this item's notes leave it) and the flags are
+    // derived again; in clip mode the set is not published and this module
+    // writes the item's own flags.
+    DocumentNoteSelection::clearProject(*this);
 }
 
 void Project::selectAllNotes(bool includeRests)
 {
-    for (auto &note : notes)
-    {
-        // D-299: una nota eliminada es una lapida interna; no se selecciona ni
-        // con includeRests.
-        if (note.isDeleted())
-            continue;
-        if (!includeRests && note.isRest())
-            continue;
-        note.setSelected(true);
-    }
+    DocumentNoteSelection::selectAllOfProject(*this, includeRests);
 }
 
 std::vector<Note *> Project::getDirtyNotes()

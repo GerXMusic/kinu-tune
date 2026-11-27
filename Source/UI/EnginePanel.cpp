@@ -60,7 +60,7 @@ std::optional<juce::Colour> EnginePanel::ChoiceList::getRowColour(int index) con
     return rowColours[static_cast<size_t>(index)];
 }
 
-void EnginePanel::ChoiceList::setSelected(int index, bool notify)
+void EnginePanel::ChoiceList::selectRow(int index, bool notify)
 {
     if (selected == index)
         return;
@@ -100,7 +100,7 @@ void EnginePanel::ChoiceList::mouseDown(const juce::MouseEvent& e)
     if (row < 0 ||
         (row < static_cast<int>(rowEnabled.size()) && !rowEnabled[static_cast<size_t>(row)]))
         return;
-    setSelected(row, true);
+    selectRow(row, true);
 }
 
 void EnginePanel::ChoiceList::mouseMove(const juce::MouseEvent& e)
@@ -278,7 +278,7 @@ void EnginePanel::setSynthesisEngine(SynthesisEngineType engine)
     const int index = engine == SynthesisEngineType::Vocoder   ? 0
                       : engine == SynthesisEngineType::Pitchcore ? 2
                                                                  : 1;
-    engineChoices.setSelected(index, false);
+    engineChoices.selectRow(index, false);
     applyEngineColours();
 }
 
@@ -301,7 +301,7 @@ void EnginePanel::setNoteEngine(std::optional<NoteEngine> engine)
     if (!engine)
     {
         blockAvailable = false;
-        blockChoices.setSelected(-1, false);
+        blockChoices.selectRow(-1, false);
         blockChoices.setInteractionEnabled(false);
         blockChoices.setEnabled(false);
         return;
@@ -313,7 +313,7 @@ void EnginePanel::setNoteEngine(std::optional<NoteEngine> engine)
                       : *engine == NoteEngine::Psola     ? 2
                       : *engine == NoteEngine::Pitchcore ? 3
                                                          : 0;
-    blockChoices.setSelected(index, false);
+    blockChoices.selectRow(index, false);
 }
 
 void EnginePanel::setEngineEffective(SynthesisEngineType engine,

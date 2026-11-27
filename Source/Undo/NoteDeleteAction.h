@@ -9,6 +9,7 @@
 // elimino.
 
 #include "UndoableAction.h"
+#include "../Models/DocumentNoteSelection.h"
 #include "../Models/Project.h"
 
 #include <algorithm>
@@ -49,7 +50,11 @@ private:
                 continue;
             entry.note->setDeleted(toAfter ? entry.afterDeleted : entry.beforeDeleted);
             entry.note->setRest(toAfter ? entry.afterRest : entry.beforeRest);
-            entry.note->setSelected(toAfter ? entry.afterSelected : entry.beforeSelected);
+            // N9 (D-349): undo gives the note back selected through the owner
+            // of the selection, not by writing the flag here.
+            DocumentNoteSelection::setNoteSelected(
+                project, *entry.note,
+                toAfter ? entry.afterSelected : entry.beforeSelected);
             entry.note->markDirty();
             entry.note->markSynthDirty();
             dirtyStart = std::min(dirtyStart, entry.note->getStartFrame());

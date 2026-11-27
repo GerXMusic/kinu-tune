@@ -11,6 +11,9 @@
 # pitch-writes:     a note's pitch and its Correct Pitch reference are written
 #                   only through Source/Utils/NotePitch.h, so the reference
 #                   rule cannot be forgotten by a new feature.
+# note-selection:   Note::selected is derived from the document selection, so it
+#                   is written only in Source/Models/DocumentNoteSelection.cpp
+#                   (D-349): one owner, one writer.
 # audition-output:  the engine's audition loop is sounded only through
 #                   Source/UI/Main/AuditionOutput.h, so a new kind of audition
 #                   takes the output over from the previous one.
@@ -30,6 +33,17 @@ if("${RULE}" STREQUAL "pitch-writes")
     set(allowed "${SOURCE_DIR}/Models/Note.h" "${SOURCE_DIR}/Utils/NotePitch.h")
     set(pattern "(setMidiNote|setLastNonMacroMidiNote|setMidiNoteFromPitchCorrection)[ \t]*\\(")
     set(hint "Use NotePitch::applyEdit / restore / applyCorrection / setCorrectionSource / setSungPitch instead (see Source/Utils/NotePitch.h).")
+elseif("${RULE}" STREQUAL "note-selection")
+    # N9 (D-349): a note's selected flag is a derived view of the document
+    # selection, never a second truth. The set lives in
+    # Source/Models/DocumentNoteSelection.cpp (applyToNotes is its writer); every
+    # other path goes through it: setNoteSelected, selectAll / setFromPairs /
+    # toggle, Project::selectAllNotes / deselectAllNotes, and the drawing copies.
+    set(scan_dir "${SOURCE_DIR}")
+    set(allowed "${SOURCE_DIR}/Models/Note.h"
+                "${SOURCE_DIR}/Models/DocumentNoteSelection.cpp")
+    set(pattern "setSelected[ \t]*\\(")
+    set(hint "Note::selected is derived from the document selection. Use DocumentNoteSelection::setNoteSelected / setFromPairs / toggle / selectAll, or Project::selectAllNotes / deselectAllNotes (see Source/Models/DocumentNoteSelection.h).")
 elseif("${RULE}" STREQUAL "audition-output")
     set(scan_dir "${SOURCE_DIR}")
     set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h"
