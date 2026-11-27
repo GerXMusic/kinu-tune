@@ -57,6 +57,9 @@ set(PITCHNET_TEST_SOURCES
     # R7 (D-360): la guia sobrevive a cerrar y reabrir el proyecto por un
     # sidecar JSON atomico (el archivo ARA no es de fiar, D-346).
     MidiGuideStorePersistenceTests.cpp
+    # R8 (D-361): el plan de aplicacion por pista (SCOPE=A) resuelve que item y
+    # nota recibe cada nota de guia, con motivos de skip, sin escribir nada.
+    MidiGuideTrackPlanTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp
