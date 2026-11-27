@@ -3,6 +3,8 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #include "DocumentMidiGuides.h"
 
+#include "MidiGuidePersistence.h"
+
 #include <algorithm>
 
 namespace
@@ -73,21 +75,132 @@ bool DocumentMidiGuideStore::bindTrack(const juce::String& newTrackKey)
     // previous list must not follow (another track is another history). The
     // document's Projects DO follow: they are the only place a cache can come
     // from, so an unknown key is imported from them instead of left empty.
+    //
+    // R7 (D-360): the sidecar is read first. When it answers (even with an
+    // empty list, which is what "the user removed them" looks like) it is the
+    // truth and the legacy cache is NOT migrated: that is how a removed guide
+    // used to come back from a stale Project copy.
     const bool hadDocument = trackKey.isNotEmpty();
     const auto documentProjects = observedProjects;
     trackKey = newTrackKey;
     entries.clear();
     importedProjects.clear();
     observedProjects.clear();
+    guidesFromDisk = false;
+    diskAuthoritative = false;
     markDirty();
     publish();
 
-    for (const auto* project : documentProjects)
-        if (project != nullptr)
-            importFromProject(*project);
+    if (!loadFromDisk())
+    {
+        bool adopted = false;
+        for (const auto* project : documentProjects)
+            if (project != nullptr)
+                adopted = importFromProject(*project) || adopted;
+        // First open of an older project: write the migrated guide so the next
+        // open reads the disk and the legacy cache stops being needed.
+        if (adopted)
+            persistIfPossible();
+    }
     publish();
 
     return hadDocument;
+}
+
+void DocumentMidiGuideStore::setDocumentKey(const juce::String& projectKey)
+{
+    if (projectKey == documentKey)
+        return;
+    documentKey = projectKey;
+
+    // No document published yet (clip mode, or the host has not created the
+    // audio sources): nothing is read or written under an unknown identity.
+    if (documentKey.isEmpty() || trackKey.isEmpty())
+        return;
+
+    // A different fingerprint is a different document view: whatever the store
+    // holds belongs to the previous one. Read the sidecar for the new key and,
+    // only when there is none, fall back to the legacy Project cache.
+    entries.clear();
+    importedProjects.clear();
+    guidesFromDisk = false;
+    diskAuthoritative = false;
+    markDirty();
+    publish();
+    if (!loadFromDisk())
+        importFromObservedProjects();
+    publish();
+}
+
+bool DocumentMidiGuideStore::loadFromDisk()
+{
+    guidesFromDisk = false;
+    diskAuthoritative = false;
+    if (persistence == nullptr || documentKey.isEmpty() || trackKey.isEmpty())
+        return false;
+
+    const auto result = persistence->load(documentKey, trackKey);
+    if (result.status == MidiGuideLoadResult::Status::rejected)
+    {
+        // A corrupt or foreign sidecar must not break the load: report it and
+        // let the caller migrate from the Project cache as before R7.
+        persistenceWarning = result.message;
+        return false;
+    }
+    if (!result.usable())
+        return false; // no file at all
+
+    for (const auto& guide : result.guides)
+        addOrReplace(guide, "document");
+    guidesFromDisk = true; // authoritative, empty list included
+    diskAuthoritative = true;
+    markDirty();
+    return true;
+}
+
+bool DocumentMidiGuideStore::importFromObservedProjects()
+{
+    bool adopted = false;
+    for (const auto* project : observedProjects)
+        if (project != nullptr)
+            adopted = importFromProject(*project) || adopted;
+    if (adopted)
+        persistIfPossible(); // materialize the migration so the next open is disk
+    return adopted;
+}
+
+bool DocumentMidiGuideStore::persistIfPossible()
+{
+    if (persistence == nullptr || documentKey.isEmpty() || trackKey.isEmpty())
+        return false;
+    // Never create an empty sidecar out of nothing: a document save with no
+    // guide must not shadow a legacy cache that has not been adopted yet.
+    if (!diskAuthoritative && entries.empty())
+        return false;
+
+    std::vector<GuideSource> guides;
+    guides.reserve(entries.size());
+    for (const auto& entry : entries)
+        guides.push_back(*entry.guide);
+
+    juce::String error;
+    if (!persistence->save(documentKey, trackKey, guides, &error))
+    {
+        if (error.isNotEmpty() && persistenceWarning.isEmpty())
+            persistenceWarning = error;
+        return false;
+    }
+    diskAuthoritative = true;
+    return true;
+}
+
+bool DocumentMidiGuideStore::flushPersistence() { return persistIfPossible(); }
+
+juce::String DocumentMidiGuideStore::takePersistenceWarning()
+{
+    auto warning = persistenceWarning;
+    persistenceWarning.clear();
+    return warning;
 }
 
 void DocumentMidiGuideStore::observeProjects(std::vector<const Project*> projects)
@@ -131,6 +244,12 @@ bool DocumentMidiGuideStore::importFromProject(const Project& project)
         return false;
     importedProjects.push_back(&project);
 
+    // R7 (D-360): when the sidecar answered, it is the truth. A Project copy
+    // is only the one-time migration source, and importing it next to a valid
+    // sidecar is how a removed guide came back.
+    if (guidesFromDisk)
+        return false;
+
     bool adopted = false;
     for (const auto& legacy : project.getMidiGuides())
     {
@@ -162,6 +281,8 @@ bool DocumentMidiGuideStore::syncLive(
             changed = true;
         }
     }
+    if (changed)
+        persistIfPossible();
     return changed;
 }
 
@@ -192,7 +313,9 @@ std::pair<int, bool> DocumentMidiGuideStore::addOrReplace(
 int DocumentMidiGuideStore::upsert(GuideSource guide,
                                    const juce::String& origin)
 {
-    return addOrReplace(std::move(guide), origin).first;
+    const auto added = addOrReplace(std::move(guide), origin);
+    persistIfPossible();
+    return added.first;
 }
 
 bool DocumentMidiGuideStore::removeAt(int index)
@@ -201,11 +324,18 @@ bool DocumentMidiGuideStore::removeAt(int index)
         return false;
     entries.erase(entries.begin() + index);
     markDirty();
+    // Removing the last guide is state too: diskAuthoritative makes this write
+    // an empty sidecar instead of silently keeping the old one.
+    persistIfPossible();
     return true;
 }
 
 void DocumentMidiGuideStore::clear()
 {
+    // Deliberately does NOT persist: this is also the document-gone path
+    // (releaseProject when the last Project dies, i.e. the host closing or
+    // unloading the project). Writing here would erase the user's guide the
+    // moment the project was closed.
     entries.clear();
     observedProjects.clear();
     importedProjects.clear();

@@ -2118,10 +2118,41 @@ bool PitchNetDocumentController::shouldProcessPlaybackRegion(
          region->getRegionSequence() == currentRegionSequence;
 }
 
+void PitchNetDocumentController::refreshMidiGuideDocumentKey() {
+  if (!midiGuideFileBound) {
+    midiGuideFileBound = true;
+    midiGuideStore.setPersistence(&midiGuideFile);
+  }
+
+  // ARA exposes no host project path. The audio sources of the document are
+  // the only stable per-project data it hands over (their persistent IDs are
+  // the media the host restores with the project), so the fingerprint is
+  // built from them. Empty until the host creates the sources: nothing is read
+  // or written then, and the key is retried on every source event.
+  std::vector<juce::String> sourceIds;
+  if (currentDocument != nullptr)
+    for (auto *source : currentDocument->getAudioSources<juce::ARAAudioSource>())
+      if (source != nullptr) {
+        const juce::String id(source->getPersistentID());
+        if (id.isNotEmpty())
+          sourceIds.push_back(id);
+      }
+
+  const auto key = sourceIds.empty()
+                       ? juce::String()
+                       : midiGuideDisk::projectKeyFromSources(sourceIds);
+  if (key == midiGuideDocumentKey)
+    return;
+  midiGuideDocumentKey = key;
+  midiGuideStore.setDocumentKey(key);
+}
+
 void PitchNetDocumentController::didAddAudioSourceToDocument(
     juce::ARADocument *document, juce::ARAAudioSource *audioSource) {
   currentDocument = document;
   currentAudioSource = audioSource;
+  // R7 (D-360): the source set is the document fingerprint.
+  refreshMidiGuideDocumentKey();
 }
 
 bool PitchNetDocumentController::processExistingAudioSources(
@@ -2161,6 +2192,7 @@ bool PitchNetDocumentController::processExistingAudioSources(
   // A valid source alone is not enough to initialise a region-based editor.
   // Some hosts (notably Studio One Event FX) expose the source before a usable
   // playback region is found and do not send an initial selection callback.
+  refreshMidiGuideDocumentKey();
   return currentPlaybackRegion != nullptr;
 }
 
@@ -2184,6 +2216,8 @@ bool PitchNetDocumentController::processPlaybackRegions(
   if (!currentDocument)
     return false;
 
+  // R7 (D-360): the sources are known by now; the store can read its sidecar.
+  refreshMidiGuideDocumentKey();
   return true;
 }
 
@@ -2203,6 +2237,9 @@ void PitchNetDocumentController::willRemoveAudioSourceFromDocument(
                               modification->getAudioSource() == audioSource;
                      }),
       currentPlaybackRegions.end());
+  // R7 (D-360): the fingerprint lost a source; the store re-reads or migrates
+  // under the new key instead of keeping a file that no longer belongs here.
+  refreshMidiGuideDocumentKey();
 }
 
 void PitchNetDocumentController::didEnableAudioSourceSamplesAccess(
@@ -3036,6 +3073,12 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
 bool PitchNetDocumentController::doStoreObjectsToStream(
     juce::ARAOutputStream &output,
     const juce::ARAStoreObjectsFilter *filter) noexcept {
+  // R7 (D-360): a host save is also a guide flush. The sidecar, not this
+  // archive, is what the next open reads (D-346: the archive's own copy is not
+  // reliable), so the save cannot leave the disk copy behind.
+  if (midiGuideFileBound)
+    midiGuideStore.flushPersistence();
+
   juce::MemoryBlock archiveData;
   if (serializeProjectStateCallback)
     serializeProjectStateCallback(archiveData);

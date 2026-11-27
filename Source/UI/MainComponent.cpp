@@ -7077,6 +7077,13 @@ void MainComponent::refreshMidiGuideUi()
     ghosts = midiGuideGhostsFor(*guide, tempo);
   }
   pianoRoll.setMidiGuideGhosts(std::move(ghosts));
+
+  // R7 (D-360): a sidecar that was rejected (corrupt, or another project's)
+  // falls back to the Project copy; the rejection is shown once, here, where
+  // the list is drawn, and the load itself keeps going.
+  const auto warning = midiGuideStore->takePersistenceWarning();
+  if (warning.isNotEmpty())
+    midiGuidePanel.setStatusText(warning);
 }
 
 void MainComponent::applyMidiGuide()

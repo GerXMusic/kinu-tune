@@ -54,6 +54,9 @@ set(PITCHNET_TEST_SOURCES
     # de pista es estable al recrearse la RegionSequence; sobrevive al cierre
     # del editor y una clave desconocida importa, no vacia.
     MidiGuideStoreLifetimeTests.cpp
+    # R7 (D-360): la guia sobrevive a cerrar y reabrir el proyecto por un
+    # sidecar JSON atomico (el archivo ARA no es de fiar, D-346).
+    MidiGuideStorePersistenceTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp

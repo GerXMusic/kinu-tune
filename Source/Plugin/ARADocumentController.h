@@ -3,6 +3,7 @@
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../JuceHeader.h"
 #include "../Models/DocumentMidiGuides.h"
+#include "../Models/MidiGuidePersistence.h"
 
 #include <atomic>
 #include <cmath>
@@ -433,6 +434,11 @@ public:
   const DocumentMidiGuideStore &getMidiGuideStore() const {
     return midiGuideStore;
   }
+  // R7 (D-360): the guides are persisted to a sidecar (the ARA archive is not
+  // reliable, D-346). The document controller owns the key: the ARA audio
+  // source set is the only project fingerprint ARA exposes, and the track key
+  // the store already uses completes it.
+  void refreshMidiGuideDocumentKey();
 #if PITCHNET_ARA_DIAGNOSTICS && PITCHNET_LOGGING_ENABLED
   // D-137: the bypass parameter as the project has it (the INTENT of the
   // render), written by the processor before it renders a block and read by
@@ -605,6 +611,11 @@ private:
   // R5d (D-358): the document's MIDI guides. Owned here, not by the editor, so
   // closing and reopening the window in the same process does not lose them.
   DocumentMidiGuideStore midiGuideStore;
+  // R7 (D-360): sidecar writer for the store above and the document identity
+  // its key is derived from.
+  MidiGuidePersistence midiGuideFile;
+  bool midiGuideFileBound = false;
+  juce::String midiGuideDocumentKey;
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;
   juce::MemoryBlock pendingRestoredProjectData;

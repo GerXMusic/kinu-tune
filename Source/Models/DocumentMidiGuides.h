@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+class MidiGuidePersistence;
+
 /**
  * Document-level MIDI guides (R5b of the guide-integration fix, D-356).
  *
@@ -29,7 +31,9 @@
  * only as a compatibility cache: it is what older builds and the host archive
  * read, and it is the one-time migration source. It is written from here and
  * never read by the UI (SourceGuard_midi-guides enforces it). Persisting the
- * guide as state of the document is R7; identity/sync is R10.
+ * guide as state of the document is R7 (D-360): the store also writes a sidecar
+ * through MidiGuidePersistence while the host archive stays unfixed (D-346).
+ * Identity/sync is R10.
  *
  * Axes: the guide is in quarter notes (MidiGuide.h); it becomes host seconds
  * through HostTempoMap, and the canvas turns host into project seconds with the
@@ -127,6 +131,32 @@ public:
     bool removeAt(int index);
     void clear();
 
+    // --- Disk persistence (R7, D-360) -------------------------------------
+    // One sidecar per (document fingerprint, track key). The store owns the
+    // guides, so it is also the only writer: every user mutation persists,
+    // and no path outside this class writes the file.
+    //
+    // The document fingerprint comes from the document controller (the ARA
+    // audio source set); an empty key means "no document published", and then
+    // nothing is read or written (clip mode must not invent a file). The key
+    // may arrive after bindTrack (sources are created later than the editor in
+    // some hosts), which is why setDocumentKey() retries the load itself.
+    void setPersistence(MidiGuidePersistence* persistenceIn) {
+        persistence = persistenceIn;
+    }
+    void setDocumentKey(const juce::String& projectKey);
+    const juce::String& getDocumentKey() const { return documentKey; }
+
+    // Writes the guides now. Called on host save so a save is also a flush.
+    // Returns false when there is nothing writable (no document key, no track
+    // key) or the write failed.
+    bool flushPersistence();
+
+    // Rejected or unwritable sidecar: the UI consumes this once and shows it.
+    // Empty when the last load/save was fine.
+    juce::String takePersistenceWarning();
+    bool isFromDisk() const { return guidesFromDisk; }
+
     // Compatibility cache: writes the document's guides into one live Project
     // so the existing archive/JSON keeps carrying them (R7 owns real
     // persistence). Only called from here, never the read path.
@@ -158,10 +188,28 @@ private:
     std::pair<int, bool> addOrReplace(GuideSource guide, const juce::String& origin);
     void markDirty() { dirty = true; }
 
+    // Disk helpers (R7): validate/adopt the sidecar, then migrate the legacy
+    // Project cache only when there is no usable sidecar. persistIfPossible()
+    // never creates an empty file out of nothing, so a headless project save
+    // cannot shadow a cache that was never adopted.
+    bool loadFromDisk();
+    bool importFromObservedProjects();
+    bool persistIfPossible();
+
     std::vector<Entry> entries;
     std::vector<const Project*> observedProjects;
     std::vector<const Project*> importedProjects;
     juce::String trackKey;
     DocumentMidiGuidesPtr published;
     bool dirty = true;
+
+    MidiGuidePersistence* persistence = nullptr;
+    juce::String documentKey;
+    // The current entries came from the sidecar, so legacy migration must not
+    // resurrect a guide the user removed there.
+    bool guidesFromDisk = false;
+    // A sidecar exists for (documentKey, trackKey): removing the last guide
+    // must be written as an empty file, not skipped.
+    bool diskAuthoritative = false;
+    juce::String persistenceWarning;
 };
