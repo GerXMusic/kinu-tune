@@ -355,6 +355,10 @@ public:
   std::size_t getMidiGuideGhostsInViewCount() const;
   // Ghosts overlapping the visible time window AND the visible pitch range.
   std::size_t getMidiGuideGhostsVisibleCount() const;
+  // V2/D-373: pitch span of the ghosts that overlap the visible TIME window,
+  // {min, max}; {1, 0} when none. The vertical fit uses it to keep the guide on
+  // screen without touching the zoom when the guide is not in the window.
+  std::pair<float, float> getMidiGuideGhostPitchRangeInVisibleTime() const;
   // Ghosts the last paint counted as painted: they passed the current clip and
   // also overlap the visible time window. 0 before the first paint.
   int getMidiGuideGhostsPaintedLast() const {
@@ -571,6 +575,9 @@ private:
   void drawPitchCurves(juce::Graphics &g);
   // D-311: read-only guide layer, drawn below the notes.
   void drawMidiGuideGhosts(juce::Graphics &g);
+  // V2/D-373: outline-only pass above the notes for a ghost an active note
+  // covers; keeps the note body untouched.
+  void drawMidiGuideGhostOutlines(juce::Graphics &g);
   void drawBypassSourceCurve(juce::Graphics &g);
   bool bypassView = false;
   void drawPianoKeys(juce::Graphics &g);

@@ -293,6 +293,13 @@ target_link_libraries(MidiGuideVisibilityTests PRIVATE pitchnet_ui)
 target_compile_features(MidiGuideVisibilityTests PRIVATE cxx_std_17)
 add_test(NAME MidiGuideVisibilityTests COMMAND MidiGuideVisibilityTests)
 
+# V2 (guia MIDI): anclaje host al cambiar de item, zoom con cursor y ajuste
+# vertical que incluye la guia solo si solapa el tiempo visible.
+add_executable(MidiGuideNavigationTests MidiGuideNavigationTests.cpp)
+target_link_libraries(MidiGuideNavigationTests PRIVATE pitchnet_ui)
+target_compile_features(MidiGuideNavigationTests PRIVATE cxx_std_17)
+add_test(NAME MidiGuideNavigationTests COMMAND MidiGuideNavigationTests)
+
 # N12 (D-354): la tira de overview es estado de vista; cambiar de item no la
 # toca, el toggle del usuario si, y el campo del JSON sigue por compatibilidad.
 add_executable(OverviewIndependenceTests OverviewIndependenceTests.cpp)

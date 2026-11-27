@@ -596,9 +596,12 @@ void PianoRollComponent::paint(juce::Graphics &g)
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g, false, true);
-    drawMidiGuideGhosts(g);
     drawRegionPreviews(g);
     drawInactiveRegionEdits(g, mainArea);
+    // V2/D-373: the guide goes ABOVE the neighbour layer (its own item's notes
+    // are not drawn there) and BELOW the active notes. Drawing it first let a
+    // neighbour note hide it; the measured cyan count under such a note was 0.
+    drawMidiGuideGhosts(g);
     drawPinnedTrackNotes(g, mainArea);
     drawAudioSourceRegionOverlay(g);
     drawLoopOverlay(g);
@@ -637,6 +640,9 @@ void PianoRollComponent::paint(juce::Graphics &g)
       currentHandler_->draw(g);
     if (!bypassView)
       drawNotes(g, NoteRenderPass::Overlay);
+    // V2/D-373: outline of a ghost covered by an ACTIVE note, above the notes
+    // and without touching their body (outline only, no fill).
+    drawMidiGuideGhostOutlines(g);
     drawGameValuesDebugOverlay(g);
     drawSelectionRect(g);
 
@@ -3966,20 +3972,56 @@ std::size_t PianoRollComponent::getMidiGuideGhostsVisibleCount() const
   return count;
 }
 
+std::pair<float, float>
+PianoRollComponent::getMidiGuideGhostPitchRangeInVisibleTime() const
+{
+  const std::pair<float, float> none{1.0f, 0.0f};
+  if (coordMapper == nullptr || midiGuideGhosts.empty())
+    return none;
+
+  const auto range = getVisibleProjectRange();
+  if (!(range.second > range.first))
+    return none;
+
+  const double offset = coordMapper->getTimelineDisplayOffset();
+  float minPitch = std::numeric_limits<float>::max();
+  float maxPitch = std::numeric_limits<float>::lowest();
+  for (const auto &ghost : midiGuideGhosts.all())
+  {
+    const double start =
+        midiGuideGhostProjectSeconds(ghost.startHostSeconds, offset);
+    const double end =
+        midiGuideGhostProjectSeconds(ghost.endHostSeconds, offset);
+    if (end < range.first || start > range.second)
+      continue;
+    minPitch = std::min(minPitch, ghost.pitch);
+    maxPitch = std::max(maxPitch, ghost.pitch);
+  }
+
+  if (minPitch > maxPitch)
+    return none;
+  return {minPitch, maxPitch};
+}
+
 void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
 {
   midiGuideGhostsPaintedLast = 0;
   if (midiGuideGhosts.empty() || coordMapper == nullptr)
     return;
+  if (!(pixelsPerSecond > 0.0f))
+    return;
 
-  // Read-only layer: dashed cyan blocks under the notes. Deliberately not the
-  // grey source curve retired in D-305: this is the imported reference.
+  // V2/D-373: the window really on screen, the same rule drawRegionPreviews and
+  // the note layer use. V1 measured the old clip [0, getWidth()/pps]: with the
+  // view scrolled past it the ghosts were dropped (painted 0 with 51 in view).
+  const auto window = getVisibleProjectRange();
+  if (!(window.second > window.first))
+    return;
+  const double edgeMargin = 1.0 / static_cast<double>(pixelsPerSecond);
+
+  // Read-only layer: dashed cyan blocks. Deliberately not the grey source curve
+  // retired in D-305: this is the imported reference.
   const juce::Colour ghostColour(0xFF35C4CF);
-  const double visibleStart = xToTime(0.0f);
-  const double visibleEnd = xToTime(static_cast<float>(getWidth()));
-  // V1: the window really on screen. Kept apart from the clip above on
-  // purpose: the clip is not changed in this phase, the count is.
-  const auto onScreen = getVisibleProjectRange();
 
   const float dashLengths[] = {4.0f, 3.0f};
   juce::PathStrokeType stroke(1.2f);
@@ -3997,14 +4039,14 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
     const double endProject =
         coordMapper->timelineToProject(ghost.endHostSeconds);
 
-    if (endProject < visibleStart || startProject > visibleEnd)
+    // One pixel of slack so a note that crosses the border is still painted;
+    // the main-area clip trims it. The count below keeps the exact window, so
+    // painted_last == in_view is reproducible (the sliver is not counted).
+    if (endProject < window.first - edgeMargin ||
+        startProject > window.second + edgeMargin)
       continue;
-
-    // V1: what is actually on screen. A ghost the wrong clip lets through but
-    // which sits outside [scrollX, scrollX + visibleWidth] is not visible.
-    if (endProject < onScreen.first || startProject > onScreen.second)
-      continue;
-    ++midiGuideGhostsPaintedLast;
+    if (endProject >= window.first && startProject <= window.second)
+      ++midiGuideGhostsPaintedLast;
 
     const float x = timeToX(startProject);
     const float right = timeToX(endProject);
@@ -4031,6 +4073,74 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
                  rect.withTrimmedLeft(3.0f).toNearestInt(),
                  juce::Justification::centredLeft, false);
     }
+  }
+}
+
+void PianoRollComponent::drawMidiGuideGhostOutlines(juce::Graphics &g)
+{
+  if (midiGuideGhosts.empty() || coordMapper == nullptr || project == nullptr)
+    return;
+  if (!(pixelsPerSecond > 0.0f) || !(pixelsPerSemitone > 0.0f))
+    return;
+
+  const auto window = getVisibleProjectRange();
+  if (!(window.second > window.first))
+    return;
+
+  // V2/D-373: the guide sits below the active notes on purpose (the body of an
+  // edit stays readable). V1/V2 measured 0 cyan pixels under an active note, so
+  // the ghost is redrawn here as outline only - no fill, no label, same colour
+  // and size - when an active note covers it.
+  const juce::Colour ghostColour(0xFF35C4CF);
+  const float dashLengths[] = {4.0f, 3.0f};
+  juce::PathStrokeType stroke(1.2f);
+  const double sampleRate =
+      SAMPLE_RATE > 0 ? static_cast<double>(SAMPLE_RATE) : 44100.0;
+  const double hopSize = static_cast<double>(HOP_SIZE);
+
+  const auto noteCovers = [this, sampleRate, hopSize](double startProject,
+                                                      double endProject,
+                                                      float pitch) {
+    for (const auto &note : project->getNotes())
+    {
+      if (note.isRest())
+        continue;
+      const double noteStart =
+          static_cast<double>(note.getStartFrame()) * hopSize / sampleRate;
+      const double noteEnd =
+          static_cast<double>(note.getEndFrame()) * hopSize / sampleRate;
+      if (endProject < noteStart || startProject > noteEnd)
+        continue;
+      if (std::abs(note.getAdjustedMidiNote() - pitch) <= 0.5f)
+        return true;
+    }
+    return false;
+  };
+
+  for (const auto &ghost : midiGuideGhosts.all())
+  {
+    const double startProject =
+        coordMapper->timelineToProject(ghost.startHostSeconds);
+    const double endProject =
+        coordMapper->timelineToProject(ghost.endHostSeconds);
+    if (endProject < window.first || startProject > window.second)
+      continue;
+    if (!noteCovers(startProject, endProject, ghost.pitch))
+      continue;
+
+    const float x = timeToX(startProject);
+    const float right = timeToX(endProject);
+    const float width = juce::jmax(2.0f, right - x);
+    auto rect = juce::Rectangle<float>(x, midiToY(ghost.pitch), width,
+                                       juce::jmax(6.0f, pixelsPerSemitone));
+    rect = rect.reduced(0.0f, 1.0f);
+
+    juce::Path outline;
+    outline.addRoundedRectangle(rect, 3.0f);
+    juce::Path dashed;
+    stroke.createDashedStroke(dashed, outline, dashLengths, 2);
+    g.setColour(ghostColour.withAlpha(0.85f));
+    g.fillPath(dashed);
   }
 }
 

@@ -1,24 +1,23 @@
-// V1 (guia MIDI): medir antes de arreglar. Este test NO arregla nada.
+// V2 (guia MIDI): el recorte es la ventana visible y la capa se ve entera.
 //
-// Fija con numeros por que desaparece la guia de la vista:
-//   * ghost_count      : fantasmas en el store del documento;
+// Fija con numeros por que desaparecia la guia de la vista:
+//   * ghost_count      : fantasmas en store del documento;
 //   * ghost_in_view    : fantasmas que solapan la ventana visible (tiempo);
 //   * ghost_visible    : ademas dentro del rango de altura visible;
-//   * painted_last     : lo que el pintor conto como pintado (pasa el recorte
-//                        ACTUAL [0, getWidth()/pps] Y solapa la ventana visible);
+//   * painted_last     : lo que el pintor conto como pintado (ventana visible);
 //   * pixeles cian     : lo que de verdad queda en la imagen.
 //
 // Estados fijados por la fase (fixture = la guia medida, 111 fantasmas de
 // proyecto 7.886192-68.143680 s, offset 5.818182 s, pitches 53-74):
 //   pps 7.64, scroll 0       -> in_view 111
-//   pps 36,   scroll 0       -> painted == in_view (el bug aun no se ve)
-//   pps 36,   scroll 600 px  -> painted <  in_view (prefijo)
-//   pps 36,   scroll 1200 px -> painted == 0       (el bug)
-//   pps 100,  scroll 2000 px -> painted == 0
-//   altura 60-72             -> visible < in_view  (documenta la diferencia)
+//   pps 36,   scroll 0       -> 35
+//   pps 36,   scroll 600 px  -> 50   (V1 pintaba 21)
+//   pps 36,   scroll 1200 px -> 51   (V1 pintaba 0: el bug)
+//   pps 100,  scroll 2000 px -> 19   (V1 pintaba 0)
+//   altura 60-72             -> visible < in_view antes del ajuste
 //
-// V2 actualizara este test a painted == in_view y visible == in_view con la
-// altura ajustada; en V1 se documenta el comportamiento actual.
+// V2 exige painted == in_view en todos los estados con guia, 0 cuando la vista
+// no la contiene, y el ajuste vertical con la guia en tiempo cubriendo 53-74.
 #include "TestAssert.h"
 
 #include "../Source/Models/Project.h" // pulls JuceHeader first
@@ -182,7 +181,9 @@ int main()
           static_cast<size_t>(kGhostCount));
 
     // 2. Estados horizontales. La altura queda fija con 53-74 dentro, asi
-    //    painted_last mide SOLO el recorte de tiempo.
+    //    painted_last mide SOLO el recorte de tiempo. V2: la guia se dibuja con
+    //    la ventana visible, asi que painted_last == in_view en TODOS los
+    //    estados (en V1 era 21/35 con scroll 600 y 0 con scroll >= 1200).
     State state;
     state.pps = 7.64;
     state.scrollX = 0.0;
@@ -209,16 +210,18 @@ int main()
     paintToImage(roll);
     report("pps36_scroll600", roll);
     CHECK(roll.getMidiGuideGhostsInViewCount() > 0);
-    CHECK(roll.getMidiGuideGhostsPaintedLast() > 0);
-    CHECK(roll.getMidiGuideGhostsPaintedLast() <
+    CHECK(roll.getMidiGuideGhostsPaintedLast() ==
           static_cast<int>(roll.getMidiGuideGhostsInViewCount()));
 
+    // Regresion exacta de V1: en el bug el fantasma estaba en la ventana pero
+    // el recorte [0, getWidth()/pps] lo dejaba fuera.
     state.scrollX = 1200.0;
     applyState(roll, state);
     paintToImage(roll);
     report("pps36_scroll1200", roll);
     CHECK(roll.getMidiGuideGhostsInViewCount() > 0);
-    CHECK(roll.getMidiGuideGhostsPaintedLast() == 0); // el bug
+    CHECK(roll.getMidiGuideGhostsPaintedLast() ==
+          static_cast<int>(roll.getMidiGuideGhostsInViewCount()));
 
     state.pps = 100.0;
     state.scrollX = 2000.0;
@@ -226,10 +229,20 @@ int main()
     paintToImage(roll);
     report("pps100_scroll2000", roll);
     CHECK(roll.getMidiGuideGhostsInViewCount() > 0);
+    CHECK(roll.getMidiGuideGhostsPaintedLast() ==
+          static_cast<int>(roll.getMidiGuideGhostsInViewCount()));
+
+    // 3. Sin guia en la ventana de tiempo: ni se cuenta ni se pinta.
+    state.pps = 36.0;
+    state.scrollX = 80.0 * 36.0; // proyecto 80-106 s, guia hasta 68.14
+    applyState(roll, state);
+    paintToImage(roll);
+    report("pps36_out_of_guide", roll);
+    CHECK(roll.getMidiGuideGhostsInViewCount() == 0);
     CHECK(roll.getMidiGuideGhostsPaintedLast() == 0);
 
-    // 3. Altura: la ventana de tiempo esta sobre la guia, pero solo 60-72
-    //    caben en pantalla. Se documenta la diferencia; V2 la arregla.
+    // 4. Altura: el estado heredado de V1 (solo 60-72 en pantalla) documenta la
+    //    diferencia, y el ajuste vertical con la guia en tiempo la cierra.
     state.pps = 36.0;
     state.scrollX = 0.0;
     state.pixelsPerSemitone = 30.0;
@@ -240,11 +253,43 @@ int main()
     CHECK(roll.getMidiGuideGhostsInViewCount() > 0);
     CHECK(roll.getMidiGuideGhostsVisibleCount() <
           roll.getMidiGuideGhostsInViewCount());
-    CHECK(roll.getMidiGuideGhostsVisibleCount() > 0);
 
-    // 4. Pixeles: guia en tiempo y altura visibles. painted > 0 con pixeles
+    // La guia solapa el tiempo visible: su ambito de pitch es 53-74.
+    const auto guidePitch =
+        roll.getMidiGuideGhostPitchRangeInVisibleTime();
+    CHECK(guidePitch.first == 53.0f);
+    CHECK(guidePitch.second == 74.0f);
+
+    // El ajuste vertical que hace MainComponent::fitAnalyzedPitchRangeToView
+    // (union de notas activas y guia, +1 semitono arriba).
+    roll.fitPitchRangeToView(53.0f, 75.0f);
+    paintToImage(roll);
+    report("fit_guide_in_time", roll);
+    const double ppsSemiAfterFit = roll.getPixelsPerSemitone();
+    const double pitchTop =
+        MAX_MIDI_NOTE - roll.getScrollY() / ppsSemiAfterFit;
+    const double pitchBottom =
+        MAX_MIDI_NOTE -
+        (roll.getScrollY() + roll.getVisibleContentHeight()) / ppsSemiAfterFit;
+    std::printf("fit_guide_in_time pitch=[%.3f,%.3f]\n", pitchBottom, pitchTop);
+    CHECK(pitchTop >= 74.0);
+    CHECK(pitchBottom <= 53.0);
+    CHECK(roll.getMidiGuideGhostsVisibleCount() ==
+          roll.getMidiGuideGhostsInViewCount());
+    CHECK(roll.getMidiGuideGhostsPaintedLast() ==
+          static_cast<int>(roll.getMidiGuideGhostsInViewCount()));
+
+    // Sin guia en tiempo, el helper no propone ambito y el zoom no cambia.
+    state.pps = 36.0;
+    state.scrollX = 80.0 * 36.0;
+    state.pixelsPerSemitone = ppsSemiAfterFit;
+    state.scrollY = roll.getScrollY();
+    applyState(roll, state);
+    CHECK(roll.getMidiGuideGhostPitchRangeInVisibleTime().first >
+          roll.getMidiGuideGhostPitchRangeInVisibleTime().second);
+
+    // 5. Pixeles: guia en tiempo y altura visibles. painted > 0 con pixeles
     //    cian ~0 significaria capa TAPADA; painted == 0, que manda el RECORTE.
-    //    El caso store vacio solo se puede medir en V4.
     state.pps = 36.0;
     state.scrollX = 0.0;
     state.pixelsPerSemitone = 10.0;
@@ -253,22 +298,110 @@ int main()
     const auto image = paintToImage(roll);
     const int cyan = countCyanPixels(image);
     report("pixels_visible", roll, cyan);
+    CHECK(cyan > 0);
 
-    const char* verdict = "store";
-    if (roll.getMidiGuideGhostsPaintedLast() == 0)
-        verdict = "clip";
-    else if (cyan == 0)
-        verdict = "covered";
-    else
-        verdict = "visible_pixels";
-    std::printf("V1 verdict: %s (painted=%d, cyan=%d)\n", verdict,
-                roll.getMidiGuideGhostsPaintedLast(), cyan);
-    CHECK(roll.getMidiGuideGhostsPaintedLast() > 0);
-    CHECK(std::string(verdict) == "visible_pixels" ||
-          std::string(verdict) == "covered" ||
-          std::string(verdict) == "clip");
+    // Y 0 cuando la vista no la contiene (mismo estado de tiempo que el 3).
+    state.scrollX = 80.0 * 36.0;
+    applyState(roll, state);
+    const int cyanOut = countCyanPixels(paintToImage(roll));
+    report("pixels_out_of_view", roll, cyanOut);
+    CHECK(cyanOut == 0);
 
-    std::cout << "MidiGuideVisibilityTests passed (V1 documents current "
-                 "behaviour)\n";
+    // 6. Oclusion (V2): una nota de un ITEM VECINO (capa inactiva) y una nota
+    //    ACTIVA, cada una encima de un fantasma.
+    //
+    //    Metrica: se pinta la misma escena con y sin fantasmas y se cuentan los
+    //    pixeles que CAMBIAN dentro de la caja del fantasma. Si la guia queda
+    //    debajo del cuerpo de la nota, casi no cambia nada (el fantasma no se
+    //    ve); si queda encima, cambia todo su relleno y contorno. En V1, con la
+    //    guia debajo, el total cian con la nota vecina bajaba de 223 a 221.
+    state.scrollX = 0.0;
+    state.pixelsPerSemitone = 10.0;
+    state.scrollY = 100.0;
+    applyState(roll, state);
+    const double step = (kProjectLast - kProjectFirst) / kGhostCount;
+    const float ppsSemi = roll.getPixelsPerSemitone();
+    const float ppsNow = roll.getPixelsPerSecond();
+    const auto boxFor = [&](int index) {
+        const double startProject = kProjectFirst + index * step;
+        const double endProject = startProject + step;
+        const float pitch = static_cast<float>(53 + (index % 22));
+        const int left =
+            PianoRollComponent::pianoKeysWidth +
+            static_cast<int>(std::lround(startProject * ppsNow -
+                                         roll.getScrollX()));
+        const int right =
+            PianoRollComponent::pianoKeysWidth +
+            static_cast<int>(std::lround(endProject * ppsNow -
+                                         roll.getScrollX()));
+        const int top =
+            PianoRollComponent::headerHeight +
+            static_cast<int>(std::lround((MAX_MIDI_NOTE - pitch) * ppsSemi -
+                                         roll.getScrollY()));
+        return juce::Rectangle<int>(
+            left + 2, top, std::max(1, right - left - 4),
+            std::max(1, static_cast<int>(std::lround(ppsSemi))));
+    };
+    const auto countDiffIn = [](const juce::Image& a, const juce::Image& b,
+                                juce::Rectangle<int> area) {
+        int count = 0;
+        const auto clipped = area.getIntersection(
+            {0, 0, a.getWidth(), a.getHeight()});
+        for (int y = clipped.getY(); y < clipped.getBottom(); ++y)
+            for (int x = clipped.getX(); x < clipped.getRight(); ++x)
+                if (a.getPixelAt(x, y) != b.getPixelAt(x, y))
+                    ++count;
+        return count;
+    };
+
+    Project neighbour;
+    setLength(neighbour, 130.0);
+    // Nota del item vecino exactamente bajo el fantasma 0 (pitch 53).
+    neighbour.getNotes().push_back(
+        Note(frameFor(kProjectFirst), frameFor(kProjectFirst + step), 53.0f));
+    MainViewRegionPreview neighbourPreview;
+    neighbourPreview.key = "nb";
+    neighbourPreview.name = "nb";
+    neighbourPreview.project = &neighbour;
+    neighbourPreview.startSeconds = 0.0;
+    neighbourPreview.endSeconds = 130.0;
+    neighbourPreview.sourceStartSeconds = 0.0;
+    neighbourPreview.sourceEndSeconds = 130.0;
+    neighbourPreview.projectHostOffsetSeconds = kOffset;
+    neighbourPreview.hasContent = true;
+    auto previews = std::make_shared<std::vector<MainViewRegionPreview>>();
+    previews->push_back(neighbourPreview);
+    roll.setRegionPreviews(previews);
+
+    const auto withNeighbour = paintToImage(roll);
+    const int neighbourCyan = countCyanPixels(withNeighbour);
+    roll.setMidiGuideGhosts({});
+    const auto neighbourNoGhost = paintToImage(roll); // mismo estado, sin fantasmas
+    roll.setMidiGuideGhosts(makeGhosts());
+    const auto neighbourDiff =
+        countDiffIn(withNeighbour, neighbourNoGhost, boxFor(0));
+    std::printf("occlusion_neighbour   cyan_total=%d diff_box=%d\n",
+                neighbourCyan, neighbourDiff);
+    CHECK(neighbourCyan > 0);
+    CHECK(neighbourDiff > 0);
+
+    // Nota ACTIVA encima del fantasma 1 (pitch 54): la guia va debajo de las
+    // notas, asi que el contorno se redibuja por encima sin tocar el cuerpo.
+    project.getNotes().push_back(
+        Note(frameFor(kProjectFirst + step),
+             frameFor(kProjectFirst + 2.0 * step), 54.0f));
+    const auto withActive = paintToImage(roll);
+    roll.setMidiGuideGhosts({});
+    const auto activeWithoutGhost = paintToImage(roll);
+    roll.setMidiGuideGhosts(makeGhosts());
+    const auto activeDiff =
+        countDiffIn(withActive, activeWithoutGhost, boxFor(1));
+    std::printf("occlusion_active      cyan_total=%d diff_box=%d\n",
+                countCyanPixels(withActive), activeDiff);
+    CHECK(activeDiff > 0);
+    project.getNotes().clear();
+    roll.setRegionPreviews(nullptr);
+
+    std::cout << "MidiGuideVisibilityTests passed (V2: painted == in_view)\n";
     return 0;
 }

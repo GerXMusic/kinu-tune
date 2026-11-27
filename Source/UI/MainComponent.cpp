@@ -4314,6 +4314,17 @@ void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
     }
   }
 
+  // V2/D-373: the guide belongs to the track, so it takes part in the vertical
+  // fit only while it overlaps the visible time window (the helper returns an
+  // empty span otherwise and the zoom is left as it was). V1 measured 17 of 35
+  // ghosts inside the 60-72 height window; including 53-74 keeps them all.
+  const auto guidePitch = pianoRoll.getMidiGuideGhostPitchRangeInVisibleTime();
+  if (guidePitch.first <= guidePitch.second)
+  {
+    minMidi = std::min(minMidi, guidePitch.first);
+    maxMidi = std::max(maxMidi, guidePitch.second);
+  }
+
   if (minMidi != std::numeric_limits<float>::max() && maxMidi >= minMidi)
   {
     maxMidi = std::min(maxMidi + 1.0f, static_cast<float>(MAX_MIDI_NOTE));
