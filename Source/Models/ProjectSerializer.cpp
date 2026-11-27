@@ -454,7 +454,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         }
     }
 
-    // Global parameters    project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
+    // Global parameters
+    project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     project.setBypassProcessing(
