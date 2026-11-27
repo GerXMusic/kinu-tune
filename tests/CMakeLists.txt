@@ -300,6 +300,14 @@ target_link_libraries(MidiGuideNavigationTests PRIVATE pitchnet_ui)
 target_compile_features(MidiGuideNavigationTests PRIVATE cxx_std_17)
 add_test(NAME MidiGuideNavigationTests COMMAND MidiGuideNavigationTests)
 
+# V3 (guia MIDI): carga y refresco deterministas. Sidecar frente a scan
+# autoritativo, lastLiveIds, setDocumentKey tardio + midiGuidesChanged y la
+# cadena de vistas sin sync. Enlaza pitchnet_ui por MainComponent.
+add_executable(MidiGuideStoreVisibilityTests MidiGuideStoreVisibilityTests.cpp)
+target_link_libraries(MidiGuideStoreVisibilityTests PRIVATE pitchnet_ui)
+target_compile_features(MidiGuideStoreVisibilityTests PRIVATE cxx_std_17)
+add_test(NAME MidiGuideStoreVisibilityTests COMMAND MidiGuideStoreVisibilityTests)
+
 # N12 (D-354): la tira de overview es estado de vista; cambiar de item no la
 # toca, el toggle del usuario si, y el campo del JSON sigue por compatibilidad.
 add_executable(OverviewIndependenceTests OverviewIndependenceTests.cpp)

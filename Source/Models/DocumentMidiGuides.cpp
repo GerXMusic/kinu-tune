@@ -68,6 +68,7 @@ bool DocumentMidiGuideStore::bindTrack(const juce::String& newTrackKey)
     entries.clear();
     importedProjects.clear();
     observedProjects.clear();
+    lastLiveIds.clear(); // V3/D-374: another track, another scan history
     guidesFromDisk = false;
     diskAuthoritative = false;
     markDirty();
@@ -302,11 +303,20 @@ bool DocumentMidiGuideStore::syncLive(
 
     if (authoritative)
     {
+        // V3/D-374: "no longer in the folder" only applies to ids the last
+        // authoritative scan CONTRIBUTED. A guide the sidecar loaded (origin
+        // "document", kind "reascript") is the same guide, but no scan has
+        // vouched for it yet: an empty scan before the ReaScript runs must not
+        // retire it (that was the panel-open data loss). Once a scan brings it,
+        // its disappearance removes it (D-363).
         for (int i = size() - 1; i >= 0; --i)
         {
             const auto& entry = entries[static_cast<std::size_t>(i)];
             if (!isLiveManagedEntry(entry.guide, entry.origin))
                 continue;
+            if (std::find(lastLiveIds.begin(), lastLiveIds.end(),
+                          entry.guide->id) == lastLiveIds.end())
+                continue; // not contributed by a scan: not this scan's to remove
             if (std::find(seen.begin(), seen.end(), entry.guide->id) !=
                 seen.end())
                 continue;
@@ -315,6 +325,7 @@ bool DocumentMidiGuideStore::syncLive(
             markDirty();
             changed = true;
         }
+        lastLiveIds = seen;
     }
 
     if (changed)
@@ -375,6 +386,7 @@ void DocumentMidiGuideStore::clear()
     entries.clear();
     observedProjects.clear();
     importedProjects.clear();
+    lastLiveIds.clear(); // V3/D-374: the document is gone; no scan vouches
     markDirty();
     publish();
 }
@@ -429,6 +441,7 @@ const DocumentMidiGuidesPtr& DocumentMidiGuideStore::publish()
         next->guides.push_back(std::move(ref));
     }
     published = std::move(next);
+    ++publishedGeneration; // V3/D-374: a rebuild is a new store generation
     dirty = false;
     return published;
 }

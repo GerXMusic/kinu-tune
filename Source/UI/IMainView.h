@@ -151,6 +151,13 @@ public:
    */
   virtual void setMidiGuideStore(DocumentMidiGuideStore * /*store*/) {}
   /**
+   * V3 (D-374): the document's guide store changed outside the editor (a late
+   * document fingerprint, a sidecar adopted after the panel opened). The host
+   * side notifies; the view only republishes what the store holds and must not
+   * write back to it, so this call cannot loop.
+   */
+  virtual void midiGuidesChanged() {}
+  /**
    * Called with a region key when the user clicks inside an inactive region on
    * the canvas (empty space or one of its notes). Unlike a host selection
    * change, the handler must not scroll or refit the view: the user clicked on what is

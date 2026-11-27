@@ -816,6 +816,9 @@ private:
   DocumentMidiGuidesPtr documentMidiGuides;
   // IMainView: attach/detach the document's store (R5d/D-358).
   void setMidiGuideStore(DocumentMidiGuideStore *store) override;
+  // IMainView: the document's store changed outside the view (V3/D-374). Only
+  // republishes; never writes to the store.
+  void midiGuidesChanged() override;
   // One-time migration of the per-Project "midiGuides" cache and the write-back
   // of the compatibility copy after a change.
   void importLegacyMidiGuides();

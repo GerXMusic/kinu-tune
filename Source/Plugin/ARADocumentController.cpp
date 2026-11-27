@@ -2143,6 +2143,13 @@ void PitchNetDocumentController::refreshMidiGuideDocumentKey() {
     return;
   midiGuideDocumentKey = key;
   midiGuideStore.setDocumentKey(key);
+  // V3/D-374: a document fingerprint that arrives after the editor opened used
+  // to load the sidecar into the store and leave the canvas showing the empty
+  // publication from before the panel existed (measured as "opening the panel
+  // loses the guide"): the view is told to republish. The view never writes to
+  // the store, so this cannot feed back into setDocumentKey.
+  if (mainComponent != nullptr)
+    mainComponent->midiGuidesChanged();
 }
 
 void PitchNetDocumentController::didAddAudioSourceToDocument(

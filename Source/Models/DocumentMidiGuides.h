@@ -6,6 +6,7 @@
 #include "MidiGuide.h"
 #include "Project.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -124,9 +125,13 @@ public:
 
     // Live-file merge (syncLiveMidiGuides, R10/D-363): same id replaces when
     // the CONTENT HASH differs (never the note count), a new id is appended.
-    // When `authoritative` is true the scan saw the whole live folder, so a
-    // live guide whose file disappeared is removed; false (folder missing)
-    // keeps what the sidecar loaded. Never touches the UI.
+    // V3/D-374: only the ids the LAST AUTHORITATIVE scan contributed
+    // (`lastLiveIds`) can be removed, and only when the new authoritative scan
+    // no longer brings them. A scan with no folder (authoritative == false)
+    // keeps everything and updates no list; an authoritative scan that has
+    // never contributed an id (first scan, or the folder was missing until
+    // now) removes nothing, so the guide a sidecar loaded survives the panel
+    // opening before the ReaScript runs. Never touches the UI.
     bool syncLive(const std::vector<GuideSource>& liveGuides,
                   bool authoritative = false);
 
@@ -162,9 +167,19 @@ public:
     bool flushPersistence();
 
     // Rejected or unwritable sidecar: the UI consumes this once and shows it.
-    // Empty when the last load/save was fine.
+    // Empty when the last load/save was fine. peekPersistenceWarning() reads it
+    // without consuming (guide_debug, V3/D-374).
     juce::String takePersistenceWarning();
+    const juce::String& peekPersistenceWarning() const {
+        return persistenceWarning;
+    }
     bool isFromDisk() const { return guidesFromDisk; }
+    // The sidecar for (documentKey, trackKey) answered, so it is the truth
+    // (an empty list included). Read-only view for guide_debug (V3/D-374).
+    bool isDiskAuthoritative() const { return diskAuthoritative; }
+    const std::vector<std::string>& getLastLiveIds() const {
+        return lastLiveIds;
+    }
 
     // Compatibility cache: writes the document's guides into one live Project
     // so the existing archive/JSON keeps carrying them (R7 owns real
@@ -174,8 +189,12 @@ public:
 
     // Rebuilds the immutable snapshot when something changed; otherwise returns
     // the same publication. The reference is stable until the next mutation.
+    // V3/D-374: every rebuild bumps generation(), so a view (or guide_debug)
+    // can tell "the store has nothing" from "the view has not refreshed yet"
+    // without comparing pointers or note counts.
     const DocumentMidiGuidesPtr& publish();
     const DocumentMidiGuidesPtr& snapshot() const { return published; }
+    std::uint64_t generation() const { return publishedGeneration; }
 
     int size() const { return static_cast<int>(entries.size()); }
     bool empty() const { return entries.empty(); }
@@ -210,7 +229,12 @@ private:
     std::vector<const Project*> importedProjects;
     juce::String trackKey;
     DocumentMidiGuidesPtr published;
+    std::uint64_t publishedGeneration = 0;
     bool dirty = true;
+    // V3/D-374: ids contributed by the last AUTHORITATIVE live scan. Only these
+    // may be removed when they stop appearing; a scan that never ran (or ran
+    // without its folder) cannot retire a guide the sidecar loaded.
+    std::vector<std::string> lastLiveIds;
 
     MidiGuidePersistence* persistence = nullptr;
     juce::String documentKey;

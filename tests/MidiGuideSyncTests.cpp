@@ -137,8 +137,12 @@ void testDeletedFileRemovesOnlyLiveGuides()
     store.upsert(imported, "file");
 
     const auto live = makeGuide(2, 20.0, 62.0f);
-    CHECK(store.syncLive({live}));
+    // V3/D-374: only a guide an AUTHORITATIVE scan contributed may be removed
+    // later. Before V3 a plain syncLive() was enough, which is how opening the
+    // panel could retire a guide the sidecar had just loaded.
+    CHECK(store.syncLive({live}, true));
     CHECK(store.size() == 2);
+    CHECK(store.getLastLiveIds().size() == 1);
 
     // A scan with the folder present but no file for the live id is
     // authoritative: the guide is gone (D-363).
@@ -152,6 +156,22 @@ void testDeletedFileRemovesOnlyLiveGuides()
     CHECK(store.size() == 2);
     CHECK(!store.syncLive({}, false));
     CHECK(store.size() == 2);
+
+    // V3/D-374: the guide above entered through a NON-authoritative sync, so
+    // no scan has vouched for it; an authoritative scan that does not see it
+    // cannot retire it either (the sidecar-loaded case the panel broke).
+    CHECK(store.getLastLiveIds().empty());
+    CHECK(!store.syncLive({}, true));
+    CHECK(store.size() == 2);
+    CHECK(store.findById(live.id) != nullptr);
+
+    // Once the scan brings it, its disappearance removes it (the content did
+    // not change, so the call reports no change; lastLiveIds starts vouching).
+    store.syncLive({live}, true);
+    CHECK(store.getLastLiveIds().size() == 1);
+    CHECK(store.syncLive({}, true));
+    CHECK(store.findById(live.id) == nullptr);
+    CHECK(store.size() == 1);
 }
 
 // (c) El id no lleva posicion y el id posicional se reconoce e ignora.

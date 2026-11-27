@@ -2428,6 +2428,27 @@ void MainComponent::pollMcpControl()
         // PianoRollComponent::getVisibleProjectRange).
         writeViewReport(*response);
 
+        // V3/D-374: "not in view" versus "not loaded". store_generation and
+        // loaded_from_disk describe the document's store even when the canvas
+        // has not refreshed yet; guide_origin says where the selected guide
+        // came from (document sidecar / live scan / file import / legacy).
+        response->setProperty(
+            "store_generation",
+            static_cast<juce::int64>(midiGuideStore->generation()));
+        response->setProperty("document_key", midiGuideStore->getDocumentKey());
+        response->setProperty("track_key", midiGuideStore->getTrackKey());
+        response->setProperty("loaded_from_disk", midiGuideStore->isFromDisk());
+        response->setProperty("disk_authoritative",
+                              midiGuideStore->isDiskAuthoritative());
+        response->setProperty(
+            "guide_origin",
+            snapshot != nullptr && hasGuide
+                ? snapshot->guides[static_cast<size_t>(selectedMidiGuide)].origin
+                : juce::String());
+        // Read-only: the UI consumes the warning once; a probe must not eat it.
+        response->setProperty("sidecar_warning",
+                              midiGuideStore->peekPersistenceWarning());
+
         if (hasGuide)
         {
           const HostTempoMap fallback = HostTempoMap::constant(
@@ -7271,6 +7292,15 @@ void MainComponent::setMidiGuideStore(DocumentMidiGuideStore *store)
   if (next != midiGuideStore)
     selectedMidiGuide = -1; // the list is the document's, not the old view's
   midiGuideStore = next;
+  refreshMidiGuideUi();
+}
+
+void MainComponent::midiGuidesChanged()
+{
+  // V3/D-374: the store is the truth and the view only reads it. Refreshing on
+  // demand separates "not in view" (time/height) from "not loaded": opening the
+  // panel no longer owns the only refresh, and a late setDocumentKey reaches
+  // the canvas without a new live sync.
   refreshMidiGuideUi();
 }
 
