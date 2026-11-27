@@ -352,9 +352,14 @@ void EnginePanel::setRenderStatusText(const juce::String& text)
     repaint();
 }
 
-void EnginePanel::setBlockNotice(const juce::String& text)
+void EnginePanel::setBlockNotice(const juce::String& text,
+                                 const juce::String& tooltip)
 {
     pendingBlockNotice = text;
+    // V6: the long form (paths, per-file OK/MISSING) never opens a window; it
+    // rides the label's tooltip. Setting the notice always replaces it, so an
+    // engine message cannot leave the GAME detail behind.
+    blockNotice.setTooltip(tooltip);
     applyNotice();
 }
 

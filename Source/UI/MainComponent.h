@@ -561,6 +561,10 @@ private:
   std::unique_ptr<juce::ApplicationCommandManager> commandManager;
   bool toolGroupEnabled = true;
   bool previewRegionActive = false;
+  // V6: el aviso de modelos GAME vive en el rail. Guardamos su texto para no
+  // borrar un aviso ajeno (p. ej. uno de motor) cuando la comprobacion vuelve
+  // a decir "ya hay modelos".
+  juce::String gameModelsNoticeText;
   double previewRegionEndTime = 0.0;
   double previewRegionReturnTime = 0.0;
   double previewRegionStartTime = 0.0;

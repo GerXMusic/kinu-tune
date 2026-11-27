@@ -1,4 +1,5 @@
 #include "EditorController.h"
+#include "GameModelsNotice.h"
 #include "../Utils/NoteAmplitude.h"
 #include "../Utils/AudioResampler.h"
 #include "../Utils/SHA256Utils.h"
@@ -1214,6 +1215,31 @@ void EditorController::segmentIntoNotesAsync(
     }); });
 }
 
+bool EditorController::takeGameModelsNotice(GameModelsNotice &out)
+{
+  const juce::ScopedLock lock(gameNoticeLock);
+  if (!pendingGameNotice.update)
+    return false;
+  out = pendingGameNotice;
+  pendingGameNotice.update = false;
+  return true;
+}
+
+void EditorController::publishGameModelsNotice(bool missing,
+                                               const juce::String &summary,
+                                               const juce::String &detail)
+{
+  {
+    const juce::ScopedLock lock(gameNoticeLock);
+    pendingGameNotice.update = true;
+    pendingGameNotice.missing = missing;
+    pendingGameNotice.summary = summary;
+    pendingGameNotice.detail = detail;
+  }
+  if (missing)
+    LOG("GAME models unavailable: " + detail.replace("\n", " | "));
+}
+
 void EditorController::segmentIntoNotes(Project &targetProject,
                                         std::function<void()> onStreamingUpdate,
                                         std::function<void(double)> onProgress)
@@ -1229,34 +1255,24 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
   if (!gameDetector || !gameDetector->isLoaded())
   {
-    auto searchedPath = gameModelDir.getFullPathName();
-    auto bundlePath = PlatformPaths::getModelsDirectory().getChildFile("GAME").getFullPathName();
-
-    juce::String detail = TR("error.game_models_missing") + "\n\n"
-                                                            "Searched path: " +
-                          searchedPath + "\n"
-                                         "Bundle path: " +
-                          bundlePath + "\n"
-                                       "gameDetector: " +
-                          juce::String(gameDetector ? "created" : "null") + "\n"
-                                                                            "isLoaded: " +
-                          juce::String(gameDetector ? (gameDetector->isLoaded() ? "true" : "false") : "N/A") + "\n"
-                                                                                                               "isDirectory: " +
-                          juce::String(gameModelDir.isDirectory() ? "true" : "false") + "\n\n"
-                                                                                        "Required files: encoder.onnx, segmenter.onnx, estimator.onnx, bd2dur.onnx, config.json\n\n";
-
-    // List which files exist / missing
-    for (auto *name : {"encoder.onnx", "segmenter.onnx", "estimator.onnx", "bd2dur.onnx", "config.json"})
-    {
-      auto f = gameModelDir.getChildFile(name);
-      detail += juce::String(name) + ": " + (f.existsAsFile() ? "OK" : "MISSING") + "\n";
-    }
-
-    juce::MessageManager::callAsync([detail]()
-                                    { juce::AlertWindow::showMessageBoxAsync(
-                                          juce::AlertWindow::WarningIcon, TR("error.game_error"), detail); });
+    // V6: this used to open an AlertWindow on top of the piano roll. The
+    // missing GAME models are editor state now: the rail paints the headline
+    // and the full detail (paths and per-file OK/MISSING) goes to the log and
+    // the notice tooltip. The editor stays usable.
+    const auto bundlePath = PlatformPaths::getModelsDirectory().getChildFile("GAME");
+    const auto files = gameModels::checkRequiredFiles(gameModelDir);
+    const auto headline =
+        files.allPresent ? juce::String(TR("error.model_load_failed"))
+                         : juce::String(TR("error.game_models_missing"));
+    publishGameModelsNotice(
+        true, headline,
+        gameModels::describeUnavailable(
+            gameModelDir, bundlePath, gameDetector != nullptr,
+            gameDetector != nullptr && gameDetector->isLoaded(), headline));
     return;
   }
+
+  publishGameModelsNotice(false, {}, {});
 
   if (gameDetector && gameDetector->isLoaded() &&
       audioData.waveform.getNumSamples() > 0)

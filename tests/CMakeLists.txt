@@ -382,6 +382,14 @@ target_link_libraries(EnginePanelTests PRIVATE pitchnet_ui)
 target_compile_features(EnginePanelTests PRIVATE cxx_std_17)
 add_test(NAME EnginePanelTests COMMAND EnginePanelTests)
 
+# V6: la falta de modelos GAME es estado del editor (rail + tooltip), no un
+# AlertWindow. El test ejecuta segmentIntoNotes sin modelos cargados, drena el
+# message loop y exige cero componentes modales.
+add_executable(GameModelNoticeTests GameModelNoticeTests.cpp)
+target_link_libraries(GameModelNoticeTests PRIVATE pitchnet_core)
+target_compile_features(GameModelNoticeTests PRIVATE cxx_std_17)
+add_test(NAME GameModelNoticeTests COMMAND GameModelNoticeTests)
+
 # D-309: colores de motor por bloque visual, bloque activo, cache, barrido de
 # borde y presupuesto de pintado.
 add_executable(EngineBlockViewTests EngineBlockViewTests.cpp)

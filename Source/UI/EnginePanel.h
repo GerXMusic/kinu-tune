@@ -35,8 +35,10 @@ public:
     void setRenderStatusText(const juce::String& text);
 
     // D-267 (aviso de motor, sin dialogo modal): panel de texto del rail con
-    // el numero y la lista de D-258. Vacio = no se pinta.
-    void setBlockNotice(const juce::String& text);
+    // el numero y la lista de D-258. Vacio = no se pinta. V6: el tooltip lleva
+    // el detalle largo (p. ej. los modelos GAME que faltan); vacio = sin tooltip.
+    void setBlockNotice(const juce::String& text,
+                        const juce::String& tooltip = {});
     juce::String getBlockNoticeText() const { return blockNotice.getText(); }
     bool isBlockNoticeVisible() const { return blockNotice.isVisible(); }
 

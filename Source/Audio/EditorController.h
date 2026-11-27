@@ -110,7 +110,22 @@ public:
       const std::function<void(Project &)> &onProjectReady,
       const std::function<void()> &onNotesChanged);
 
+  // V6: un problema con los modelos GAME viaja como estado del editor, nunca
+  // como dialogo. `segmentIntoNotes` lo publica (tambien desde su hilo) y el
+  // timer del editor lo recoge para pintarlo en el rail. El detalle va al log
+  // y al tooltip; nada abre una ventana.
+  struct GameModelsNotice
+  {
+    bool update = false;
+    bool missing = false;
+    juce::String summary;
+    juce::String detail;
+  };
+  bool takeGameModelsNotice(GameModelsNotice &out);
+
 private:
+  void publishGameModelsNotice(bool missing, const juce::String &summary,
+                               const juce::String &detail);
   // D-292: one pass of a chain over an immutable plan. `plan` is built once at
   // the start of the chain and never rebuilt while it runs; `blockIndex` is the
   // controller's local walk (nothing is stored in the Project).
@@ -135,6 +150,11 @@ private:
   juce::File centTablePath;
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
+  // V6: last GAME availability report for the editor timer (see
+  // takeGameModelsNotice). Guarded by its own lock because segmentation can run
+  // on a background thread.
+  juce::CriticalSection gameNoticeLock;
+  GameModelsNotice pendingGameNotice;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   // Own setting, read only while sharedSynthesisEngine is null.
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();

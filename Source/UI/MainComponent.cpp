@@ -3775,6 +3775,27 @@ void MainComponent::timerCallback()
 
   pollMcpControl();
   serviceEditRender();
+  // V6: la falta de modelos GAME se pinta en el rail, nunca en un dialogo. El
+  // estado lo publica EditorController::segmentIntoNotes (posiblemente desde
+  // un hilo de analisis); aqui solo se recoge y se pinta.
+  if (editorController != nullptr)
+  {
+    EditorController::GameModelsNotice notice;
+    if (editorController->takeGameModelsNotice(notice))
+    {
+      if (notice.missing)
+      {
+        enginePanel.setBlockNotice(notice.summary, notice.detail);
+        gameModelsNoticeText = notice.summary;
+      }
+      else if (gameModelsNoticeText.isNotEmpty() &&
+               enginePanel.getBlockNoticeText() == gameModelsNoticeText)
+      {
+        enginePanel.setBlockNotice({});
+        gameModelsNoticeText.clear();
+      }
+    }
+  }
   // D-309: the border sweep is an animation, not a state change. The render
   // chain only repaints at its edges, so the left-to-right lighting needs the
   // 60 Hz tick while the sweep is active.
