@@ -3,6 +3,8 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #include "MidiGuideGhosts.h"
 
+#include "../JuceHeader.h"
+
 double midiGuideGhostProjectSeconds(double hostSeconds,
                                     double timelineDisplayOffsetSeconds)
 {
@@ -15,17 +17,33 @@ double midiGuideGhostHostSeconds(double projectSeconds,
     return projectSeconds + timelineDisplayOffsetSeconds;
 }
 
-void MidiGuideGhostLayer::bindProject(const Project *project)
+std::vector<MidiGuideGhost>
+midiGuideGhostsFor(const GuideSource& guide, const HostTempoMap& tempoMap)
 {
-    // Same document (an edit, a new tempo map, a region offset change): the
-    // list still belongs to it, and the painter re-maps each frame.
-    if (project == boundProject)
-        return;
+    std::vector<MidiGuideGhost> ghosts;
+    if (guide.notes.empty())
+        return ghosts;
 
-    // A different document (or none): its guides are not these, so drawing the
-    // old list over the new item would be wrong even before the offset.
-    boundProject = project;
-    ghosts.clear();
+    ghosts.reserve(guide.notes.size());
+    for (const auto& note : guide.notes)
+    {
+        MidiGuideGhost ghost;
+        // R2/D-313: host seconds, not project seconds. The canvas applies the
+        // display offset while painting, so the list survives an item change.
+        ghost.startHostSeconds = tempoMap.timeForQuarter(note.startQuarter);
+        ghost.endHostSeconds = tempoMap.timeForQuarter(note.endQuarter);
+        ghost.pitch = note.pitch;
+        ghost.label =
+            juce::MidiMessage::getMidiNoteName(
+                juce::jlimit(0, 127,
+                             static_cast<int>(std::lround(note.pitch))),
+                true, true, 3)
+                .toStdString();
+        if (ghost.endHostSeconds <= ghost.startHostSeconds)
+            continue;
+        ghosts.push_back(ghost);
+    }
+    return ghosts;
 }
 
 void MidiGuideGhostLayer::set(std::vector<MidiGuideGhost> newGhosts)

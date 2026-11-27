@@ -47,6 +47,9 @@ set(PITCHNET_TEST_SOURCES
     MidiGuideRegionScopeTests.cpp
     # R2: los fantasmas viven en tiempo host y se dibujan con el offset actual.
     MidiGuideGhostTests.cpp
+    # R5b (D-356): la guia es del documento; el store publicado apunta a las
+    # guias reales y sobrevive al cambio de item.
+    MidiGuideStoreTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp
@@ -371,7 +374,7 @@ if(WIN32 AND ONNXRUNTIME_DLLS)
 endif()
 
 # Calls that must go through one entry point (see SourceGuard.cmake).
-foreach(guard_rule IN ITEMS pitch-writes note-selection region-copies audition-output render-controllers)
+foreach(guard_rule IN ITEMS pitch-writes note-selection region-copies midi-guides audition-output render-controllers)
     add_test(NAME SourceGuard_${guard_rule}
              COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/Source
                      -DRULE=${guard_rule}

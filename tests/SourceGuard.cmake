@@ -121,8 +121,43 @@ elseif("${RULE}" STREQUAL "region-copies")
             "${paint_violations}"
             "Every item of the track is painted with trackRegionNoteStyle(); the paint path must not read region.active (see Source/UI/PianoRoll/RegionNoteStyle.h and D-354).")
     endif()
+    # R5b (D-356): the guide ghosts belong to the document as well. The layer
+    # may not know about Project at all: bindProject()/the "is this the active
+    # item?" question is exactly what dropped 111 ghosts to 0 when the item
+    # changed. host seconds + the offset published by the mapper is enough.
+    set(ghost_file "${SOURCE_DIR}/Models/MidiGuideGhosts.h")
+    if(NOT EXISTS "${ghost_file}")
+        message(FATAL_ERROR "SourceGuard (region-copies): ${ghost_file} not found")
+    endif()
+    file(STRINGS "${ghost_file}" ghost_lines)
+    set(ghost_violations "")
+    foreach(line IN LISTS ghost_lines)
+        string(REGEX REPLACE "//.*$" "" code "${line}")
+        if(code MATCHES "bindProject" OR code MATCHES "(^|[^A-Za-z0-9_*>])Project([^A-Za-z0-9_]|$)")
+            string(STRIP "${line}" shown)
+            string(APPEND ghost_violations "  Models/MidiGuideGhosts.h: ${shown}\n")
+        endif()
+    endforeach()
+    if(ghost_violations)
+        message(FATAL_ERROR
+            "SourceGuard (region-copies) found an item-bound guide ghost layer:\n"
+            "${ghost_violations}"
+            "The ghosts are the document's: store host seconds and let the painter apply the offset (see Source/Models/MidiGuideGhosts.h and D-356).")
+    endif()
     message(STATUS "SourceGuard (region-copies): passed")
     return()
+elseif("${RULE}" STREQUAL "midi-guides")
+    # R5b (D-356): the guide is the DOCUMENT's. Project::getMidiGuides is only
+    # the compatibility cache (old JSON/host archive) and the one-time migration
+    # source; reading or writing it anywhere else is how the guide became a
+    # per-item thing again. The store and the JSON serializer are the only
+    # files allowed to touch it.
+    set(scan_dir "${SOURCE_DIR}")
+    set(allowed "${SOURCE_DIR}/Models/Project.h"
+                "${SOURCE_DIR}/Models/DocumentMidiGuides.cpp"
+                "${SOURCE_DIR}/Models/ProjectSerializer.cpp")
+    set(pattern "(get|set)MidiGuides[ \t]*\\(")
+    set(hint "The guide belongs to the document. Use DocumentMidiGuideStore (see Source/Models/DocumentMidiGuides.h); the Project copy is only the compatibility cache.")
 elseif("${RULE}" STREQUAL "audition-output")
     set(scan_dir "${SOURCE_DIR}")
     set(allowed "${SOURCE_DIR}/UI/Main/AuditionOutput.h"

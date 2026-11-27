@@ -3652,10 +3652,10 @@ void PianoRollComponent::setProject(Project *proj)
   liveTimelineEndSeconds = 0.0;
   liveRecordingSampleRate = 0.0;
   project = proj;
-  // R2/D-313: the ghost list belongs to the previous document. A different
-  // project (or none) drops it; the same one keeps it because the painter
-  // re-maps host -> project on every frame.
-  midiGuideGhosts.bindProject(proj);
+  // R5b/D-356: the ghost list belongs to the DOCUMENT, not to the item. A new
+  // active project must not clear it (that was the R5 bug: 111 -> 0 ghosts); the
+  // painter re-maps host -> project with the offset it publishes now, the same
+  // rule frameForRegion applies to the notes.
   hoveredNote = nullptr;
   // D-309: the visual block map belongs to the previous document.
   engineBlockCache = EngineBlockCache{};
@@ -3931,6 +3931,9 @@ void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
     // R2/D-313: host -> project here, with the offset the mapper publishes
     // now. The ghost keeps its host instant whatever item is active, so
     // selecting another item cannot leave the list where the old one put it.
+    // R5b/D-356: this is the same mapping frameForRegion applies to the notes
+    // (project = host - projectHostOffsetSeconds), and it does not ask which
+    // item the ghost belongs to: a guide covers the whole track (SCOPE=A).
     const double startProject =
         coordMapper->timelineToProject(ghost.startHostSeconds);
     const double endProject =

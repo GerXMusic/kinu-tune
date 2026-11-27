@@ -1,0 +1,153 @@
+// TuneX - Copyright (C) 2026 Keinoaza
+// Part of TuneX, a modified version of PitchNet. Licensed under the GNU
+// Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
+#pragma once
+
+#include "MidiGuide.h"
+#include "Project.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+/**
+ * Document-level MIDI guides (R5b of the guide-integration fix, D-356).
+ *
+ * A guide covers the whole track (SCOPE=A), so it cannot live in a Project:
+ * a Project is one modification/region, and selecting another item used to
+ * leave the plug-in with no guide at all (measured in R5: item 4 -> 111
+ * ghosts, items 1 and 2 -> 0). This is the same move the notes made in N1
+ * (D-340): one document-level store, one immutable published snapshot.
+ *
+ * The snapshot POINTS at the canonical GuideSource objects the store owns. It
+ * copies no note and no vector: two publications with no change return the
+ * SAME shared_ptr, and every reference in it is the very object the store
+ * holds (identity, not equality). The store is the owner and the only writer;
+ * nothing here knows about the active item.
+ *
+ * The per-modification copy (Project::getMidiGuides, JSON "midiGuides") stays
+ * only as a compatibility cache: it is what older builds and the host archive
+ * read, and it is the one-time migration source. It is written from here and
+ * never read by the UI (SourceGuard_midi-guides enforces it). Persisting the
+ * guide as state of the document is R7; identity/sync is R10.
+ *
+ * Axes: the guide is in quarter notes (MidiGuide.h); it becomes host seconds
+ * through HostTempoMap, and the canvas turns host into project seconds with the
+ * offset it publishes (the same rule as frameForRegion, D-350).
+ */
+struct DocumentMidiGuideRef
+{
+    // Canonical guide the store owns; never a copy. Shared so a snapshot stays
+    // valid even when a later publication replaces the store's entry.
+    std::shared_ptr<const GuideSource> guide;
+    juce::String id;
+    juce::String label;
+    int notes = 0;
+    juce::String origin; // "live" | "file" | "legacy"
+};
+
+struct DocumentMidiGuides
+{
+    juce::String trackKey; // the document this snapshot belongs to
+    std::vector<DocumentMidiGuideRef> guides;
+    int totalNotes = 0;
+    int guideCount() const { return static_cast<int>(guides.size()); }
+    bool empty() const { return guides.empty(); }
+    int indexOf(const std::string& guideId) const;
+    const GuideSource* guideAt(int index) const;
+};
+
+using DocumentMidiGuidesPtr = std::shared_ptr<const DocumentMidiGuides>;
+
+/**
+ * The only owner and writer of the document's guides.
+ *
+ * Lifecycle:
+ *  - observeProjects() tells the store which Projects the document has (the
+ *    plug-in publishes them with the note index). A Project that dies is
+ *    released with releaseProject(); when the LAST observed Project dies the
+ *    document is gone and the store empties, so nothing refers to a dead
+ *    Project. Item changes release nothing, which is exactly the R5 fix.
+ *  - bindTrack() scopes the store to one ARA track: a different non-empty
+ *    track key starts a new document with no guides.
+ *  - importFromProject() adopts a Project's legacy "midiGuides" once.
+ */
+class DocumentMidiGuideStore
+{
+public:
+    DocumentMidiGuideStore() = default;
+    ~DocumentMidiGuideStore() = default;
+
+    DocumentMidiGuideStore(const DocumentMidiGuideStore&) = delete;
+    DocumentMidiGuideStore& operator=(const DocumentMidiGuideStore&) = delete;
+
+    // True when the track key changed and the previous document was dropped.
+    // An empty key means "no document published" and keeps what is there (clip
+    // mode must not wipe the track's guides).
+    bool bindTrack(const juce::String& trackKey);
+
+    // The Projects of the current document, deduplicated. Empty is ignored: a
+    // publication with no regions is not "every Project died".
+    void observeProjects(std::vector<const Project*> projects);
+
+    // Drops the Project from the document. When it was the last one observed,
+    // the document is gone: the guides are released and the snapshot rebuilt
+    // empty. Returns true when the store was emptied.
+    bool releaseProject(const Project* project);
+
+    // One-time migration of the per-modification "midiGuides" copy. A guide
+    // already known by id is not duplicated (the store is the truth); the new
+    // ones keep their own id. A Project is imported at most once, so removing a
+    // guide does not resurrect it from the stale cache. Returns true if it
+    // adopted at least one guide.
+    bool importFromProject(const Project& project);
+
+    // Live-file merge (syncLiveMidiGuides): same id replaces when the notes
+    // differ, a new id is appended. Never touches the UI.
+    bool syncLive(const std::vector<GuideSource>& liveGuides);
+
+    // A file import: replaces the guide with that id or appends it. Returns its
+    // index, -1 if the guide is empty and had nothing to add.
+    int upsert(GuideSource guide, const juce::String& origin = "file");
+
+    bool removeAt(int index);
+    void clear();
+
+    // Compatibility cache: writes the document's guides into one live Project
+    // so the existing archive/JSON keeps carrying them (R7 owns real
+    // persistence). Only called from here, never the read path.
+    bool writeCompatCache(Project& project) const;
+    bool writeCompatCache(std::vector<Project*>& projects) const;
+
+    // Rebuilds the immutable snapshot when something changed; otherwise returns
+    // the same publication. The reference is stable until the next mutation.
+    const DocumentMidiGuidesPtr& publish();
+    const DocumentMidiGuidesPtr& snapshot() const { return published; }
+
+    int size() const { return static_cast<int>(entries.size()); }
+    bool empty() const { return entries.empty(); }
+    const GuideSource* at(int index) const;
+    const GuideSource* findById(const std::string& guideId) const;
+    int countObservedProjects() const {
+        return static_cast<int>(observedProjects.size());
+    }
+    const juce::String& getTrackKey() const { return trackKey; }
+
+private:
+    struct Entry
+    {
+        std::shared_ptr<const GuideSource> guide;
+        juce::String origin;
+    };
+
+    // Appends or replaces by id; returns the index and whether it changed.
+    std::pair<int, bool> addOrReplace(GuideSource guide, const juce::String& origin);
+    void markDirty() { dirty = true; }
+
+    std::vector<Entry> entries;
+    std::vector<const Project*> observedProjects;
+    std::vector<const Project*> importedProjects;
+    juce::String trackKey;
+    DocumentMidiGuidesPtr published;
+    bool dirty = true;
+};

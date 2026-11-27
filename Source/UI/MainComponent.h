@@ -8,6 +8,7 @@
 #include "IMainView.h"
 #include "../Audio/IO/AudioFileManager.h"
 #include "../JuceHeader.h"
+#include "../Models/DocumentMidiGuides.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
 #include "CustomMenuBarLookAndFeel.h"
@@ -294,14 +295,18 @@ public:
       std::shared_ptr<const HostTempoMap> tempoMap) override;
 
   // D-311: MIDI guides. The drawer drives these; MainComponent owns the state
-  // (which guide is selected, whether the ghosts show) and applies through the
-  // normal note-edit path (NotePitch + undo + render).
+  // (which guide is selected, whether the ghosts show). R5b/D-356: the guides
+  // themselves are the DOCUMENT's (midiGuideStore), not the active Project's,
+  // so changing item neither loses them nor shows another take's list. Apply
+  // still edits the active item through the normal note-edit path (NotePitch +
+  // undo + render); applying to every item is R8/R9.
   void importMidiGuideFromFile();
   void applyMidiGuide();
   void removeSelectedMidiGuide();
   void setMidiGuideSelected(int index);
   void setMidiGuideGhostsVisible(bool visible);
-  // Rebuilds the drawer list and the ghost layer from the project + tempo map.
+  // Rebuilds the drawer list, the ghost layer and the published snapshot from
+  // the document store + tempo map. Never reads the active Project's copy.
   void refreshMidiGuideUi();
   // Materializes any guide_*.json the REAPER script left in the config folder
   // (same source_id replaces its own guide). D-314: files, never sockets.
@@ -796,10 +801,14 @@ private:
   std::shared_ptr<DocumentNoteSelection> documentNoteSelection =
       std::make_shared<DocumentNoteSelection>();
 
-  // D-311: MIDI guides (song level, quarters in the project; ghosts in project
-  // seconds for the canvas).
-  std::vector<PianoRollComponent::MidiGuideGhost>
-  buildMidiGuideGhosts(const GuideSource &guide) const;
+  // D-311: MIDI guides. R5b/D-356: the store and the snapshot are the document
+  // truth; the ghosts are host seconds and the painter re-maps them.
+  DocumentMidiGuideStore midiGuideStore;
+  DocumentMidiGuidesPtr documentMidiGuides;
+  // One-time migration of the per-Project "midiGuides" cache and the write-back
+  // of the compatibility copy after a change.
+  void importLegacyMidiGuides();
+  void writeMidiGuideCompatCache();
   int selectedMidiGuide = -1;
   bool showMidiGuideGhosts = true;
 

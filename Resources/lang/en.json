@@ -377,7 +377,7 @@
   "midi.apply": "Apply",
   "midi.ghosts": "Show ghosts",
   "midi.empty": "No MIDI guides",
-  "midi.outside_item": "0 guide notes inside the active item; guide %1–%2 s, item %3–%4 s",
+  "midi.outside_item": "0 guide notes inside the active item; guide %1–%2 s, item (host) %3–%4 s",
   "midi.hint": "Import a .mid or receive a guide from the ReaScript. Apply moves every matched note to its guide note and keeps vibrato and edits.",
   "editor.scale": "Scale",
   "editor.grid": "Grid",

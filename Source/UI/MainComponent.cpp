@@ -1689,9 +1689,10 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
   auto *project = getProject();
   applyProjectSynthesisEngine();
   pianoRoll.setProject(project);
-  // R2/D-313: the guide list and its ghosts are per project. Without this the
-  // new item drew the previous item's guide for as long as no other refresh
-  // ran (the ghost list itself is dropped by setProject).
+  // R5b/D-356: the guide list is the DOCUMENT's now, so switching item keeps
+  // it. What this refresh does is adopt the new Project's legacy cache (once)
+  // and re-map the ghosts with the offset the new item publishes.
+  importLegacyMidiGuides();
   refreshMidiGuideUi();
   pianoRollView.setProject(project);
   parameterPanel.setProject(project);
@@ -2260,27 +2261,37 @@ void MainComponent::pollMcpControl()
     {
       // D-311/D-314: read-only view of the guide state, so the guide path can
       // be checked from the outside (no keyboard/mouse scripting, D-126).
+      // R5b/D-356: the document store is the source, so the report does not
+      // change with the active item (the R5 bug reported guides=0 on item 2).
+      const auto &snapshot = midiGuideStore.publish();
       juce::Array<juce::var> guideArray;
-      const auto &guides = project->getMidiGuides();
-      for (int i = 0; i < static_cast<int>(guides.size()); ++i)
+      for (int i = 0; snapshot != nullptr && i < snapshot->guideCount(); ++i)
       {
+        const auto &ref = snapshot->guides[static_cast<size_t>(i)];
+        const auto *guide = ref.guide.get();
         auto guideObject = new juce::DynamicObject();
         guideObject->setProperty("index", i);
-        guideObject->setProperty("id", juce::String(guides[i].id));
-        guideObject->setProperty("label", juce::String(guides[i].label));
-        guideObject->setProperty("kind", juce::String(guides[i].kind));
-        guideObject->setProperty("notes",
-                                 static_cast<int>(guides[i].notes.size()));
-        if (!guides[i].notes.empty())
+        guideObject->setProperty("id", ref.id);
+        guideObject->setProperty("label", ref.label);
+        guideObject->setProperty("origin", ref.origin);
+        guideObject->setProperty("notes", ref.notes);
+        if (guide != nullptr && !guide->notes.empty())
         {
           guideObject->setProperty("first_start_quarter",
-                                   guides[i].notes.front().startQuarter);
+                                   guide->notes.front().startQuarter);
           guideObject->setProperty("first_pitch",
-                                   static_cast<double>(guides[i].notes.front().pitch));
+                                   static_cast<double>(guide->notes.front().pitch));
         }
         guideArray.add(juce::var(guideObject));
       }
       response->setProperty("guides", juce::var(guideArray));
+      response->setProperty("guide_count",
+                            snapshot != nullptr ? snapshot->guideCount() : 0);
+      response->setProperty("total_notes",
+                            snapshot != nullptr ? snapshot->totalNotes : 0);
+      response->setProperty("track",
+                            snapshot != nullptr ? snapshot->trackKey
+                                                : juce::String());
       response->setProperty("selected", selectedMidiGuide);
       response->setProperty("ghosts_visible", showMidiGuideGhosts);
       response->setProperty("ghost_count",
@@ -2302,10 +2313,13 @@ void MainComponent::pollMcpControl()
       }
       else
       {
-        const auto &guides = responseProject->getMidiGuides();
-        const bool hasGuide =
-            selectedMidiGuide >= 0 &&
-            selectedMidiGuide < static_cast<int>(guides.size());
+        // R5b/D-356: the guide comes from the document store, not from the
+        // active Project's cache, so this report is the same on every item.
+        const auto &snapshot = midiGuideStore.publish();
+        const auto *guide = snapshot != nullptr
+                                ? snapshot->guideAt(selectedMidiGuide)
+                                : nullptr;
+        const bool hasGuide = guide != nullptr && !guide->notes.empty();
         const double offset = pianoRoll.projectToTimeline(0.0);
         const auto windows = midiGuideScopeWindowsFor(*responseProject, offset);
 
@@ -2320,6 +2334,13 @@ void MainComponent::pollMcpControl()
         response->setProperty("active_region_host_end",
                               windows.hostEndSeconds());
         response->setProperty("guide_index", selectedMidiGuide);
+        response->setProperty("guide_count",
+                              snapshot != nullptr ? snapshot->guideCount() : 0);
+        response->setProperty("guide_id",
+                              snapshot != nullptr && hasGuide
+                                  ? snapshot->guides[static_cast<size_t>(
+                                        selectedMidiGuide)].id
+                                  : juce::String());
         response->setProperty("has_guide", hasGuide);
         // Stable shape: the probe can read these even with no guide selected.
         response->setProperty("guide_notes", 0);
@@ -2338,16 +2359,14 @@ void MainComponent::pollMcpControl()
         response->setProperty("ghost_host_first", ghosts.firstHostSeconds());
         response->setProperty("ghost_host_last", ghosts.lastHostSeconds());
 
-        if (hasGuide && !guides[static_cast<size_t>(selectedMidiGuide)]
-                              .notes.empty())
+        if (hasGuide)
         {
           const HostTempoMap fallback = HostTempoMap::constant(
               cachedHostTempoBpm, cachedHostBeatNumerator,
               cachedHostBeatDenominator);
           const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
           const auto plan = planMidiGuideScope(
-              *responseProject, guides[static_cast<size_t>(selectedMidiGuide)],
-              tempo, windows, SAMPLE_RATE, HOP_SIZE);
+              *responseProject, *guide, tempo, windows, SAMPLE_RATE, HOP_SIZE);
 
           response->setProperty("guide_notes", plan.report.guideNotes);
           response->setProperty("guide_host_start",
@@ -2593,9 +2612,7 @@ void MainComponent::pollMcpControl()
     {
       syncLiveMidiGuides();
       refreshMidiGuideUi();
-      response->setProperty(
-          "guides",
-          static_cast<int>(project->getMidiGuides().size()));
+      response->setProperty("guides", midiGuideStore.size());
       response->setProperty(
           "ghost_count",
           static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
@@ -6897,31 +6914,10 @@ void MainComponent::importMidiGuideFromFile()
           return;
         }
 
-        auto *project = getProject();
-        if (project == nullptr)
-        {
-          midiGuidePanel.setStatusText("no project");
-          return;
-        }
-
-        auto guides = project->getMidiGuides();
-        int index = -1;
-        for (size_t i = 0; i < guides.size(); ++i)
-        {
-          if (guides[i].id == imported.source.id)
-          {
-            guides[i] = imported.source;
-            index = static_cast<int>(i);
-            break;
-          }
-        }
-        if (index < 0)
-        {
-          guides.push_back(imported.source);
-          index = static_cast<int>(guides.size()) - 1;
-        }
-        project->setMidiGuides(std::move(guides));
-        selectedMidiGuide = index;
+        // R5b/D-356: the guide is the document's; storing it needs no active
+        // Project. The compatibility cache is written when one is open.
+        selectedMidiGuide = midiGuideStore.upsert(imported.source, "file");
+        writeMidiGuideCompatCache();
 
         juce::String status;
         status << imported.source.notes.size() << " notes";
@@ -6935,19 +6931,14 @@ void MainComponent::importMidiGuideFromFile()
 
 void MainComponent::removeSelectedMidiGuide()
 {
-  auto *project = getProject();
-  if (project == nullptr)
-    return;
-  auto guides = project->getMidiGuides();
-  if (selectedMidiGuide < 0 ||
-      selectedMidiGuide >= static_cast<int>(guides.size()))
+  if (!midiGuideStore.removeAt(selectedMidiGuide))
     return;
 
-  guides.erase(guides.begin() + selectedMidiGuide);
-  project->setMidiGuides(std::move(guides));
-  selectedMidiGuide =
-      guides.empty() ? -1 : juce::jmin(selectedMidiGuide,
-                                       static_cast<int>(guides.size()) - 1);
+  selectedMidiGuide = midiGuideStore.empty()
+                          ? -1
+                          : juce::jmin(selectedMidiGuide,
+                                       midiGuideStore.size() - 1);
+  writeMidiGuideCompatCache();
   midiGuidePanel.setStatusText({});
   refreshMidiGuideUi();
 }
@@ -6968,113 +6959,90 @@ void MainComponent::setMidiGuideGhostsVisible(bool visible)
   refreshMidiGuideUi();
 }
 
-std::vector<PianoRollComponent::MidiGuideGhost>
-MainComponent::buildMidiGuideGhosts(const GuideSource &guide) const
-{
-  std::vector<PianoRollComponent::MidiGuideGhost> ghosts;
-  if (guide.notes.empty())
-    return ghosts;
-
-  const HostTempoMap fallback = HostTempoMap::constant(
-      cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
-  const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
-
-  MidiGuideMapping mapping;
-  mapping.tempoMap = &tempo;
-  mapping.sampleRate = SAMPLE_RATE;
-  mapping.hopSize = HOP_SIZE;
-
-  ghosts.reserve(guide.notes.size());
-  for (const auto &note : guide.notes)
-  {
-    PianoRollComponent::MidiGuideGhost ghost;
-    // R2/D-313: host seconds, not project seconds. The canvas applies the
-    // display offset while painting, so the list survives a region change.
-    ghost.startHostSeconds = mapping.timelineSecondsForQuarter(note.startQuarter);
-    ghost.endHostSeconds = mapping.timelineSecondsForQuarter(note.endQuarter);
-    ghost.pitch = note.pitch;
-    ghost.label =
-        juce::MidiMessage::getMidiNoteName(
-            juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
-                         static_cast<int>(std::lround(note.pitch))),
-            true, true, 3)
-            .toStdString();
-    if (ghost.endHostSeconds <= ghost.startHostSeconds)
-      continue;
-    ghosts.push_back(ghost);
-  }
-  return ghosts;
-}
-
 void MainComponent::syncLiveMidiGuides()
 {
-  auto *project = getProject();
-  if (project == nullptr)
-    return;
-
   const auto liveDirectory = PlatformPaths::getConfigDirectory()
                                  .getChildFile("guides")
                                  .getChildFile("live");
   int rejected = 0;
   auto liveGuides = MidiGuideImporter::readLiveGuides(liveDirectory, &rejected);
 
-  if (!liveGuides.empty())
+  // R5b/D-356: the live files feed the DOCUMENT store. Before this, the sync
+  // wrote into the active item's Project, so with item 2 selected it produced
+  // guides=0 until the item that held them was active again (measured in R5).
+  if (midiGuideStore.syncLive(liveGuides))
   {
-    auto guides = project->getMidiGuides();
-    bool changed = false;
-    for (auto &live : liveGuides)
-    {
-      const auto existing =
-          std::find_if(guides.begin(), guides.end(),
-                       [&live](const GuideSource &guide)
-                       { return guide.id == live.id; });
-      if (existing == guides.end())
-      {
-        guides.push_back(std::move(live));
-        changed = true;
-      }
-      else if (existing->notes.size() != live.notes.size())
-      {
-        *existing = std::move(live);
-        changed = true;
-      }
-    }
-    if (changed)
-    {
-      // Materialized on purpose: the render never reads the live file (D-311).
-      project->setMidiGuides(std::move(guides));
-      if (selectedMidiGuide < 0)
-        selectedMidiGuide = 0;
-    }
+    if (selectedMidiGuide < 0)
+      selectedMidiGuide = 0;
+    // Materialized on purpose: the render never reads the live file (D-311).
+    // The per-modification copy is only the compatibility cache now.
+    writeMidiGuideCompatCache();
   }
 
   if (rejected > 0)
     midiGuidePanel.setStatusText(juce::String(rejected) + " guide(s) rejected");
 }
 
+void MainComponent::importLegacyMidiGuides()
+{
+  // One-time migration of the old per-Project "midiGuides" (D-311 keeps being
+  // written as a compatibility cache). Every Project of the document is asked,
+  // not just the active one: the guide may live in the archive of an item that
+  // is not selected. The store ignores a Project it already imported, so a
+  // removed guide never comes back from a stale cache.
+  bool adopted = false;
+  if (documentNoteIndex != nullptr)
+  {
+    for (const auto &region : documentNoteIndex->regions)
+      if (region.project != nullptr)
+        adopted = midiGuideStore.importFromProject(*region.project) || adopted;
+  }
+  if (auto *project = getProject())
+    adopted = midiGuideStore.importFromProject(*project) || adopted;
+
+  if (adopted && selectedMidiGuide < 0)
+    selectedMidiGuide = 0;
+}
+
+void MainComponent::writeMidiGuideCompatCache()
+{
+  // The document's guides are the truth; the Project copies keep the old JSON
+  // readable (R7 owns real persistence). Every live Project of the document is
+  // written, so whichever item is archived on save carries them.
+  std::vector<Project *> projects;
+  if (documentNoteIndex != nullptr)
+    for (const auto &region : documentNoteIndex->regions)
+      if (region.project != nullptr)
+        projects.push_back(region.project);
+  if (auto *project = getProject())
+    projects.push_back(project);
+  midiGuideStore.writeCompatCache(projects);
+}
+
 void MainComponent::refreshMidiGuideUi()
 {
-  auto *project = getProject();
+  // R5b/D-356: everything here comes from the document store, so neither the
+  // list nor the ghosts disappear when the active item changes.
+  documentMidiGuides = midiGuideStore.publish();
 
   juce::StringArray labels;
   juce::StringArray ids;
-  if (project != nullptr)
+  if (documentMidiGuides != nullptr)
   {
-    const auto &guides = project->getMidiGuides();
-    for (size_t i = 0; i < guides.size(); ++i)
+    for (const auto &ref : documentMidiGuides->guides)
     {
-      juce::String label = guides[i].label.empty()
-                               ? juce::String("MIDI")
-                               : juce::String(guides[i].label.c_str());
-      label << "  ·  " << static_cast<int>(guides[i].notes.size());
+      juce::String label =
+          ref.label.isEmpty() ? juce::String("MIDI") : ref.label;
+      label << "  ·  " << ref.notes;
       labels.add(label);
-      ids.add(juce::String(guides[i].id.c_str()));
+      ids.add(ref.id);
     }
-    if (!guides.empty() && selectedMidiGuide < 0)
+    if (!documentMidiGuides->empty() && selectedMidiGuide < 0)
       selectedMidiGuide = 0;
-    if (selectedMidiGuide >= static_cast<int>(guides.size()))
-      selectedMidiGuide = guides.empty() ? -1
-                                         : static_cast<int>(guides.size()) - 1;
+    if (selectedMidiGuide >= documentMidiGuides->guideCount())
+      selectedMidiGuide = documentMidiGuides->empty()
+                              ? -1
+                              : documentMidiGuides->guideCount() - 1;
   }
   else
   {
@@ -7085,10 +7053,16 @@ void MainComponent::refreshMidiGuideUi()
   midiGuidePanel.setGhostsVisible(showMidiGuideGhosts);
 
   std::vector<PianoRollComponent::MidiGuideGhost> ghosts;
-  if (project != nullptr && showMidiGuideGhosts && selectedMidiGuide >= 0 &&
-      selectedMidiGuide < static_cast<int>(project->getMidiGuides().size()))
-    ghosts = buildMidiGuideGhosts(
-        project->getMidiGuides()[static_cast<size_t>(selectedMidiGuide)]);
+  const auto *guide = documentMidiGuides != nullptr
+                          ? documentMidiGuides->guideAt(selectedMidiGuide)
+                          : nullptr;
+  if (showMidiGuideGhosts && guide != nullptr)
+  {
+    const HostTempoMap fallback = HostTempoMap::constant(
+        cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
+    const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
+    ghosts = midiGuideGhostsFor(*guide, tempo);
+  }
   pianoRoll.setMidiGuideGhosts(std::move(ghosts));
 }
 
@@ -7098,15 +7072,15 @@ void MainComponent::applyMidiGuide()
   if (project == nullptr)
     return;
 
-  const auto &guides = project->getMidiGuides();
-  if (selectedMidiGuide < 0 ||
-      selectedMidiGuide >= static_cast<int>(guides.size()))
+  // R5b/D-356: the guide is the document's; Apply still edits the active item
+  // only (R1/D-313). The store is the only read path.
+  const auto *guide = midiGuideStore.at(selectedMidiGuide);
+  if (guide == nullptr)
   {
     midiGuidePanel.setStatusText(TR("midi.empty"));
     return;
   }
-  const auto &guide = guides[static_cast<size_t>(selectedMidiGuide)];
-  if (guide.notes.empty())
+  if (guide->notes.empty())
     return;
 
   const HostTempoMap fallback = HostTempoMap::constant(
@@ -7119,20 +7093,23 @@ void MainComponent::applyMidiGuide()
   const auto windows =
       midiGuideScopeWindowsFor(*project, pianoRoll.projectToTimeline(0.0));
   auto plan =
-      planMidiGuideScope(*project, guide, tempo, windows, SAMPLE_RATE, HOP_SIZE);
+      planMidiGuideScope(*project, *guide, tempo, windows, SAMPLE_RATE, HOP_SIZE);
 
   if (windows.valid && plan.slots.empty())
   {
     // Nothing to match inside the active item: say so and touch nothing, so the
-    // audio is not marked dirty for a no-op.
+    // audio is not marked dirty for a no-op. R5b/D-356: the two windows are
+    // named, not crossed: %1-%2 are the GUIDE's host span, %3-%4 the active
+    // item's host span (its source window is the same interval minus the
+    // offset, so it is not repeated here).
     juce::String outside = TR("midi.outside_item");
     outside = outside.replace(
-        "%1", juce::String(windows.hostStartSeconds(), 3));
-    outside = outside.replace("%2", juce::String(windows.hostEndSeconds(), 3));
+        "%1", juce::String(plan.report.guideHostStartSeconds, 3));
+    outside = outside.replace("%2", juce::String(plan.report.guideHostEndSeconds, 3));
     outside = outside.replace(
-        "%3", juce::String(windows.sourceStartSeconds, 3));
+        "%3", juce::String(windows.hostStartSeconds(), 3));
     outside = outside.replace("%4",
-                              juce::String(windows.sourceEndSeconds, 3));
+                              juce::String(windows.hostEndSeconds(), 3));
     midiGuidePanel.setStatusText(outside);
     return;
   }
@@ -7561,6 +7538,13 @@ void MainComponent::releaseBorrowedProject(const Project *project) {
   // re-adopts the live flags (refresh(nullptr) touches none of them).
   if (project == nullptr)
     return;
+  // R5b/D-356: the guide store owns the guide data, so a Project death cannot
+  // leave a dangling pointer to it. The store is emptied only when the LAST
+  // Project of the document dies; an item switch releases nothing.
+  if (midiGuideStore.releaseProject(project)) {
+    selectedMidiGuide = -1;
+    refreshMidiGuideUi();
+  }
   bool borrowed = false;
   if (documentNoteIndex != nullptr) {
     for (const auto &region : documentNoteIndex->regions)
@@ -7580,6 +7564,22 @@ void MainComponent::updateDocumentNoteIndex(DocumentNoteIndexPtr index) {
   // Read-only: the index only supplies enumeration and pointers for the local
   // channel (N1) and the document selection (N2).
   documentNoteIndex = std::move(index);
+  // R5b/D-356: the guide store is scoped to this document. The track key tells
+  // it when another track replaced this one (a new document has no guides); the
+  // Projects tell it when the whole document is gone, without reacting to an
+  // item change. Both are republished from this one path.
+  if (midiGuideStore.bindTrack(documentNoteIndex != nullptr
+                                   ? documentNoteIndex->trackKey
+                                   : juce::String()))
+    selectedMidiGuide = -1;
+  std::vector<const Project *> documentProjects;
+  if (documentNoteIndex != nullptr)
+    for (const auto &region : documentNoteIndex->regions)
+      if (region.project != nullptr)
+        documentProjects.push_back(region.project);
+  midiGuideStore.observeProjects(std::move(documentProjects));
+  importLegacyMidiGuides();
+  refreshMidiGuideUi();
   if (documentNoteSelection != nullptr) {
     // Re-adopts the live flags and drops anything a deleted item or a reloaded
     // project took away, so the selection never outlives its notes. N9 (D-349):

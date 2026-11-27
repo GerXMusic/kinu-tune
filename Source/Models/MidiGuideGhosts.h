@@ -3,22 +3,22 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #pragma once
 
+#include "MidiGuide.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
 
-class Project;
-
 /**
- * Guide ghosts (R2 of the guide-integration fix, D-313): one guide note as the
- * piano roll draws it.
+ * Guide ghosts (R2 of the guide-integration fix, D-313; document-level since
+ * R5b, D-356): one guide note as the piano roll draws it.
  *
  * The guide is song-level and lives on the HOST timeline, so a ghost stores
  * host seconds. The canvas draws in project seconds, so the painter applies the
- * display offset (host -> project, the same one CoordinateMapper publishes) on
- * every frame.
+ * display offset (host -> project, the same one CoordinateMapper publishes and
+ * the same rule frameForRegion uses for the notes) on every frame.
  *
  * Axes, kept explicit:
  *   ghost      : host seconds (timeline), never project seconds
@@ -46,14 +46,22 @@ double midiGuideGhostHostSeconds(double projectSeconds,
                                  double timelineDisplayOffsetSeconds);
 
 /**
- * The ghost list a piano roll shows. One document at a time: a new project
- * drops the previous list (its guide list is not this one's), while the same
- * project (an edit, an offset change) keeps it because the painter re-maps.
+ * The ghost list of one guide: quarter notes -> host seconds through the tempo
+ * map. Pure: no project, no region and no canvas offset, so every item of the
+ * track gets the same list (SCOPE=A). The canvas maps it with the offset it is
+ * showing at that moment.
+ */
+std::vector<MidiGuideGhost>
+midiGuideGhostsFor(const GuideSource& guide, const HostTempoMap& tempoMap);
+
+/**
+ * The ghost list a piano roll shows. It belongs to the DOCUMENT, not to the
+ * item: changing the active item must not clear it (R5 measured 111 -> 0).
+ * Only a new document (the editor publishing another track) clears it.
  */
 class MidiGuideGhostLayer
 {
 public:
-    void bindProject(const Project *project);
     void clear() { ghosts.clear(); }
     void set(std::vector<MidiGuideGhost> newGhosts);
 
@@ -73,5 +81,4 @@ public:
 
 private:
     std::vector<MidiGuideGhost> ghosts;
-    const Project *boundProject = nullptr;
 };

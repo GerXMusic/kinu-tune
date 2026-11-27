@@ -1,9 +1,9 @@
-// R2 (guia MIDI): a ghost is stored in HOST seconds and the canvas maps it to
-// project seconds while painting. Changing the active item only changes the
-// display offset, so the ghost must not move relative to the audio; the same
-// ghost list must also not survive a document change. Measured pair used as the
-// fixture: guide Lead 13.704-73.962 s, active item host 76.016-121.605, source
-// 70.198-115.787 (offset 5.818232 s), where nothing matched inside the item.
+// R2 (guia MIDI): un fantasma se guarda en segundos HOST y el canvas lo pasa a
+// segundos de proyecto mientras pinta. Cambiar de item solo cambia el offset de
+// dibujo, asi que el fantasma no se mueve respecto al audio; y R5b (D-356) fija
+// que la lista es del DOCUMENTO: cambiar de item ya no la borra. Fixture = el par
+// medido: guia Lead 13.704-73.962 s, item activo host 76.016-121.605, fuente
+// 70.198-115.787 (offset 5.818232 s), donde nada emparejaba dentro del item.
 #include "TestAssert.h"
 
 #include "../Source/Models/Project.h" // pulls JuceHeader first
@@ -76,27 +76,24 @@ void testSameHostSameInstantDifferentProjectPosition()
     CHECK(near(trackProject, trackView.timelineToProject(host)));
 }
 
-// The list belongs to one document: re-binding the same project keeps it (an
-// edit or an offset change repaints, it does not rebuild), a new one or none
-// drops it.
-void testDocumentChangeDropsTheList()
+// The list belongs to the DOCUMENT (R5b, D-356): changing the active item must
+// not drop it (R5 measured 111 -> 0 ghosts when switching from item 4 to 1).
+// The layer knows no Project at all; only an explicit clear (a new document)
+// empties it.
+void testDocumentChangeKeepsTheList()
 {
-    Project project;
     MidiGuideGhostLayer layer;
-    layer.bindProject(&project);
     layer.set({makeGhost(kGuideHostStart, kGuideHostStart + 0.4),
                makeGhost(kGuideHostStart + 0.5, kGuideHostStart + 0.9)});
     CHECK(layer.size() == 2);
 
-    layer.bindProject(&project); // same document: keep
+    // Another item only changes the offset the canvas publishes; the list is
+    // untouched and still starts at the same host instant.
+    CHECK(near(layer.startProjectSeconds(0, kOffset), kGuideHostStart - kOffset));
+    CHECK(near(layer.all().front().startHostSeconds, kGuideHostStart));
     CHECK(layer.size() == 2);
 
-    Project other;
-    layer.bindProject(&other); // different document: drop
-    CHECK(layer.empty());
-
-    layer.set({makeGhost(kGuideHostStart, kGuideHostStart + 0.4)});
-    layer.bindProject(nullptr); // no document: drop
+    layer.clear(); // a new document
     CHECK(layer.empty());
 }
 
@@ -140,7 +137,7 @@ void testMeasuredGuideDoesNotReachTheActiveItem()
 int main()
 {
     testSameHostSameInstantDifferentProjectPosition();
-    testDocumentChangeDropsTheList();
+    testDocumentChangeKeepsTheList();
     testOffsetChangeRecalculatesOnlyTheCanvas();
     testMeasuredGuideDoesNotReachTheActiveItem();
 

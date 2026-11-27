@@ -6,12 +6,13 @@
 #include <functional>
 
 /**
- * MIDI-guide drawer (D-311).
+ * MIDI-guide drawer (D-311; document-level since R5b, D-356).
  *
- * Lists the guides materialized in the project, imports .mid files and applies
- * the selected guide to the audio notes. The panel owns no state that matters:
- * MainComponent is the source of truth and calls setGuides()/setStatusText()
- * after every change, so the drawer can never disagree with the document.
+ * Lists the guides the DOCUMENT owns (not the active item's Project) and
+ * applies the selected guide to the audio notes. The panel owns no state that
+ * matters: MainComponent is the source of truth and calls setGuides()/
+ * setStatusText() after every change, so the drawer can never disagree with the
+ * document.
  */
 class MidiGuidePanel : public juce::Component
 {
