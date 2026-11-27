@@ -323,8 +323,10 @@ void PianoRollWorkspaceView::setProject(Project *project)
 {
   dismissPitchCenterPopup();
   overviewPanel.setProject(project);
-  if (project != nullptr)
-    setOverviewVisible(project->thumbnailVisible);
+  // N12 (D-354): the overview strip is view state (settings), never derived
+  // from the project here. This runs when the user changes item, and the strip
+  // appearing or disappearing with it was the complaint. thumbnailVisible
+  // stays in the JSON for compatibility and is read once on an explicit load.
 }
 
 void PianoRollWorkspaceView::dismissPitchCenterPopup()

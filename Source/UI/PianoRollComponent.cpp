@@ -24,6 +24,7 @@
 #include "PianoRoll/TimelineGridSnap.h"
 #include "Components/AppFont.h"
 #include "PianoRoll/VisualWaveformEnvelope.h"
+#include "PianoRoll/RegionNoteStyle.h"
 #include "PianoRoll/States/LoopDragHandler.h"
 #include "PianoRoll/States/SelectHandler.h"
 #include "PianoRoll/States/SplitHandler.h"
@@ -1026,9 +1027,14 @@ void PianoRollComponent::drawInactiveRegionEdits(
       mainArea.isEmpty() || pixelsPerSecond <= 0.0f)
     return;
 
-  // Preserve the active region's waveform geometry with a light-centred grey
-  // note gradient, then desaturate the remaining edits in the cached layer.
-  // Playhead and hover repaints only blit it.
+  // N12 (D-354): every item of this track is painted with the ONE track style.
+  // The active item uses the same struct on its own path, so a move of the
+  // selection cannot change colours, gradient, opacity or outlines.
+  const RegionNoteStyle style =
+      trackRegionNoteStyle(showDeltaPitch, showBasePitch);
+
+  // Preserve the active region's waveform geometry with the same note styling,
+  // then keep the layer cached. Playhead and hover repaints only blit it.
   InactiveLayerKey key;
   key.scrollX = scrollX;
   key.scrollY = scrollY;
@@ -1065,7 +1071,7 @@ void PianoRollComponent::drawInactiveRegionEdits(
 
     for (const auto &region : *regionPreviews)
     {
-      if (region.active || region.pinned || region.project == nullptr ||
+      if (!isNeighbourItem(region) ||
           region.endSeconds <= visibleHostStart ||
           region.startSeconds >= visibleHostEnd)
         continue;
@@ -1076,8 +1082,13 @@ void PianoRollComponent::drawInactiveRegionEdits(
       coordMapper->setScrollX(frame.scrollX);
 
       juce::Graphics::ScopedSaveState state(lg);
+      // N12 (D-354): the same integer phase the canvas path uses. The paint
+      // origin is set with (int)scrollX/(int)scrollY, so the layer must shift
+      // by the same integers; a fractional scrollY off a double used to place
+      // neighbour notes half a pixel off their own item's notes.
       lg.addTransform(juce::AffineTransform::translation(
-          static_cast<float>(-frame.scrollX), static_cast<float>(-scrollY)));
+          -static_cast<float>(static_cast<int>(frame.scrollX)),
+          -static_cast<float>(static_cast<int>(scrollY))));
       lg.reduceClipRegion(
           juce::Rectangle<float>(
               static_cast<float>(frame.windowStartSeconds * pixelsPerSecond), 0.0f,
@@ -1088,11 +1099,12 @@ void PianoRollComponent::drawInactiveRegionEdits(
 
       previewCurveRenderer->setProject(region.project);
       previewNoteRenderer->setProject(region.project);
+      applyRegionNoteStyle(*previewNoteRenderer, style);
       previewNoteRenderer->draw(lg, NoteRenderer::Pass::Body, false, getWidth());
 
       PitchCurveRenderer::Params params;
-      params.showDeltaPitch = showDeltaPitch;
-      params.showBasePitch = showBasePitch;
+      params.showDeltaPitch = style.showDeltaPitch;
+      params.showBasePitch = style.showBasePitch;
       params.showUvInterpolationDebug = false;
       params.showActualF0Debug = false;
       params.showCleanedF0Debug = false;
@@ -1109,11 +1121,10 @@ void PianoRollComponent::drawInactiveRegionEdits(
 
   // World coordinates: the graphics origin is already scrolled. JUCE draws
   // images with the current colour's opacity, and the region outlines just
-  // set a faint one - so set it explicitly. Slightly below full opacity to
-  // keep inactive regions a step darker than the active one.
-  constexpr float inactiveLayerOpacity = 1.0f;
+  // set a faint one - so set it explicitly, from the style. The track style is
+  // 1.0 for every item, the active one included (N12/D-354).
   juce::Graphics::ScopedSaveState opaque(g);
-  g.setOpacity(inactiveLayerOpacity);
+  g.setOpacity(style.layerOpacity);
   g.drawImageAt(inactiveLayer, static_cast<int>(scrollX),
                 static_cast<int>(scrollY));
 }
@@ -1146,9 +1157,15 @@ void PianoRollComponent::drawPinnedTrackNotes(
   {
     pinnedLayerKey = key;
     // Bodies first, into their own image, so they can be dimmed exactly like
-    // inactive regions; the outlines then go on top at full strength.
+    // the style says; the outlines then go on top at full strength.
     juce::Image bodies(juce::Image::ARGB, key.width, key.height, true);
     pinnedLayer = juce::Image(juce::Image::ARGB, key.width, key.height, true);
+
+    // The documented exception of N12 (D-354): a clip of ANOTHER track is a
+    // dimmed reference, so it asks for its own style. The values live in
+    // RegionNoteStyle, not here.
+    const RegionNoteStyle pinnedStyle =
+        pinnedRegionNoteStyle(juce::Colours::white);
 
     const double visibleHostStart =
         projectToTimeline(scrollX / pixelsPerSecond);
@@ -1175,7 +1192,8 @@ void PianoRollComponent::drawPinnedTrackNotes(
 
         juce::Graphics::ScopedSaveState state(lg);
         lg.addTransform(juce::AffineTransform::translation(
-            static_cast<float>(-frame.scrollX), static_cast<float>(-scrollY)));
+            -static_cast<float>(static_cast<int>(frame.scrollX)),
+            -static_cast<float>(static_cast<int>(scrollY))));
         lg.reduceClipRegion(
             juce::Rectangle<float>(
                 static_cast<float>(frame.windowStartSeconds * pixelsPerSecond) - 2.0f,
@@ -1186,31 +1204,28 @@ void PianoRollComponent::drawPinnedTrackNotes(
                 .getSmallestIntegerContainer());
 
         previewNoteRenderer->setProject(region.project);
-        previewNoteRenderer->setFillBodies(!outlines);
-        previewNoteRenderer->setOutlineColour(
-            outlines ? std::optional<juce::Colour>(region.outlineColour)
-                     : std::nullopt);
+        RegionNoteStyle regionStyle = pinnedRegionNoteStyle(region.outlineColour);
+        regionStyle.fillBodies = !outlines;
+        applyRegionNoteStyle(*previewNoteRenderer, regionStyle);
         previewNoteRenderer->draw(lg, NoteRenderer::Pass::Body, false,
                                   getWidth());
       }
     };
 
     drawPass(bodies, false);
-    bodies.desaturate();
+    if (pinnedStyle.desaturateBodies)
+      bodies.desaturate();
     {
-      // Darker than inactive regions (0.6), so pinned notes read as
-      // background reference; the outline stays at full strength.
-      constexpr float pinnedBodyOpacity = 0.35f;
+      // Darker than an item of this track, so pinned notes read as background
+      // reference; the outline stays at full strength.
       juce::Graphics lg(pinnedLayer);
-      lg.setOpacity(pinnedBodyOpacity);
+      lg.setOpacity(pinnedStyle.bodyOpacity);
       lg.drawImageAt(bodies, 0, 0);
     }
     drawPass(pinnedLayer, true);
 
     coordMapper->setScrollX(savedScrollX);
     previewNoteRenderer->setProject(nullptr);
-    previewNoteRenderer->setFillBodies(true);
-    previewNoteRenderer->setOutlineColour(std::nullopt);
   }
 
   juce::Graphics::ScopedSaveState opaque(g);
@@ -1236,14 +1251,11 @@ void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
     return timeToX(timelineToProject(hostSeconds));
   };
 
-  // drawAudioSourceRegionOverlay() paints the active backdrop from the canvas
-  // project. While that project is missing (analysis pending) the active
-  // region still gets its backdrop from the preview.
-  const bool projectDrawsActiveBackdrop =
-      project != nullptr &&
-      project->getAudioData().waveform.getNumSamples() > 0 &&
-      project->getAudioData().getDuration() > 0.0f;
-
+  // N12 (D-354): the cut between items is ONE line. The faint wash inactive
+  // items used to get is gone (it was the "the zone darkens" the user saw),
+  // the alpha no longer depends on which item is active, and two contiguous
+  // items share their line instead of drawing two.
+  std::vector<float> edges;
   for (const auto &region : *regionPreviews)
   {
     // Pinned tracks draw notes only; their region edges would clutter this
@@ -1253,23 +1265,14 @@ void PianoRollComponent::drawRegionPreviews(juce::Graphics &g)
     if (region.endSeconds <= visibleStart || region.startSeconds >= visibleEnd ||
         region.endSeconds <= region.startSeconds)
       continue;
-
-    const float x1 = hx(region.startSeconds);
-    const float x2 = hx(region.endSeconds);
-
-    // The active region no longer gets a translucent backdrop (it read as a
-    // stray rectangle); only its boundaries remain. Inactive regions keep a
-    // faint wash so they still read as separate takes.
-    if (!region.active)
-    {
-      g.setColour(juce::Colours::white.withAlpha(0.03f));
-      g.fillRect(x1, 0.0f, x2 - x1, height);
-    }
-    g.setColour(juce::Colours::white.withAlpha(region.active ? 0.12f : 0.20f));
-    g.fillRect(x1 - 0.5f, 0.0f, 1.0f, height);
-    g.fillRect(x2 - 0.5f, 0.0f, 1.0f, height);
-
+    edges.push_back(hx(region.startSeconds));
+    edges.push_back(hx(region.endSeconds));
   }
+
+  constexpr float boundaryAlpha = 0.20f;
+  g.setColour(juce::Colours::white.withAlpha(boundaryAlpha));
+  for (const float x : dedupeRegionEdges(std::move(edges)))
+    g.fillRect(x - 0.5f, 0.0f, 1.0f, height);
 }
 
 void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
@@ -1624,6 +1627,12 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
   const bool splitModeActive = editMode == EditMode::Split;
   noteRenderer->setHoveredNote(hoveredNote);
   noteRenderer->setShowNoteFramesDebug(showNoteFramesDebug);
+  // N12 (D-354): the active item is painted with the same style as every other
+  // item of the track. No branch on "active" here: only the selection, which
+  // lives on the note (D-349), can make a note look different.
+  const RegionNoteStyle style =
+      trackRegionNoteStyle(showDeltaPitch, showBasePitch);
+  applyRegionNoteStyle(*noteRenderer, style);
   // Tarea 3: con el bypass, las notas se ven en gris y en su posicion y altura
   // de fuente (la melodia original, sin las modificaciones).
   noteRenderer->setGreyscale(bypassView);
@@ -1648,6 +1657,15 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
   // draw the white sweep line either while the engine drawer is open.
   if (previewNoteRenderer)
     previewNoteRenderer->setEngineBlockView(engineViewActive, nullptr, {});
+  // The layer alpha is part of the style (1.0 for every item of the track).
+  // Wrapping the body pass consumes it on this path too, so the two paths
+  // cannot disagree about it.
+  std::optional<juce::Graphics::ScopedSaveState> itemLayer;
+  if (pass == NoteRenderPass::Body)
+  {
+    itemLayer.emplace(g);
+    g.setOpacity(style.layerOpacity);
+  }
   noteRenderer->draw(g, rendererPass, splitModeActive, getWidth());
 }
 
@@ -1952,8 +1970,12 @@ void PianoRollComponent::setBypassView(bool active)
 void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
 {
   PitchCurveRenderer::Params params;
-  params.showDeltaPitch = showDeltaPitch;
-  params.showBasePitch = showBasePitch;
+  // N12 (D-354): the curve of an item is part of the same style, so the active
+  // item and the neighbours share these two switches.
+  const RegionNoteStyle style =
+      trackRegionNoteStyle(showDeltaPitch, showBasePitch);
+  params.showDeltaPitch = style.showDeltaPitch;
+  params.showBasePitch = style.showBasePitch;
   params.showUvInterpolationDebug = showUvInterpolationDebug;
   params.showActualF0Debug = showActualF0Debug;
   params.showCleanedF0Debug = showCleanedF0Debug;

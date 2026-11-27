@@ -18,7 +18,9 @@
 #                   notes (D-350). Source/UI/RegionPreview.h may not hold a
 #                   Project by value nor own one through a smart pointer, so the
 #                   index, the drawing and the hit-test keep reading the same
-#                   Note objects.
+#                   Note objects. N12 (D-354): the note painting in
+#                   PianoRollComponent.cpp may not branch on region.active
+#                   either; the active item and the others share one style.
 # audition-output:  the engine's audition loop is sounded only through
 #                   Source/UI/Main/AuditionOutput.h, so a new kind of audition
 #                   takes the output over from the previous one.
@@ -75,6 +77,49 @@ elseif("${RULE}" STREQUAL "region-copies")
             "SourceGuard (region-copies) found an owned Project in the region preview:\n"
             "${violations}"
             "MainViewRegionPreview must borrow the live Project (Project*), not own a copy; see Source/UI/RegionPreview.h and D-350.")
+    endif()
+    # N12 (D-354): one style for every item, so the note painting may not
+    # branch on which item is active (that branch is how the active item and
+    # the others drifted apart: grey gradient, own opacity, own wash). The
+    # functions below paint the notes of the track; inside them, reading
+    # `region.active` / `item.active` is a violation. The pinned clips of
+    # another track ARE the documented exception - they are a dimmed reference,
+    # not an item of this document - but even they ask RegionNoteStyle for
+    # their values instead of hard-coding them.
+    set(paint_file "${SOURCE_DIR}/UI/PianoRollComponent.cpp")
+    if(NOT EXISTS "${paint_file}")
+        message(FATAL_ERROR "SourceGuard (region-copies): ${paint_file} not found")
+    endif()
+    set(paint_functions drawInactiveRegionEdits drawNotes drawPinnedTrackNotes)
+    file(STRINGS "${paint_file}" paint_lines)
+    set(in_paint 0)
+    set(current_function "")
+    set(paint_violations "")
+    foreach(line IN LISTS paint_lines)
+        if(line MATCHES "^void PianoRollComponent::([A-Za-z0-9_]+)")
+            set(current_function "${CMAKE_MATCH_1}")
+            set(in_paint 0)
+            foreach(fn IN LISTS paint_functions)
+                if("${current_function}" STREQUAL "${fn}")
+                    set(in_paint 1)
+                endif()
+            endforeach()
+        elseif(line MATCHES "^}")
+            set(in_paint 0)
+        endif()
+        if(in_paint)
+            string(REGEX REPLACE "//.*$" "" code "${line}")
+            if(code MATCHES "(region|item|preview)(->|\\.)active")
+                string(STRIP "${line}" shown)
+                string(APPEND paint_violations "  PianoRollComponent.cpp: ${shown}\n")
+            endif()
+        endif()
+    endforeach()
+    if(paint_violations)
+        message(FATAL_ERROR
+            "SourceGuard (region-copies) found item-dependent note painting:\n"
+            "${paint_violations}"
+            "Every item of the track is painted with trackRegionNoteStyle(); the paint path must not read region.active (see Source/UI/PianoRoll/RegionNoteStyle.h and D-354).")
     endif()
     message(STATUS "SourceGuard (region-copies): passed")
     return()

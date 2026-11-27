@@ -650,19 +650,15 @@ void VariAudioInspector::refreshFromProject()
 
     const auto [count, isSelection] =
         getTargetCount ? getTargetCount() : std::pair<int, bool>{0, false};
-    const int items = getTargetItemCount ? getTargetItemCount() : 1;
-    // N8 (D-348): the objective is the document. More than one item says so
-    // ("{n} segments in {m} items"), whether they come from a selection or from
-    // the whole track; a single take keeps target_all / target_selected.
+    juce::ignoreUnused(isSelection);
+    // N12 (D-354): the inspector counts segments, nothing else. "in {m}
+    // items" was the last piece of item bookkeeping on screen, and it changed
+    // with the selection. The per-item breakdown stays in notes_debug, which
+    // is diagnostics, not UI.
     targetLabel.setText(
         count <= 0 ? TR("inspector.target_none")
-        : items > 1
-            ? TR("inspector.target_document")
-                  .replace("{n}", juce::String(count))
-                  .replace("{m}", juce::String(items))
-        : isSelection
-            ? TR("inspector.target_selected").replace("{n}", juce::String(count))
-            : TR("inspector.target_all").replace("{n}", juce::String(count)),
+                   : TR("inspector.target_document")
+                         .replace("{n}", juce::String(count)),
         juce::dontSendNotification);
     // D-299: eliminar necesita al menos un segmento objetivo.
     deleteButton.setEnabled(count > 0);

@@ -66,10 +66,9 @@ public:
     // whether they are the selection (true) or every segment (false).
     std::function<std::optional<float>(Param)> getParamValue;
     std::function<std::pair<int, bool>()> getTargetCount;
-    // N8 (D-348): items the objective reaches (the inspector says "in {m}
-    // items") and whether the target notes disagree on a value. Both are
-    // queries into the document; the inspector caches neither.
-    std::function<int()> getTargetItemCount;
+    // N8 (D-348): whether the target notes disagree on a value; a query into
+    // the document, never cached here. N12 (D-354): the inspector no longer
+    // counts items - its objective line is "{n} segment(s)", always.
     std::function<bool(Param)> getParamValueMixed;
     std::function<void(Param)> onParamEditBegin;
     std::function<void(float)> onParamEditValue;

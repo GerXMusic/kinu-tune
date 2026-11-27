@@ -7,8 +7,7 @@
 
 class Project;
 
-/**
- * One ARA playback region of a track, as track mode draws it.
+/** One ARA playback region of a track, as track mode draws it.
  *
  * N10 (D-350): a preview BORROWS the modification's live Project; it owns no
  * Project and keeps no copy of its notes. The document index, the drawing and
@@ -68,6 +67,15 @@ struct MainViewRegionPreview {
 
 using MainViewRegionPreviewList =
     std::shared_ptr<const std::vector<MainViewRegionPreview>>;
+
+/** N12 (D-354): true when this item is painted by the cached neighbour layer
+    instead of the canvas path. The one place that asks "is this item the
+    active one"; the painting itself takes no such argument, so the look of an
+    item cannot depend on it. */
+inline bool isNeighbourItem(const MainViewRegionPreview &region)
+{
+  return !region.active && !region.pinned && region.project != nullptr;
+}
 
 /** The list without pinned-track regions, for views that show only this
     track (background waveform, overview). Returns the same list when nothing

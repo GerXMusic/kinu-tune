@@ -342,7 +342,7 @@
   "inspector.target_none": "No segments",
   "inspector.target_selected": "Target: {n} selected segment(s)",
   "inspector.target_all": "Target: all segments ({n})",
-  "inspector.target_document": "Target: {n} segment(s) in {m} item(s)",
+  "inspector.target_document": "Target: {n} segment(s)",
   "inspector.mixed": "—",
   "mode.basic": "Basic",
   "mode.advanced": "Advanced",

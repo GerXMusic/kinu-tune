@@ -27,6 +27,8 @@ public:
   void refreshOverview();
   void repaintOverviewViewport();
   void setOverviewVisible(bool visible);
+  /** The overview strip is view state, not item state (N12/D-354). */
+  bool isOverviewVisible() const { return overviewVisible; }
   std::function<void(bool)> onOverviewVisibilityChanged;
   void setRegionPreviews(MainViewRegionPreviewList previews);
   // N10 (D-350): the overview draws the inactive items from the document

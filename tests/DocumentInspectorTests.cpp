@@ -190,7 +190,7 @@ int main()
     CHECK(roll.getInspectorTargetItemCount() == 4);
     roll.setProject(&real.stems);
 
-    // --- Target text: {n} segments in {m} items ---------------------------
+    // --- Target text: {n} segments, never "in {m} items" --------------------
     VariAudioInspector inspector;
     inspector.getCurrentProject = [&roll] { return roll.getProject(); };
     inspector.getTargetCount = [&roll]
@@ -198,8 +198,6 @@ int main()
         return std::pair<int, bool>{roll.getInspectorTargetCount(),
                                     roll.inspectorTargetsAreSelection()};
     };
-    inspector.getTargetItemCount = [&roll]
-    { return roll.getInspectorTargetItemCount(); };
     inspector.getParamValue = [&roll](VariAudioInspector::Param param)
     {
         return roll.getInspectorValue(
@@ -211,13 +209,12 @@ int main()
             static_cast<PianoRollComponent::InspectorParam>(param));
     };
     inspector.refresh();
-    CHECK(findLabelWithText(inspector,
-                            "Target: 264 segment(s) in 4 item(s)") != nullptr);
+    CHECK(findLabelWithText(inspector, "Target: 264 segment(s)") != nullptr);
     CHECK(TR("inspector.target_document").contains("{n}"));
-    CHECK(TR("inspector.target_document").contains("{m}"));
+    CHECK(!TR("inspector.target_document").contains("{m}"));
     CHECK(TR("inspector.mixed").isNotEmpty());
 
-    // --- A selection of one item keeps the selection wording --------------
+    // --- A selection of one item keeps the same wording --------------------
     auto setSelection = [&](const std::vector<juce::String>& keys)
     {
         const auto pairs = pairsOfRegions(*index, keys);
@@ -229,15 +226,16 @@ int main()
     CHECK(roll.getInspectorTargetItemCount() == 1);
     CHECK(roll.inspectorTargetsAreSelection());
     inspector.refresh();
-    CHECK(findLabelWithText(inspector, "Target: 7 selected segment(s)") != nullptr);
+    CHECK(findLabelWithText(inspector, "Target: 7 segment(s)") != nullptr);
 
-    // --- A selection across two items says so, with {n} and {m} ------------
+    // --- A selection across two items says the same, with no item count -----
     setSelection({"it1", "it2"});
     CHECK(roll.getInspectorTargetCount() == 84);
     CHECK(roll.getInspectorTargetItemCount() == 2);
     CHECK(roll.inspectorTargetsAreSelection());
     inspector.refresh();
-    CHECK(findLabelWithText(inspector, "Target: 84 segment(s) in 2 item(s)") !=
+    CHECK(findLabelWithText(inspector, "Target: 84 segment(s)") != nullptr);
+    CHECK(findLabelWithText(inspector, "Target: 84 segment(s) in 2 item(s)") ==
           nullptr);
 
     // --- Mixed values: the row says "—", not the last item's value ---------

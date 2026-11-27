@@ -6,6 +6,7 @@
 #include "../../Audio/Synthesis/EngineBlocks.h"
 #include "../../Models/Project.h"
 #include "CoordinateMapper.h"
+#include "RegionNoteStyle.h"
 
 // Forward declarations to avoid header cycles. Implementations include the
 // full handler headers in NoteRenderer.cpp.
@@ -47,6 +48,17 @@ public:
   // Inactive regions in Track mode: note bodies use a grey ramp (light along
   // the centre line, dark at the edges) instead of the pitch-accuracy colours.
   void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
+  // N12 (D-354): the body palette is a parameter of the item style
+  // (RegionNoteStyle), not a constant of this renderer; two renderer instances
+  // configured from the same style paint the same.
+  void setNoteColours(juce::Colour centre, juce::Colour side)
+  {
+    gradientCentre = centre;
+    gradientSide = side;
+  }
+  // N12 (D-354): the white halo that marks a selected note. It stays on unless
+  // an item style says otherwise; selection itself still comes from the note.
+  void setSelectionDecoration(bool shouldDraw) { selectionDecoration = shouldDraw; }
   // Tarea 3 (2026-11-22): vista de bypass. La nota se dibuja en su posicion y
   // altura de FUENTE (las ediciones no se ven), como Melodyne con el bypass.
   void setOriginalPitchView(bool shouldUseOriginal)
@@ -117,6 +129,9 @@ private:
   Note *hoveredNote = nullptr;
   bool showNoteFramesDebug = false;
   bool greyscale = false;
+  bool selectionDecoration = true;
+  juce::Colour gradientCentre = regionNoteColours::bodyCentre;
+  juce::Colour gradientSide = regionNoteColours::bodySide;
   bool originalPitchView = false;
   std::optional<juce::Colour> outlineColour;
   bool fillBodies = true;

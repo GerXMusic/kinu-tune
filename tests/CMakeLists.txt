@@ -244,6 +244,21 @@ target_link_libraries(RegionPreviewSingleSourceTests PRIVATE pitchnet_ui)
 target_compile_features(RegionPreviewSingleSourceTests PRIVATE cxx_std_17)
 add_test(NAME RegionPreviewSingleSourceTests COMMAND RegionPreviewSingleSourceTests)
 
+# N12 (D-354): todos los items de la pista se pintan igual (un solo estilo, sin
+# rama por item activo), las fronteras se deduplican y el clip fijado es la
+# excepcion documentada.
+add_executable(RegionUniformLooksTests RegionUniformLooksTests.cpp)
+target_link_libraries(RegionUniformLooksTests PRIVATE pitchnet_ui)
+target_compile_features(RegionUniformLooksTests PRIVATE cxx_std_17)
+add_test(NAME RegionUniformLooksTests COMMAND RegionUniformLooksTests)
+
+# N12 (D-354): la tira de overview es estado de vista; cambiar de item no la
+# toca, el toggle del usuario si, y el campo del JSON sigue por compatibilidad.
+add_executable(OverviewIndependenceTests OverviewIndependenceTests.cpp)
+target_link_libraries(OverviewIndependenceTests PRIVATE pitchnet_ui)
+target_compile_features(OverviewIndependenceTests PRIVATE cxx_std_17)
+add_test(NAME OverviewIndependenceTests COMMAND OverviewIndependenceTests)
+
 # N8 (D-348): conteo y texto del objetivo a nivel de documento (caso real
 # 262+29, ventanas 0/7/77/70/110) y valores mixtos.
 add_executable(DocumentInspectorTests DocumentInspectorTests.cpp)

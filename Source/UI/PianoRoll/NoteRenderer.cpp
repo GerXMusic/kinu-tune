@@ -25,13 +25,11 @@ struct NoteGradientColours
   juce::Colour side;
 };
 
-NoteGradientColours getNoteGradientColours()
+NoteGradientColours getNoteGradientColours(juce::Colour centre,
+                                           juce::Colour side)
 {
-  // Steel-blue note body, the colour the editor used before the Melodyne
-  // palette experiment. The waveform inside stays white and the pitch curve
-  // on top is the only element that tells the tuning.
-  static const juce::Colour centre(0xFF5E93D6u);
-  static const juce::Colour side(0xFF304861u);
+  // N12 (D-354): the palette now lives in RegionNoteStyle.h, so the default
+  // renderer and the item style are the same values.
   return {centre, side};
 }
 
@@ -389,7 +387,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
           greyscale
               ? NoteGradientColours{juce::Colour(0xFFCCCCCCu),
                                     juce::Colour(0xFF3A3A3Au)}
-              : getNoteGradientColours();
+              : getNoteGradientColours(gradientCentre, gradientSide);
       juce::Rectangle<float> noteVisualBounds(x, y, renderedWidth, h);
       // The shape that was filled, for the pinned-track outline.
       juce::Path bodyShape;
@@ -431,7 +429,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
             juce::Rectangle<float>(x, y + 1.0f, renderedWidth,
                                    std::max(2.0f, h - 2.0f))
                 .reduced(0.0f, 0.5f);
-        const bool selected = note.isSelected();
+        const bool selected = selectionDecoration && note.isSelected();
         const float centreY = segmentBounds.getCentreY();
         const float waveHeight =
             std::max(2.0f, segmentBounds.getHeight() - 2.0f);
@@ -767,7 +765,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
         const auto colour = engineColours::forEngine(engine);
         const float borderWidth = blockActive ? 2.2f : 1.2f;
 
-        if (note.isSelected())
+        if (selectionDecoration && note.isSelected())
         {
           g.setColour(juce::Colours::white.withAlpha(0.88f));
           g.strokePath(bodyShape,

@@ -783,8 +783,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     return std::pair<int, bool>{pianoRoll.getInspectorTargetCount(),
                                 pianoRoll.inspectorTargetsAreSelection()};
   };
-  variAudioInspector.getTargetItemCount = [this]
-  { return pianoRoll.getInspectorTargetItemCount(); };
   variAudioInspector.getParamValueMixed = [this](VariAudioInspector::Param param)
   { return pianoRoll.inspectorValueIsMixed(static_cast<InspectorParam>(param)); };
   variAudioInspector.onParamEditBegin = [this](VariAudioInspector::Param param)
@@ -8216,7 +8214,15 @@ void MainComponent::restoreProjectPresentation()
     return;
   const int width = project->uiWidth;
   const int height = project->uiHeight;
-  pianoRollView.setOverviewVisible(project->thumbnailVisible);
+  // N12 (D-354): the overview is view state and it has ONE owner: the settings
+  // manager, which the toggle also writes (see onOverviewVisibilityChanged).
+  // Loading an explicit project may still seed it from the JSON field, which
+  // stays for compatibility (FORMAT_VERSION 5); changing item never does.
+  if (project->thumbnailVisible != settingsManager->getOverviewVisible())
+  {
+    settingsManager->setOverviewVisible(project->thumbnailVisible);
+    pianoRollView.setOverviewVisible(project->thumbnailVisible);
+  }
   if (width <= 0 || height <= 0)
     return;
   auto size = juce::Point<int>(width, height);
