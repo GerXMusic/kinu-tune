@@ -309,6 +309,8 @@
   "midi.track_nothing": "没有音符更改；跳过：%1 无项、%2 未分析、%3 其他来源、%4 无匹配音符",
   "midi.track_render_missing": "未应用指南：某项没有渲染路径",
   "midi.undo_track": "将 MIDI 指南应用到轨道",
+  "midi.details": "%1 个音符，宿主 %2-%3 秒 · 更新于 %4",
+  "midi.changed_since_apply": "指南自上次应用后已更改",
   "midi.hint": "参考仅用于显示；引擎暂不使用。",
   "editor.scale": "音阶",
   "editor.grid": "网格",

@@ -29,6 +29,10 @@ public:
     void setGuides(const juce::StringArray& labels, const juce::StringArray& ids,
                    int selectedIndex);
     void setStatusText(const juce::String& text);
+    // R10/D-363: coverage, last update and the "changed since applied" warning.
+    // It is a separate line from the transient status, so an apply message
+    // does not hide it (and it does not hide the apply message).
+    void setGuideDetails(const juce::String& text);
     juce::String getStatusText() const { return status.getText(); }
     void setGhostsVisible(bool visible);
     void setApplyEnabled(bool enabled);
@@ -51,6 +55,7 @@ private:
     juce::Rectangle<int> listBounds;
     juce::Label hint;
     juce::Label status;
+    juce::Label details;
 
     LocalisationWatcher languageWatcher{[this] {
         refreshLocalisedText();

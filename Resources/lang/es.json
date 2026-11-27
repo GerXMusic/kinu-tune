@@ -319,6 +319,8 @@
   "midi.track_nothing": "Ninguna nota cambiada; saltadas: %1 sin ítem, %2 sin analizar, %3 otra fuente, %4 sin nota",
   "midi.track_render_missing": "Guía no aplicada: un ítem no tiene camino al render",
   "midi.undo_track": "Aplicar guía MIDI a la pista",
+  "midi.details": "%1 notas, host %2-%3 s · actualizada %4",
+  "midi.changed_since_apply": "La guía cambió desde la última aplicación",
   "midi.hint": "Importa un .mid o recibe una guía del ReaScript. Aplicar lleva cada nota emparejada a su nota guía y conserva vibrato y edición.",
   "editor.scale": "Escala",
   "editor.grid": "Cuadrícula",

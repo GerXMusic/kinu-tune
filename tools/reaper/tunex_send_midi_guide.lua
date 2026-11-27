@@ -1,4 +1,4 @@
--- TuneX MIDI guide sender (REAPER ReaScript, F0.3/F3)
+-- TuneX MIDI guide sender (REAPER ReaScript, F0.3/F3, R10)
 --
 -- Reads the selected MIDI item's active take, converts every unmuted note to
 -- project quarter notes and writes the guide JSON consumed by TuneX at
@@ -8,6 +8,14 @@
 -- MIDI_GetProjQNFromPPQPos already folds the item position, playrate and
 -- timebase, so the JSON stays correct when the item moves or the tempo map
 -- changes (the quarters do not change, the seconds do).
+--
+-- Identity (R10, D-363): `source_id` is `reaper:<track GUID>:<take key>`.
+-- The item position is GONE: moving or splitting the item keeps the same id
+-- (REAPER keeps the take name across both), so re-running the script overwrites
+-- the same file instead of leaving the previous guide alive as a second guide.
+-- The take key is the take name (or "midi"); ':' is replaced by '_' so the id
+-- always has three fields. Old positional ids (`...:<position>:<take>`) are
+-- removed here and ignored by TuneX if one survives.
 --
 -- Usage: select one MIDI item and run the script. It never modifies the
 -- project. Run it again after editing the item to refresh the guide.
@@ -44,6 +52,53 @@ local function writeAtomic(path, text)
     return true
 end
 
+-- Reads just the source_id of an already written guide, to decide whether the
+-- file belongs to this track. A guide is a few KB; reading the head is enough.
+local function readSourceId(path)
+    local f = io.open(path, "rb")
+    if not f then
+        return nil
+    end
+    local head = f:read(2048) or ""
+    f:close()
+    return head:match('"source_id"%s*:%s*"([^"]*)"')
+end
+
+-- Removes the guides of the SAME track that this run supersedes: the old
+-- positional ids (pre-R10) and any other file carrying the same source_id.
+-- A guide of another track, or of another take of this track, is left alone.
+local function removeStaleTrackGuides(guideDir, trackPrefix, sourceId, keepPath)
+    -- Collect first: deleting while enumerating can skip the next name.
+    local names = {}
+    local index = 0
+    while true do
+        local name = reaper.EnumerateFiles(guideDir, index)
+        if not name then
+            break
+        end
+        index = index + 1
+        if name:match("^guide_.*%.json$") then
+            names[#names + 1] = name
+        end
+    end
+
+    for i = 1, #names do
+        local full = guideDir .. "\\" .. names[i]
+        if full:lower() ~= keepPath:lower() then
+            local id = readSourceId(full)
+            if id and id:sub(1, #trackPrefix) == trackPrefix then
+                local rest = id:sub(#trackPrefix + 1)
+                -- Pre-R10 ids always carry the item position as
+                -- "<digits>.<digits>:" before the take name.
+                local legacyPosition = rest:match("^(%d+%.%d+):")
+                if legacyPosition or id == sourceId then
+                    os.remove(full)
+                end
+            end
+        end
+    end
+end
+
 local function main()
     local item = reaper.GetSelectedMediaItem(0, 0)
     if not item then
@@ -57,14 +112,13 @@ local function main()
 
     local track = reaper.GetMediaItem_Track(item)
     local trackGuid = reaper.GetTrackGUID(track)
-    local itemPos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-    local takeName = reaper.GetTakeName(take)
+    local takeName = trim(reaper.GetTakeName(take))
     local trackName = ({ reaper.GetTrackName(track) })[2] or ""
 
-    -- Stable id: track GUID + item position + take name.
-    local sourceId = string.format("reaper:%s:%.9f:%s",
-                                   trackGuid, itemPos,
-                                   (takeName ~= "" and takeName or "midi"))
+    -- Stable id: track + take/source, no item position (R10, D-363).
+    local takeKey = takeName ~= "" and takeName or "midi"
+    takeKey = takeKey:gsub(":", "_")
+    local sourceId = string.format("reaper:%s:%s", trackGuid, takeKey)
 
     local ok, notes, ccs, sysex = reaper.MIDI_CountEvts(take)
     if not ok then
@@ -105,12 +159,16 @@ local function main()
                                           math.floor(e[3] + 0.5), e[4])
     end
 
+    local label = trim(trackName .. " " .. takeName)
     local json = string.format(
         '{\n  "schema": 1,\n  "source_id": "%s",\n  "label": "%s",\n' ..
+        '  "track_id": "%s",\n  "take": "%s",\n' ..
         '  "kind": "reascript",\n  "host": "REAPER",\n' ..
         '  "created_utc": "%s",\n  "notes": [%s]\n}\n',
         jsonEscape(sourceId),
-        jsonEscape(trim(trackName .. " " .. takeName)),
+        jsonEscape(label),
+        jsonEscape(trackGuid),
+        jsonEscape(takeKey),
         os.date("!%Y-%m-%dT%H:%M:%SZ"),
         table.concat(parts, ","))
 
@@ -121,7 +179,7 @@ local function main()
     local guideDir = appdata .. "\\TuneX\\guides\\live"
     reaper.RecursiveCreateDirectory(guideDir, 0)
 
-    -- One file per item identity so two items do not overwrite each other.
+    -- One file per logical source: moving or splitting the item reuses it.
     local slug = sourceId:gsub("[^%w%-_%.]", "_")
     local path = guideDir .. "\\guide_" .. slug .. ".json"
     local wok, werr = writeAtomic(path, json)
@@ -129,13 +187,16 @@ local function main()
         return { ok = false, error = "write failed: " .. tostring(werr) }
     end
 
+    removeStaleTrackGuides(guideDir, string.format("reaper:%s:", trackGuid),
+                           sourceId, path)
+
     return {
         ok = true,
         path = path,
         notes = #entries,
         muted_skipped = skippedMuted,
         source_id = sourceId,
-        label = trim(trackName .. " " .. takeName),
+        label = label,
         first = entries[1],
         last = entries[#entries],
     }

@@ -360,6 +360,8 @@
   "midi.track_nothing": "変更なし。スキップ: %1 アイテムなし、%2 未解析、%3 別ソース、%4 該当ノートなし",
   "midi.track_render_missing": "ガイド未適用: レンダー経路のないアイテムがあります",
   "midi.undo_track": "MIDI ガイドをトラックに適用",
+  "midi.details": "%1 ノート、ホスト %2-%3 秒 · 更新 %4",
+  "midi.changed_since_apply": "前回の適用後にガイドが変更されました",
   "midi.hint": "ガイドは参照用に一覧されます。エンジンはまだ使用しません。",
   "editor.scale": "スケール",
   "editor.grid": "グリッド",

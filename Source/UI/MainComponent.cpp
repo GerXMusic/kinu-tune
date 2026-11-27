@@ -2617,6 +2617,26 @@ void MainComponent::pollMcpControl()
       response->setProperty(
           "ghost_count",
           static_cast<int>(pianoRoll.getMidiGuideGhostCount()));
+      // R10/D-363: identity/coverage state, so R11 can measure it in the host
+      // without opening the editor.
+      response->setProperty("last_applied_hash", lastAppliedMidiGuideHash);
+      if (const auto *guide = midiGuideStore->at(selectedMidiGuide))
+      {
+        const HostTempoMap fallback = HostTempoMap::constant(
+            cachedHostTempoBpm, cachedHostBeatNumerator,
+            cachedHostBeatDenominator);
+        const auto status = midiGuideLive::statusFor(
+            *guide, activeTempoMapForGuide(hostTempoMap, fallback),
+            lastAppliedMidiGuideHash);
+        response->setProperty("guide_id", juce::String(guide->id));
+        response->setProperty("notes", status.notes);
+        response->setProperty("host_start", status.hostStartSeconds);
+        response->setProperty("host_end", status.hostEndSeconds);
+        response->setProperty("updated_at", status.updatedAt);
+        response->setProperty("hash", status.hash);
+        response->setProperty("changed_since_apply",
+                              status.changedSinceApply);
+      }
       response->setProperty("ok", true);
     }
     else if (command == "apply_midi_guide")
@@ -6974,23 +6994,27 @@ void MainComponent::syncLiveMidiGuides()
   const auto liveDirectory = PlatformPaths::getConfigDirectory()
                                  .getChildFile("guides")
                                  .getChildFile("live");
-  int rejected = 0;
-  auto liveGuides = MidiGuideImporter::readLiveGuides(liveDirectory, &rejected);
+  // R10/D-363: one scan with an mtime+size cache; the store replaces by content
+  // hash and, when the folder exists (the scan is authoritative), drops the
+  // live guides whose file disappeared.
+  auto scan = liveGuideScanner.scan(liveDirectory);
 
   // R5b/D-356: the live files feed the DOCUMENT store. Before this, the sync
   // wrote into the active item's Project, so with item 2 selected it produced
   // guides=0 until the item that held them was active again (measured in R5).
-  if (midiGuideStore->syncLive(liveGuides))
+  if (midiGuideStore->syncLive(scan.guides, scan.directoryExists))
   {
-    if (selectedMidiGuide < 0)
+    if (selectedMidiGuide < 0 && !midiGuideStore->empty())
       selectedMidiGuide = 0;
     // Materialized on purpose: the render never reads the live file (D-311).
     // The per-modification copy is only the compatibility cache now.
     writeMidiGuideCompatCache();
+    refreshMidiGuideUi();
   }
 
-  if (rejected > 0)
-    midiGuidePanel.setStatusText(juce::String(rejected) + " guide(s) rejected");
+  if (scan.rejected > 0)
+    midiGuidePanel.setStatusText(juce::String(scan.rejected) +
+                                 " guide(s) rejected");
 }
 
 void MainComponent::importLegacyMidiGuides()
@@ -7079,12 +7103,34 @@ void MainComponent::refreshMidiGuideUi()
   const auto *guide = documentMidiGuides != nullptr
                           ? documentMidiGuides->guideAt(selectedMidiGuide)
                           : nullptr;
-  if (showMidiGuideGhosts && guide != nullptr)
+  if (guide != nullptr)
   {
+    // R10/D-363: coverage (notes + host span), last update and the "changed
+    // since you applied it" warning. The hash the user applied is remembered
+    // by the editor, so a guide that was never applied never warns.
     const HostTempoMap fallback = HostTempoMap::constant(
         cachedHostTempoBpm, cachedHostBeatNumerator, cachedHostBeatDenominator);
     const auto &tempo = activeTempoMapForGuide(hostTempoMap, fallback);
-    ghosts = midiGuideGhostsFor(*guide, tempo);
+    const auto status = midiGuideLive::statusFor(
+        *guide, tempo, lastAppliedMidiGuideHash);
+
+    juce::String details = TR("midi.details");
+    details = details.replace("%1", juce::String(status.notes));
+    details = details.replace("%2", juce::String(status.hostStartSeconds, 3));
+    details = details.replace("%3", juce::String(status.hostEndSeconds, 3));
+    details = details.replace(
+        "%4",
+        status.updatedAt.isNotEmpty() ? status.updatedAt : juce::String("-"));
+    if (status.changedSinceApply)
+      details << "\n" << TR("midi.changed_since_apply");
+    midiGuidePanel.setGuideDetails(details);
+
+    if (showMidiGuideGhosts)
+      ghosts = midiGuideGhostsFor(*guide, tempo);
+  }
+  else
+  {
+    midiGuidePanel.setGuideDetails({});
   }
   pianoRoll.setMidiGuideGhosts(std::move(ghosts));
 
@@ -7260,6 +7306,10 @@ MainComponent::applyMidiGuideWithScope(const juce::String &requestedScope)
     status << matched << "/" << static_cast<int>(plan.audio.size()) << " "
            << (matched == 1 ? "note" : "notes");
     midiGuidePanel.setStatusText(status);
+    // R10/D-363: the guide is now the one that was applied; the panel's
+    // "changed since applied" warning clears until the live file changes.
+    lastAppliedMidiGuideHash = midiGuideLive::contentHash(*guide);
+    refreshMidiGuideUi();
     return report;
   }
 
@@ -7357,6 +7407,10 @@ MainComponent::applyMidiGuideWithScope(const juce::String &requestedScope)
     status = status.replace("%7", juce::String(result.skippedNoMatch));
   }
   midiGuidePanel.setStatusText(status);
+  // R10/D-363: apply marks this guide as the applied one; changing the live
+  // file afterwards is what raises the warning, not the apply itself.
+  lastAppliedMidiGuideHash = midiGuideLive::contentHash(*guide);
+  refreshMidiGuideUi();
   return report;
 }
 

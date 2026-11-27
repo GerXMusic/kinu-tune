@@ -3,31 +3,13 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #include "DocumentMidiGuides.h"
 
+#include "MidiGuideLive.h"
 #include "MidiGuidePersistence.h"
 
 #include <algorithm>
 
 namespace
 {
-// Equality of the two note lists that decides whether a live guide has to
-// replace the one in the store. Cheap and exact: the importer writes the same
-// values on every poll, so only a real change replaces.
-bool sameNotes(const GuideSource& a, const GuideSource& b)
-{
-    if (a.notes.size() != b.notes.size())
-        return false;
-    for (std::size_t i = 0; i < a.notes.size(); ++i)
-    {
-        const auto& left = a.notes[i];
-        const auto& right = b.notes[i];
-        if (left.startQuarter != right.startQuarter ||
-            left.endQuarter != right.endQuarter || left.pitch != right.pitch ||
-            left.velocity != right.velocity)
-            return false;
-    }
-    return true;
-}
-
 // The compat cache only needs to know whether the Project already carries the
 // document's guides: writing identical values would mark the Project modified
 // for nothing.
@@ -263,24 +245,64 @@ bool DocumentMidiGuideStore::importFromProject(const Project& project)
     return adopted;
 }
 
+namespace
+{
+// Entries the live folder owns: the ones the sync has written (origin "live"),
+// and the ones a sidecar round trip kept as origin "document" while still
+// being a live snapshot (kind "reascript"/"companion"). A .mid import, a
+// legacy cache migration or a document-only guide is never removed by a scan.
+bool isLiveManagedEntry(const std::shared_ptr<const GuideSource>& guide,
+                        const juce::String& origin)
+{
+    if (origin == "live")
+        return true;
+    if (origin != "document")
+        return false;
+    return guide->kind == "reascript" || guide->kind == "companion";
+}
+} // namespace
+
 bool DocumentMidiGuideStore::syncLive(
-    const std::vector<GuideSource>& liveGuides)
+    const std::vector<GuideSource>& liveGuides, bool authoritative)
 {
     bool changed = false;
+    std::vector<std::string> seen;
+    seen.reserve(liveGuides.size());
     for (const auto& live : liveGuides)
     {
+        // One guide per identity: two files with the same source_id (an old
+        // name left behind by an interrupted write) are one guide, and the
+        // scanner already picked the deterministic winner.
+        if (std::find(seen.begin(), seen.end(), live.id) != seen.end())
+            continue;
+        seen.push_back(live.id);
+
         const auto* existing = findById(live.id);
-        if (existing == nullptr)
-        {
-            addOrReplace(live, "live");
-            changed = true;
-        }
-        else if (!sameNotes(*existing, live))
+        if (existing == nullptr || midiGuideLive::contentHash(*existing) !=
+                                       midiGuideLive::contentHash(live))
         {
             addOrReplace(live, "live");
             changed = true;
         }
     }
+
+    if (authoritative)
+    {
+        for (int i = size() - 1; i >= 0; --i)
+        {
+            const auto& entry = entries[static_cast<std::size_t>(i)];
+            if (!isLiveManagedEntry(entry.guide, entry.origin))
+                continue;
+            if (std::find(seen.begin(), seen.end(), entry.guide->id) !=
+                seen.end())
+                continue;
+            // Its file is gone: the guide goes with it (D-363).
+            entries.erase(entries.begin() + i);
+            markDirty();
+            changed = true;
+        }
+    }
+
     if (changed)
         persistIfPossible();
     return changed;

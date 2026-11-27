@@ -9,6 +9,7 @@
 #include "../Audio/IO/AudioFileManager.h"
 #include "../JuceHeader.h"
 #include "../Models/DocumentMidiGuides.h"
+#include "../Models/MidiGuideLive.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
 #include "CustomMenuBarLookAndFeel.h"
@@ -821,6 +822,12 @@ private:
   void writeMidiGuideCompatCache();
   int selectedMidiGuide = -1;
   bool showMidiGuideGhosts = true;
+  // R10/D-363: content hash of the guide as it was when the user last applied
+  // it. Empty = never applied, and then the "changed" warning is not shown.
+  juce::String lastAppliedMidiGuideHash;
+  // mtime+size cache for the live folder; a poll that changes nothing does not
+  // re-parse a single file.
+  midiGuideLive::LiveDirectoryScanner liveGuideScanner;
 
   bool hasCachedHostLoopRange = false;
   double cachedHostLoopStartSeconds = 0.0;

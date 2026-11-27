@@ -120,9 +120,13 @@ public:
     // adopted at least one guide.
     bool importFromProject(const Project& project);
 
-    // Live-file merge (syncLiveMidiGuides): same id replaces when the notes
-    // differ, a new id is appended. Never touches the UI.
-    bool syncLive(const std::vector<GuideSource>& liveGuides);
+    // Live-file merge (syncLiveMidiGuides, R10/D-363): same id replaces when
+    // the CONTENT HASH differs (never the note count), a new id is appended.
+    // When `authoritative` is true the scan saw the whole live folder, so a
+    // live guide whose file disappeared is removed; false (folder missing)
+    // keeps what the sidecar loaded. Never touches the UI.
+    bool syncLive(const std::vector<GuideSource>& liveGuides,
+                  bool authoritative = false);
 
     // A file import: replaces the guide with that id or appends it. Returns its
     // index, -1 if the guide is empty and had nothing to add.

@@ -382,6 +382,8 @@
   "midi.track_nothing": "No note changed; skipped: %1 no item, %2 not analysed, %3 other source, %4 no note",
   "midi.track_render_missing": "Guide not applied: an item has no path to its render",
   "midi.undo_track": "Apply MIDI guide to track",
+  "midi.details": "%1 notes, host %2-%3 s · updated %4",
+  "midi.changed_since_apply": "The guide changed since you last applied it",
   "midi.hint": "Import a .mid or receive a guide from the ReaScript. Apply moves every matched note to its guide note and keeps vibrato and edits.",
   "editor.scale": "Scale",
   "editor.grid": "Grid",

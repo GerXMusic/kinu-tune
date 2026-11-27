@@ -309,6 +309,8 @@
   "midi.track_nothing": "변경된 노트 없음. 건너뜀: %1 아이템 없음, %2 미분석, %3 다른 소스, %4 노트 없음",
   "midi.track_render_missing": "가이드 미적용: 렌더 경로가 없는 아이템이 있습니다",
   "midi.undo_track": "MIDI 가이드를 트랙에 적용",
+  "midi.details": "%1개 노트, 호스트 %2-%3초 · 업데이트 %4",
+  "midi.changed_since_apply": "마지막 적용 이후 가이드가 변경되었습니다",
   "midi.hint": "가이드는 참고용으로만 나열됩니다. 엔진은 아직 사용하지 않습니다.",
   "editor.scale": "스케일",
   "editor.grid": "그리드",

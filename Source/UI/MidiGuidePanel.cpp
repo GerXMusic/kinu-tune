@@ -54,6 +54,11 @@ MidiGuidePanel::MidiGuidePanel()
     status.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(status);
 
+    details.setFont(AppFont::getFont(12.0f));
+    details.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
+    details.setJustificationType(juce::Justification::topLeft);
+    addAndMakeVisible(details);
+
     refreshLocalisedText();
 }
 
@@ -81,6 +86,11 @@ void MidiGuidePanel::setGuides(const juce::StringArray& labels,
 void MidiGuidePanel::setStatusText(const juce::String& text)
 {
     status.setText(text, juce::dontSendNotification);
+}
+
+void MidiGuidePanel::setGuideDetails(const juce::String& text)
+{
+    details.setText(text, juce::dontSendNotification);
 }
 
 void MidiGuidePanel::setGhostsVisible(bool visible)
@@ -169,6 +179,7 @@ void MidiGuidePanel::resized()
     area.removeFromTop(10);
     hint.setBounds(area.removeFromBottom(52));
     status.setBounds(area.removeFromBottom(44));
+    details.setBounds(area.removeFromBottom(42));
     area.removeFromBottom(4);
     listBounds = area;
 }

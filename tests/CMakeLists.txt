@@ -63,6 +63,9 @@ set(PITCHNET_TEST_SOURCES
     # R9 (D-362): el plan se aplica por pista (SCOPE=A) por el camino real del
     # editor, como UN paso de undo del documento; lo que se salta se cuenta.
     MidiGuideTrackApplyTests.cpp
+    # R10 (D-363): identidad estable (sin posicion), sync por hash de contenido
+    # y mtime+size como camino rapido; guias huerfanas y aviso de cambio.
+    MidiGuideSyncTests.cpp
     # N1 (D-340): el indice de notas del documento (5 items, 2 fuentes) apunta a
     # las notas reales, no inventa items sin project y dibuja lo mismo que cuenta.
     NoteIndexTests.cpp
