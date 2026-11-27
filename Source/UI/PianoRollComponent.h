@@ -346,10 +346,10 @@ public:
   const MidiGuideGhostLayer &getMidiGuideGhosts() const {
     return midiGuideGhosts;
   }
-  // V1 (guia MIDI, medir antes de arreglar): the window the canvas is actually
-  // showing, in project seconds: [scrollX, scrollX + visibleWidth] / pps. The
-  // ghost painter still clips with [0, getWidth()/pps] (content seconds), which
-  // is the suspect; these helpers only publish numbers, they fix nothing.
+  // V1 (guia MIDI): the window the canvas is actually showing, in project
+  // seconds: [scrollX, scrollX + visibleWidth] / pps. Since V2/D-373 the ghost
+  // painter clips with this same window; the V1 helpers below only publish
+  // numbers (measurement), they fix nothing by themselves.
   std::pair<double, double> getVisibleProjectRange() const;
   // Ghosts overlapping the visible TIME window (pitch ignored).
   std::size_t getMidiGuideGhostsInViewCount() const;
