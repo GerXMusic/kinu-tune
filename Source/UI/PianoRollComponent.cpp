@@ -4852,6 +4852,16 @@ HarmonyUtils::Result PianoRollComponent::applyHarmonyInterval(
   if (project == nullptr)
     return HarmonyUtils::Result::NoNotes;
 
+  // N3: harmony is not a batch operation yet, and its "empty selection means
+  // every note" fallback must never fire when the selection is in other items:
+  // it would transpose the whole active item instead.
+  if (documentBatchApplies())
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_item_bound"));
+    return HarmonyUtils::Result::NoNotes;
+  }
+
   // Harmony follows the project key even when drag-snap is set to chromatic.
   const ScaleMode keyMode = project->getPreferredScaleMode();
   const int keyRoot = project->getScaleRootNote();
@@ -5762,6 +5772,11 @@ bool PianoRollComponent::canGlueTarget(bool next) const
 {
   if (!project)
     return false;
+  // N3: gluing is a structural edit of one item (it joins a note with its
+  // contiguous neighbour of the same item); over a selection that reaches other
+  // items it is not offered as a batch.
+  if (documentBatchApplies())
+    return false;
   // Glue is a per-note structural edit: unlike the sliders it never falls
   // back to "all segments" when there is no selection.
   for (auto *note : getSelectedNotes())
@@ -5773,6 +5788,12 @@ bool PianoRollComponent::canGlueTarget(bool next) const
 
 bool PianoRollComponent::glueTargetNote(bool next)
 {
+  if (documentBatchApplies())
+  {
+    if (onBatchNotice)
+      onBatchNotice(TR("notice.batch_item_bound"));
+    return false;
+  }
   if (!project || !noteSplitter)
     return false;
 
