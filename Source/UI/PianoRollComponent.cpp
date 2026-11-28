@@ -19,6 +19,7 @@
 #include "../Utils/TimingQuantize.h"
 #include "../Undo/TimingAction.h"
 #include "../Undo/ResetNoteEditsAction.h"
+#include "../Undo/TrackDragAction.h"
 #include "../Undo/NoteMuteAction.h"
 #include "../Undo/NoteDeleteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
@@ -2320,16 +2321,6 @@ void PianoRollComponent::finishTrackGesture()
       } else if (target.onChanged) target.onChanged(true);
     }
     safe->invalidateBasePitchCache(); safe->repaint();
-  };
-  class TrackDragAction final : public UndoableAction {
-  public:
-    explicit TrackDragAction(std::function<void(bool)> apply) : apply(std::move(apply)) {}
-    void undo() override { apply(false); }
-    void redo() override { apply(true); }
-    juce::String getName() const override { return "Drag Track Notes"; }
-    bool ownsProjectContext() const override { return true; }
-    bool requiresAudioResynthesis() const override { return false; }
-  private: std::function<void(bool)> apply;
   };
   apply(true);
   if (undoManager) undoManager->addAction(std::make_unique<TrackDragAction>(apply));

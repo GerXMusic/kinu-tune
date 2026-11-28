@@ -114,6 +114,8 @@ El resto, por carpeta:
 - `UI/PianoRoll/` — render del piano roll (`NoteRenderer`, `PitchCurveRenderer`,
   `TimelineRenderer`, `WaveformBackgroundRenderer`), estados del ratón
   (`States/`), herramientas (`PitchToolController`), scroll/zoom, overview.
+  `States/NoteEditState.h` guarda el estado editable de una nota y los
+  predicados de «tiene ediciones».
 - `UI/Main/` — piezas de `MainComponent` ya extraídas: `AuditionOutput`,
   `DeferredRenderQueue`, `RenderState`, `SettingsManager`, `MenuHandler`,
   `ProjectIO`, `ExportHelper`, `ExportController`, `EditorTooltip`,
@@ -128,6 +130,7 @@ El resto, por carpeta:
 - `Models/` — `Note`, `Project`, `RenderPlan`, serialización, guías MIDI y lotes
   de documento (`Document*`).
 - `Undo/` — una acción por familia: nota, mute, borrar, drag, timing, pitch
-  drawing, inspector.
+  drawing, inspector; `ResetNoteEditsAction` (restablecer) y `TrackDragAction`
+  (arrastre de pistas) viven aquí.
 - `Utils/` — pitch (`NotePitch`, `PitchCurveProcessor`, `PitchToolOperations`),
   escala/armonía, ONNX, plataforma, localización y `Utils/UI/`.
