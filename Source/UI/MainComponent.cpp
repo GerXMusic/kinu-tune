@@ -5,6 +5,7 @@
 #include "CursorFollowPolicy.h"
 #include "HostTimelineStatePolicy.h"
 #include "../Plugin/AraDiagnostics.h"
+#include "Dialogs/AboutDialog.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
@@ -77,10 +78,6 @@ std::shared_ptr<juce::TooltipWindow> getEditorTooltipWindow()
   return window;
 }
 
-constexpr float aboutNoticesFontSize = 12.0f;
-const juce::Colour updateLogScrollbarTrack(0xFF0D0B0Bu);
-const juce::Colour updateLogScrollbarThumb(0xFF565656u);
-
 juce::File getMcpControlDirectory()
 {
   auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -99,142 +96,6 @@ bool writeMcpJsonAtomically(const juce::File &file, const juce::var &value)
   return temporary.moveFileTo(file);
 }
 
-void styleUpdateButton(juce::TextButton &button)
-{
-  button.setLookAndFeel(&DarkLookAndFeel::getInstance());
-  button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF5B5B5Bu));
-  button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF3E3E3Eu));
-  button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFEFEFEFu));
-  button.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFEFEFEFu));
-  button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-}
-
-void styleUpdateLogScrollBars(juce::Component &component)
-{
-  if (auto *scrollBar = dynamic_cast<juce::ScrollBar *>(&component))
-  {
-    scrollBar->setLookAndFeel(&DarkLookAndFeel::getInstance());
-    scrollBar->setColour(juce::ScrollBar::backgroundColourId, updateLogScrollbarTrack);
-    scrollBar->setColour(juce::ScrollBar::trackColourId, updateLogScrollbarTrack);
-    scrollBar->setColour(juce::ScrollBar::thumbColourId, updateLogScrollbarThumb);
-  }
-
-  for (int i = 0; i < component.getNumChildComponents(); ++i)
-    if (auto *child = component.getChildComponent(i))
-      styleUpdateLogScrollBars(*child);
-}
-
-class AboutContent : public juce::Component
-{
-public:
-  AboutContent()
-      : closeButton(TR("dialog.close"))
-  {
-    noticesEditor.setMultiLine(true);
-    noticesEditor.setReadOnly(true);
-    noticesEditor.setScrollbarsShown(true);
-    noticesEditor.setScrollBarThickness(8);
-    noticesEditor.setCaretVisible(false);
-    noticesEditor.setPopupMenuEnabled(false);
-    noticesEditor.setText(
-        juce::String::fromUTF8(BinaryData::THIRD_PARTY_NOTICES_txt,
-                               BinaryData::THIRD_PARTY_NOTICES_txtSize),
-        juce::dontSendNotification);
-    noticesEditor.applyFontToAllText(AppFont::getFont(aboutNoticesFontSize));
-    noticesEditor.setColour(juce::TextEditor::backgroundColourId,
-                            juce::Colour(0xFF191717u));
-    noticesEditor.setColour(juce::TextEditor::textColourId,
-                            APP_COLOR_TEXT_PRIMARY);
-    noticesEditor.setColour(juce::TextEditor::outlineColourId,
-                            juce::Colours::transparentBlack);
-    noticesEditor.setColour(juce::TextEditor::focusedOutlineColourId,
-                            juce::Colours::transparentBlack);
-    noticesEditor.setColour(juce::TextEditor::shadowColourId,
-                            juce::Colours::transparentBlack);
-    noticesEditor.setColour(juce::ScrollBar::backgroundColourId,
-                            updateLogScrollbarTrack);
-    noticesEditor.setColour(juce::ScrollBar::trackColourId,
-                            updateLogScrollbarTrack);
-    noticesEditor.setColour(juce::ScrollBar::thumbColourId,
-                            updateLogScrollbarThumb);
-    noticesEditor.setLookAndFeel(&DarkLookAndFeel::getInstance());
-    styleUpdateLogScrollBars(noticesEditor);
-    addAndMakeVisible(noticesEditor);
-
-    styleUpdateButton(closeButton);
-    addAndMakeVisible(closeButton);
-
-    setSize(550, 386);
-  }
-
-  ~AboutContent() override
-  {
-    noticesEditor.setLookAndFeel(nullptr);
-    closeButton.setLookAndFeel(nullptr);
-  }
-
-  void resized() override
-  {
-    auto bounds = getLocalBounds().reduced(24, 20);
-    noticesEditor.setBounds(bounds.removeFromTop(311));
-    styleUpdateLogScrollBars(noticesEditor);
-
-    auto buttonRow = getLocalBounds().removeFromBottom(46);
-    const int buttonW = 150;
-    const int buttonH = 26;
-    closeButton.setBounds((getWidth() - buttonW) / 2, buttonRow.getY() + 5,
-                          buttonW, buttonH);
-  }
-
-  void paint(juce::Graphics &g) override
-  {
-    auto bounds = getLocalBounds().toFloat();
-    g.setColour(juce::Colour(0xFF333333u));
-    g.fillRoundedRectangle(bounds, 7.0f);
-  }
-
-  std::function<void()> onClose;
-  juce::TextButton closeButton;
-
-private:
-  juce::TextEditor noticesEditor;
-};
-
-class AboutDialog : public juce::DialogWindow
-{
-public:
-  explicit AboutDialog(juce::Component *parent)
-      : juce::DialogWindow("", APP_COLOR_BACKGROUND, true)
-  {
-    setOpaque(false);
-    setUsingNativeTitleBar(false);
-    setTitleBarHeight(0);
-    setResizable(false, false);
-    setTitleBarButtonsRequired(0, false);
-
-    auto *content = new AboutContent();
-    content->onClose = [this] { closeButtonPressed(); };
-    content->closeButton.onClick = content->onClose;
-
-    setContentOwned(content, true);
-    setSize(550, 386);
-
-    if (parent != nullptr)
-      centreAroundComponent(parent, getWidth(), getHeight());
-    else
-      centreWithSize(getWidth(), getHeight());
-  }
-
-  void closeButtonPressed() override
-  {
-    exitModalState(0);
-  }
-
-  void paint(juce::Graphics &g) override
-  {
-    juce::ignoreUnused(g);
-  }
-};
 } // namespace
 
 class UiBrightnessEffect final : public juce::ImageEffectFilter
@@ -716,7 +577,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
     {
       LOG("engine: cambio global rechazado, el transporte esta sonando (D-288)");
       enginePanel.setBlockNotice(
-          "Para cambiar de motor, para la reproducci�n.");
+          "Para cambiar de motor, para la reproducciï¿½n.");
       parameterPanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
       return;
     }
@@ -741,7 +602,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setAiResynthesisAvailable(GpuDeviceList::hasGpuInference());
 
   // Rail engine drawer: same callbacks as the old rendering panel, plus the
-  // per-block engine in Advanced (gui-decision.md Â§2).
+  // per-block engine in Advanced (gui-decision.md Ã‚Â§2).
   enginePanel.setSynthesisEngine(settingsManager->getSynthesisEngineType());
   enginePanel.onSynthesisEngineChanged = [this](SynthesisEngineType type)
   {
@@ -1264,10 +1125,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
 void MainComponent::showAboutPopup()
 {
-  auto *dialog = new AboutDialog(this);
-  dialog->setVisible(true);
-  dialog->toFront(true);
-  dialog->enterModalState(true, nullptr, true);
+  showAboutDialog(this);
 }
 
 void MainComponent::bindBackendController(EditorController *controller)
@@ -2346,7 +2204,7 @@ void MainComponent::pollMcpControl()
       response->setProperty("sources", juce::var(sourcesArray));
       response->setProperty("notes", juce::var(notesArray));
       response->setProperty("outside", juce::var(outsideArray));
-      // N2: the document selection — total and the same total split the two
+      // N2: the document selection â€” total and the same total split the two
       // ways the index publishes it (per window and per source).
       auto selectionObject = new juce::DynamicObject();
       selectionObject->setProperty("has_index", index != nullptr);
@@ -2776,12 +2634,12 @@ void MainComponent::pollMcpControl()
         for (const auto &value : *indicesVar.getArray())
           indices.push_back(static_cast<int>(value));
       if (!engineValid || indices.empty())
-        response->setProperty("error", "Se requieren índices de nota y un motor válido: Inherit, Vocoder, PSOLA o Pitchcore.");
+        response->setProperty("error", "Se requieren Ã­ndices de nota y un motor vÃ¡lido: Inherit, Vocoder, PSOLA o Pitchcore.");
       else if (isPlaying)
       {
         // D-288: misma regla que la UI; el canal no puede discrepar de ella.
         response->setProperty("error",
-                              "Para cambiar de motor hay que parar la reproducción (D-288).");
+                              "Para cambiar de motor hay que parar la reproducciÃ³n (D-288).");
         response->setProperty("blocked_while_playing", true);
       }
       else
@@ -2792,7 +2650,7 @@ void MainComponent::pollMcpControl()
         {
           if (index < 0 || index >= static_cast<int>(notes.size()))
           {
-            response->setProperty("error", "Índice de nota fuera de rango; no se aplicó ningún cambio.");
+            response->setProperty("error", "Ãndice de nota fuera de rango; no se aplicÃ³ ningÃºn cambio.");
             break;
           }
           before.add(noteEngineToString(notes[static_cast<size_t>(index)].getEngine()));
@@ -2826,7 +2684,7 @@ void MainComponent::pollMcpControl()
           response->setProperty("engine", engineText);
           response->setProperty("ok", refused == 0);
           if (refused > 0)
-            response->setProperty("error", "D-129 rechazó notas sin silencio válido; ver refused y unchanged_indices.");
+            response->setProperty("error", "D-129 rechazÃ³ notas sin silencio vÃ¡lido; ver refused y unchanged_indices.");
         }
       }
     }
@@ -3108,7 +2966,7 @@ void MainComponent::pollMcpControl()
       {
         // D-288: misma regla que la UI.
         response->setProperty("error",
-                              "Para cambiar de motor hay que parar la reproducción (D-288).");
+                              "Para cambiar de motor hay que parar la reproducciÃ³n (D-288).");
         response->setProperty("blocked_while_playing", true);
       }
       else
@@ -5063,7 +4921,7 @@ void MainComponent::markRenderDirty()
 
   ++dirtyRevision;
   // D-285/2: una edicion nueva es intencion nueva: reinicia el presupuesto de
-  // reintento, para que el trabajo no herede un «ya lo intente» viejo.
+  // reintento, para que el trabajo no herede un Â«ya lo intenteÂ» viejo.
   retryAttemptsForRevision = 0;
   lastRetryRevision = 0;
   LOG("P1b: markRenderDirty rev=" + juce::String(dirtyRevision) +
@@ -5125,7 +4983,7 @@ void MainComponent::serviceEditRender()
 // D-285: red por si un cierre se pierde igual. Si el estado dice que hay un
 // render en vuelo pero no hay ninguna peticion viva durante 3 s, se suelta la
 // cadena y se re-arma un intento (uno por revision). No es un parche del
-// sintoma —ese lo cierran los pestillos de finishBackendRender—, es lo que
+// sintoma â€”ese lo cierran los pestillos de finishBackendRenderâ€”, es lo que
 // impide que un cierre perdido vuelva a dejar el editor sin poder renderizar.
 void MainComponent::rescueStalledRender()
 {
@@ -5243,8 +5101,8 @@ void MainComponent::pushSweepState()
 // the transport; the cursor does not advance until the last block is done.
 void MainComponent::flushDirtyBlocks()
 {
-  // D-292: una cadena de edición/cambio de motor en vuelo manda. El Play no la
-  // cancela ni arranca otra: suena el último audio publicado y el cierre de esa
+  // D-292: una cadena de ediciÃ³n/cambio de motor en vuelo manda. El Play no la
+  // cancela ni arranca otra: suena el Ãºltimo audio publicado y el cierre de esa
   // cadena pide el pase que falte. Antes, este camino (toolbar/UI) llamaba a
   // resynthesizeIncremental y el backend cancelaba el pase en curso.
   if (renderState.editRenderInFlight || renderState.mcpRenderPending)
@@ -5398,7 +5256,7 @@ void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
   const auto engine = editorController ? editorController->getSynthesisEngineType()
                                        : defaultSynthesisEngineType();
   parameterPanel.setRenderStatus(status, engine);
-  const char *text = status == ParameterPanel::RenderStatus::Rendering ? "Renderingâ€¦"
+  const char *text = status == ParameterPanel::RenderStatus::Rendering ? "RenderingÃ¢â‚¬Â¦"
                      : status == ParameterPanel::RenderStatus::Done    ? "Last render: "
                      : status == ParameterPanel::RenderStatus::Failed  ? "Render failed"
                                                                        : "";
@@ -5481,7 +5339,7 @@ int MainComponent::applyNoteEngineToIndices(const std::vector<int> &indices,
   {
     LOG("engine block: rechazado, el transporte esta sonando (D-288)");
     enginePanel.setBlockNotice(
-        "Para cambiar de motor, para la reproducci�n.");
+        "Para cambiar de motor, para la reproducciï¿½n.");
     return 0;
   }
   auto &notes = project->getNotes();
@@ -7109,7 +6967,7 @@ void MainComponent::refreshMidiGuideUi()
     {
       juce::String label =
           ref.label.isEmpty() ? juce::String("MIDI") : ref.label;
-      label << "  ·  " << ref.notes;
+      label << "  Â·  " << ref.notes;
       labels.add(label);
       ids.add(ref.id);
     }

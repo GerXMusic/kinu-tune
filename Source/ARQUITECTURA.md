@@ -41,7 +41,7 @@ archivo citado aquí ya no existe, el mapa está viejo.
 
 | Síntoma | Primer sitio |
 |---|---|
-| El diálogo «Acerca de» | `UI/MainComponent.cpp:127` (`AboutContent`; los avisos de terceros salen de `BinaryData::THIRD_PARTY_NOTICES_txt`, línea 140), diálogo en `:203`, `showAboutPopup()` en `:1265`; se abre desde el menú en `:8370` |
+| El diálogo «Acerca de» | `UI/Dialogs/AboutDialog.{h,cpp}` (`AboutContent`, los avisos de terceros salen de `BinaryData::THIRD_PARTY_NOTICES_txt`; `showAboutDialog()`); `MainComponent::showAboutPopup()` solo delega; se abre desde el menú en `UI/MainComponent.cpp` |
 | El undo de una nota | `Undo/NoteActions.h`, `Undo/PitchUndoManager.h`; tras un cambio de historial se llama `MainComponent::afterHistoryChange` y `PianoRollComponent::dropTransientNotePointers()` |
 | El audio de una nota muda | se decide en `Models/Note.h:193` (`isMuted()`), `Models/Project.cpp:173-208` (`shouldResetNeutralNoteToOriginal`, `noteHasAudioRelevantEdit`) y se escribe por `Models/DocumentNoteBatch.cpp:287` (`setMuted`) |
 | El corte / la unión | geometría en `UI/PianoRoll/NoteSplitter.cpp` (`splitNote`, `mergeNotes`); gesto en `UI/PianoRoll/States/SplitHandler.cpp` y `PianoRollComponent.cpp`; undo en `Undo/InspectorEditAction.h` / `NoteActions.h` |
@@ -54,9 +54,10 @@ archivo citado aquí ya no existe, el mapa está viejo.
 
 ## Las cinco preguntas del lector nuevo
 
-1. **«Acerca de»**: `MainComponent::showAboutPopup()` (`UI/MainComponent.cpp:1265`),
-   contenido en `AboutContent` (`:127`); los avisos de terceros son
-   `BinaryData::THIRD_PARTY_NOTICES_txt` (`:140`).
+1. **«Acerca de»**: `MainComponent::showAboutPopup()` (`UI/MainComponent.cpp`) delega
+   en `showAboutDialog()` (`UI/Dialogs/AboutDialog.h`); el contenido está en
+   `AboutContent` (`UI/Dialogs/AboutDialog.cpp`) y los avisos de terceros son
+   `BinaryData::THIRD_PARTY_NOTICES_txt`.
 2. **Nota muteada**: `Note::isMuted()` (`Models/Note.h:193`); el render lo trata
    como edición audible en `Project::noteHasAudioRelevantEdit`
    (`Models/Project.cpp:196`).
