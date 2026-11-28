@@ -3575,6 +3575,31 @@ void MainComponent::addRecentFile(const juce::File &file)
   fileDropController->addRecentFile(file);
 }
 
+void MainComponent::refreshLocalisedText()
+{
+  // Command names and categories are read back from the string table every
+  // time JUCE asks for them, so the menus only need to be told to reread.
+  if (commandManager)
+    commandManager->commandStatusChanged();
+
+  if (menuHandler)
+  {
+    menuHandler->menuItemsChanged();
+
+#if JUCE_MAC
+    if (!isPluginMode())
+    {
+      macExtraAppleMenuItems = menuHandler->getMacExtraAppleMenu();
+      juce::MenuBarModel::setMacMainMenu(menuHandler.get(),
+                                         &macExtraAppleMenuItems);
+    }
+#endif
+  }
+
+  resized();
+  repaint();
+}
+
 void MainComponent::openRecentFile(const juce::File &file)
 {
   fileDropController->openRecentFile(file);
