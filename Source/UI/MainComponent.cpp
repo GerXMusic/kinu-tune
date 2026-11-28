@@ -15,6 +15,7 @@
 #include "../Models/ProjectSerializer.h"
 #include "../Models/MidiGuideRegionScope.h"
 #include "../Models/GuideApplicationPlan.h"
+#include "MidiGuideReveal.h"
 #include "PianoRoll/TempoGridView.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/NotePitch.h"
@@ -900,6 +901,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   midiGuidePanel.onApplyRequested = [this] { applyMidiGuide(); };
   midiGuidePanel.onRemoveRequested = [this] { removeSelectedMidiGuide(); };
+  midiGuidePanel.onRevealRequested = [this] { revealMidiGuideInView(); };
   midiGuidePanel.onGhostsToggled = [this](bool visible)
   { setMidiGuideGhostsVisible(visible); };
   midiGuidePanel.onSelectionChanged = [this](int index)
@@ -7237,6 +7239,77 @@ void MainComponent::setMidiGuideGhostsVisible(bool visible)
     return;
   showMidiGuideGhosts = visible;
   refreshMidiGuideUi();
+}
+
+void MainComponent::revealMidiGuideInView()
+{
+  if (auto *project = getProject())
+    revealMidiGuideInView(*project);
+}
+
+void MainComponent::revealMidiGuideInView(Project &project)
+{
+  // "Ver guia" implica verla: si los fantasmas estan ocultos, se muestran. Es
+  // estado de la vista, no del proyecto (sin dirty/undo/render).
+  if (!showMidiGuideGhosts)
+    setMidiGuideGhostsVisible(true);
+
+  const auto &layer = pianoRoll.getMidiGuideGhosts();
+  if (layer.empty())
+    return;
+
+  const auto guidePitch = pianoRoll.getMidiGuideGhostPitchRange();
+  if (guidePitch.first > guidePitch.second)
+    return;
+
+  const auto visible = pianoRoll.getVisibleProjectRange();
+
+  float activeMin = std::numeric_limits<float>::max();
+  float activeMax = std::numeric_limits<float>::lowest();
+  for (const auto &note : project.getNotes())
+  {
+    if (note.isRest())
+      continue;
+    const float midi = note.getAdjustedMidiNote();
+    if (!std::isfinite(midi))
+      continue;
+    activeMin = std::min(activeMin, midi);
+    activeMax = std::max(activeMax, midi);
+  }
+
+  MidiGuideRevealInput input;
+  input.hasGuide = true;
+  input.guideStartSeconds =
+      pianoRoll.timelineToProject(layer.firstHostSeconds());
+  input.guideEndSeconds =
+      pianoRoll.timelineToProject(layer.lastHostSeconds());
+  input.guidePitchMin = guidePitch.first;
+  input.guidePitchMax = guidePitch.second;
+  input.hasActiveNotes = activeMin <= activeMax;
+  input.activePitchMin = activeMin;
+  input.activePitchMax = activeMax;
+  input.visibleStartSeconds = visible.first;
+  input.visibleEndSeconds = visible.second;
+  input.pixelsPerSecond = static_cast<double>(pianoRoll.getPixelsPerSecond());
+  input.timelineStartSeconds = pianoRoll.getTimelineStart();
+  input.timelineEndSeconds = pianoRoll.getTimelineDuration();
+
+  const auto plan = computeMidiGuideRevealPlan(input);
+  if (!plan.hasGuide)
+    return;
+
+  // Solo la vista: zoom horizontal intacto (solo se mueve scrollX), vertical
+  // ajustado con el setter publico. Nada del proyecto cambia. El semitono de
+  // arriba es el mismo margen que usa fitAnalyzedPitchRangeToView y evita que
+  // el borde redondeado deje fuera los fantasmas del pitch maximo.
+  if (plan.scrollRequested)
+  {
+    pianoRoll.setScrollX(plan.scrollX);
+    if (pianoRoll.onScrollChanged)
+      pianoRoll.onScrollChanged(pianoRoll.getScrollX());
+  }
+  pianoRoll.fitPitchRangeToView(plan.pitchMin, plan.pitchMax + 1.0f);
+  pianoRoll.repaint();
 }
 
 void MainComponent::syncLiveMidiGuides()

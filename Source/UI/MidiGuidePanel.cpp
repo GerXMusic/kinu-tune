@@ -33,6 +33,17 @@ MidiGuidePanel::MidiGuidePanel()
     };
     addAndMakeVisible(removeButton);
 
+    revealButton.setButtonText(TR("midi.reveal"));
+    revealButton.setColour(juce::TextButton::buttonColourId,
+                           APP_COLOR_SURFACE_RAISED);
+    revealButton.onClick = [this]
+    {
+        if (onRevealRequested)
+            onRevealRequested();
+    };
+    revealButton.setEnabled(false);
+    addAndMakeVisible(revealButton);
+
     ghostsButton.setButtonText(TR("midi.ghosts"));
     ghostsButton.setColour(juce::ToggleButton::textColourId,
                            APP_COLOR_TEXT_PRIMARY);
@@ -67,6 +78,7 @@ void MidiGuidePanel::refreshLocalisedText()
     importButton.setButtonText(TR("midi.import"));
     applyButton.setButtonText(TR("midi.apply"));
     removeButton.setButtonText(TR("midi.remove"));
+    revealButton.setButtonText(TR("midi.reveal"));
     ghostsButton.setButtonText(TR("midi.ghosts"));
     hint.setText(TR("midi.hint"), juce::dontSendNotification);
 }
@@ -80,6 +92,7 @@ void MidiGuidePanel::setGuides(const juce::StringArray& labels,
                             selectedIndex);
     applyButton.setEnabled(selected >= 0);
     removeButton.setEnabled(selected >= 0);
+    revealButton.setEnabled(selected >= 0);
     repaint();
 }
 
@@ -157,6 +170,7 @@ void MidiGuidePanel::mouseDown(const juce::MouseEvent& e)
     selected = index;
     applyButton.setEnabled(true);
     removeButton.setEnabled(true);
+    revealButton.setEnabled(true);
     repaint();
     if (onSelectionChanged)
         onSelectionChanged(selected);
@@ -175,6 +189,9 @@ void MidiGuidePanel::resized()
     applyButton.setBounds(secondRow.removeFromLeft(secondRow.getWidth() / 2 - 3));
     secondRow.removeFromLeft(6);
     ghostsButton.setBounds(secondRow);
+
+    area.removeFromTop(6);
+    revealButton.setBounds(area.removeFromTop(30));
 
     area.removeFromTop(10);
     hint.setBounds(area.removeFromBottom(52));

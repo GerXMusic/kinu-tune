@@ -354,6 +354,7 @@
   "inspector.mute_note": "ノートをミュート",
   "inspector.delete_note": "ノートを削除",
   "midi.import": "読み込み…",
+  "midi.reveal": "ガイドを表示",
   "midi.remove": "削除",
   "midi.empty": "MIDIガイドなし",
   "midi.track_applied": "適用: %1 ノート（%2 変更）/%3 アイテム。スキップ: %4 アイテムなし、%5 未解析、%6 別ソース、%7 該当ノートなし",

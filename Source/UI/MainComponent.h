@@ -306,7 +306,10 @@ public:
   void removeSelectedMidiGuide();
   void setMidiGuideSelected(int index);
   void setMidiGuideGhostsVisible(bool visible);
-  // Rebuilds the drawer list, the ghost layer and the published snapshot from
+  // V4c (D-378): the "Show guide" button. Pure plan + public view setters:
+  // scroll horizontal minimo al inicio de la guia y ajuste vertical que la
+  // incluye. No dirty, no undo, no render. Never called on open/reopen.
+  void revealMidiGuideInView();  // Rebuilds the drawer list, the ghost layer and the published snapshot from
   // the document store + tempo map. Never reads the active Project's copy.
   void refreshMidiGuideUi();
   // Materializes any guide_*.json the REAPER script left in the config folder
@@ -507,6 +510,8 @@ private:
   // and to the controllers after the project lands in the canvas.
   void applyProjectSynthesisEngine();
   void fitAnalyzedPitchRangeToView(Project &project);
+  // V4c: the project-explicit path, so tests and the button share one code.
+  void revealMidiGuideInView(Project &project);
   // Whole timeline horizontally, the sung range vertically (Shift+F).
   void zoomToFull();
   void applyUiBrightness(double brightnessPercent);

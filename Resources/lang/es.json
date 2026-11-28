@@ -310,6 +310,7 @@
   "inspector.mute_note": "Silenciar nota",
   "inspector.delete_note": "Eliminar nota",
   "midi.import": "Importar…",
+  "midi.reveal": "Ver guía",
   "midi.remove": "Quitar",
   "midi.apply": "Aplicar",
   "midi.ghosts": "Ver fantasmas",

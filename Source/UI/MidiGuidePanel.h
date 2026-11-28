@@ -41,6 +41,7 @@ public:
     std::function<void()> onImportRequested;
     std::function<void()> onApplyRequested;
     std::function<void()> onRemoveRequested;
+    std::function<void()> onRevealRequested;
     std::function<void(bool)> onGhostsToggled;
     std::function<void(int)> onSelectionChanged;
 
@@ -48,6 +49,8 @@ private:
     juce::TextButton importButton;
     juce::TextButton applyButton;
     juce::TextButton removeButton;
+    // V4c: only a user action; no auto-fit on open/reopen (D-378).
+    juce::TextButton revealButton;
     juce::ToggleButton ghostsButton;
     juce::StringArray guides;
     juce::StringArray guideIds;

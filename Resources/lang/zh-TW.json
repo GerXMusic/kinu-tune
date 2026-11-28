@@ -303,6 +303,7 @@
   "inspector.mute_note": "靜音音符",
   "inspector.delete_note": "刪除音符",
   "midi.import": "匯入…",
+  "midi.reveal": "顯示指南",
   "midi.remove": "移除",
   "midi.empty": "沒有 MIDI 參考",
   "midi.track_applied": "已套用 %1 個音符（%2 個變更），共 %3 個項目；略過：%4 無項目、%5 未分析、%6 其他來源、%7 無符合音符",

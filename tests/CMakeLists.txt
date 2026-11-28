@@ -300,6 +300,13 @@ target_link_libraries(MidiGuideNavigationTests PRIVATE pitchnet_ui)
 target_compile_features(MidiGuideNavigationTests PRIVATE cxx_std_17)
 add_test(NAME MidiGuideNavigationTests COMMAND MidiGuideNavigationTests)
 
+# V4c (guia MIDI): boton "Ver guia". Funcion pura del plan (tiempo/pitch/scroll)
+# y el camino real del editor: ver sin dirty, sin undo y sin render.
+add_executable(MidiGuideRevealTests MidiGuideRevealTests.cpp)
+target_link_libraries(MidiGuideRevealTests PRIVATE pitchnet_ui)
+target_compile_features(MidiGuideRevealTests PRIVATE cxx_std_17)
+add_test(NAME MidiGuideRevealTests COMMAND MidiGuideRevealTests)
+
 # V3 (guia MIDI): carga y refresco deterministas. Sidecar frente a scan
 # autoritativo, lastLiveIds, setDocumentKey tardio + midiGuidesChanged y la
 # cadena de vistas sin sync. Enlaza pitchnet_ui por MainComponent.

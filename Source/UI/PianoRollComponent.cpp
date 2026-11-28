@@ -4003,6 +4003,27 @@ PianoRollComponent::getMidiGuideGhostPitchRangeInVisibleTime() const
   return {minPitch, maxPitch};
 }
 
+std::pair<float, float> PianoRollComponent::getMidiGuideGhostPitchRange() const
+{
+  const std::pair<float, float> none{1.0f, 0.0f};
+  if (midiGuideGhosts.empty())
+    return none;
+
+  float minPitch = std::numeric_limits<float>::max();
+  float maxPitch = std::numeric_limits<float>::lowest();
+  for (const auto &ghost : midiGuideGhosts.all())
+  {
+    if (!std::isfinite(ghost.pitch))
+      continue;
+    minPitch = std::min(minPitch, ghost.pitch);
+    maxPitch = std::max(maxPitch, ghost.pitch);
+  }
+
+  if (minPitch > maxPitch)
+    return none;
+  return {minPitch, maxPitch};
+}
+
 void PianoRollComponent::drawMidiGuideGhosts(juce::Graphics &g)
 {
   midiGuideGhostsPaintedLast = 0;

@@ -359,6 +359,9 @@ public:
   // {min, max}; {1, 0} when none. The vertical fit uses it to keep the guide on
   // screen without touching the zoom when the guide is not in the window.
   std::pair<float, float> getMidiGuideGhostPitchRangeInVisibleTime() const;
+  // V4c: pitch span of the WHOLE ghost layer, {min, max}; {1, 0} when empty.
+  // The "Show guide" button feeds it to computeMidiGuideRevealPlan.
+  std::pair<float, float> getMidiGuideGhostPitchRange() const;
   // Ghosts the last paint counted as painted: they passed the current clip and
   // also overlap the visible time window. 0 before the first paint.
   int getMidiGuideGhostsPaintedLast() const {

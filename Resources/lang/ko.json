@@ -303,6 +303,7 @@
   "inspector.mute_note": "노트 음소거",
   "inspector.delete_note": "노트 삭제",
   "midi.import": "가져오기…",
+  "midi.reveal": "가이드 보기",
   "midi.remove": "제거",
   "midi.empty": "MIDI 가이드 없음",
   "midi.track_applied": "적용: %1개 노트(%2개 변경), %3개 아이템. 건너뜀: %4 아이템 없음, %5 미분석, %6 다른 소스, %7 노트 없음",

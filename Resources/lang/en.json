@@ -373,6 +373,7 @@
   "inspector.mute_note": "Mute Note",
   "inspector.delete_note": "Delete Note",
   "midi.import": "Import…",
+  "midi.reveal": "Show guide",
   "midi.remove": "Remove",
   "midi.apply": "Apply",
   "midi.ghosts": "Show ghosts",
