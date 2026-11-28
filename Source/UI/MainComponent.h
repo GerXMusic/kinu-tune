@@ -834,6 +834,14 @@ private:
   void writeMidiGuideCompatCache();
   int selectedMidiGuide = -1;
   bool showMidiGuideGhosts = true;
+  // V4c-b: span of the SELECTED guide, filled from the guide model on every
+  // refresh no matter the ghosts tick. The "Show guide" button must not depend
+  // on the ghost layer: with the tick off that layer is empty by design.
+  bool hasMidiGuideSpan = false;
+  double midiGuideHostStart = 0.0;
+  double midiGuideHostEnd = 0.0;
+  float midiGuidePitchMin = 0.0f;
+  float midiGuidePitchMax = 0.0f;
   // R10/D-363: content hash of the guide as it was when the user last applied
   // it. Empty = never applied, and then the "changed" warning is not shown.
   juce::String lastAppliedMidiGuideHash;

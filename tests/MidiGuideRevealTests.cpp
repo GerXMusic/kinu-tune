@@ -42,6 +42,17 @@ struct MainComponentTestAccess
     {
         return mc.deferredRenders.dirtyBlockCount();
     }
+    bool ghostsVisible() const { return mc.showMidiGuideGhosts; }
+    void setGhostsVisible(bool visible) { mc.showMidiGuideGhosts = visible; }
+    void setGuideSpan(double hostStart, double hostEnd, float pitchMin,
+                      float pitchMax)
+    {
+        mc.hasMidiGuideSpan = true;
+        mc.midiGuideHostStart = hostStart;
+        mc.midiGuideHostEnd = hostEnd;
+        mc.midiGuidePitchMin = pitchMin;
+        mc.midiGuidePitchMax = pitchMax;
+    }
 };
 
 namespace
@@ -292,6 +303,48 @@ int main()
     CHECK(cyan > 0);
 
     // La vista se movio, el proyecto no.
+    CHECK(roll.getPixelsPerSecond() == ppsBefore);
+    CHECK(access.canUndo() == undoBefore);
+    CHECK(access.pendingRenderBlocks() == rendersBefore);
+    CHECK(project.getDirtyFrameRange() == dirtyBefore);
+    CHECK(project.getNotes().size() == notesBefore);
+
+    // Tick ON (el caso normal): pulsar otra vez no oculta nada ni alterna el
+    // estado; el boton no es un toggle y la guia sigue en vista.
+    CHECK(access.ghostsVisible());
+    const auto inViewOn = roll.getMidiGuideGhostsInViewCount();
+    access.reveal(project);
+    CHECK(access.ghostsVisible());
+    CHECK(roll.getMidiGuideGhostsInViewCount() == inViewOn);
+
+    // Tick OFF: la capa de fantasmas esta vacia por diseno, pero el boton debe
+    // traer la guia igual usando el span del modelo (V4c-b). Un clic enciende
+    // los fantasmas (ida, no toggle) y deja la vista en el inicio de la guia.
+    roll.setScrollX(80.0 * kPps);
+    roll.setPixelsPerSemitone(30.0f);
+    roll.setScrollY(510.0);
+    roll.setMidiGuideGhosts({});
+    access.setGhostsVisible(false);
+    access.setGuideSpan(kProjectFirst + kOffset, kProjectLast + kOffset,
+                        53.0f, 74.0f);
+    paintToImage(roll);
+    CHECK(roll.getMidiGuideGhostsInViewCount() == 0);
+
+    access.reveal(project);
+    paintToImage(roll);
+    const auto afterOff = roll.getVisibleProjectRange();
+    const double ppsSemiOff = roll.getPixelsPerSemitone();
+    const double topOff =
+        MAX_MIDI_NOTE - roll.getScrollY() / ppsSemiOff;
+    const double bottomOff =
+        MAX_MIDI_NOTE -
+        (roll.getScrollY() + roll.getVisibleContentHeight()) / ppsSemiOff;
+    std::printf("button_tick_off     window=[%.3f,%.3f] pitch=[%.1f,%.1f]\n",
+                afterOff.first, afterOff.second, bottomOff, topOff);
+    CHECK(access.ghostsVisible());
+    CHECK(afterOff.first <= kProjectFirst + 1.0e-6);
+    CHECK(topOff >= 74.0);
+    CHECK(bottomOff <= 53.0);
     CHECK(roll.getPixelsPerSecond() == ppsBefore);
     CHECK(access.canUndo() == undoBefore);
     CHECK(access.pendingRenderBlocks() == rendersBefore);

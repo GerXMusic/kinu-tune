@@ -7249,18 +7249,33 @@ void MainComponent::revealMidiGuideInView()
 
 void MainComponent::revealMidiGuideInView(Project &project)
 {
-  // "Ver guia" implica verla: si los fantasmas estan ocultos, se muestran. Es
-  // estado de la vista, no del proyecto (sin dirty/undo/render).
-  if (!showMidiGuideGhosts)
-    setMidiGuideGhostsVisible(true);
-
-  const auto &layer = pianoRoll.getMidiGuideGhosts();
-  if (layer.empty())
-    return;
-
-  const auto guidePitch = pianoRoll.getMidiGuideGhostPitchRange();
-  if (guidePitch.first > guidePitch.second)
-    return;
+  // V4c-b: la guia sale de su modelo (span guardado en refreshMidiGuideUi), no
+  // de la capa de fantasmas: con el tick apagado esa capa esta vacia por
+  // diseno y el boton tiene que funcionar igual. La capa queda solo de respaldo.
+  double guideHostStart = 0.0;
+  double guideHostEnd = 0.0;
+  float guidePitchMin = 0.0f;
+  float guidePitchMax = 0.0f;
+  if (hasMidiGuideSpan)
+  {
+    guideHostStart = midiGuideHostStart;
+    guideHostEnd = midiGuideHostEnd;
+    guidePitchMin = midiGuidePitchMin;
+    guidePitchMax = midiGuidePitchMax;
+  }
+  else
+  {
+    const auto &layer = pianoRoll.getMidiGuideGhosts();
+    if (layer.empty())
+      return;
+    guideHostStart = layer.firstHostSeconds();
+    guideHostEnd = layer.lastHostSeconds();
+    const auto layerPitch = pianoRoll.getMidiGuideGhostPitchRange();
+    if (layerPitch.first > layerPitch.second)
+      return;
+    guidePitchMin = layerPitch.first;
+    guidePitchMax = layerPitch.second;
+  }
 
   const auto visible = pianoRoll.getVisibleProjectRange();
 
@@ -7279,12 +7294,10 @@ void MainComponent::revealMidiGuideInView(Project &project)
 
   MidiGuideRevealInput input;
   input.hasGuide = true;
-  input.guideStartSeconds =
-      pianoRoll.timelineToProject(layer.firstHostSeconds());
-  input.guideEndSeconds =
-      pianoRoll.timelineToProject(layer.lastHostSeconds());
-  input.guidePitchMin = guidePitch.first;
-  input.guidePitchMax = guidePitch.second;
+  input.guideStartSeconds = pianoRoll.timelineToProject(guideHostStart);
+  input.guideEndSeconds = pianoRoll.timelineToProject(guideHostEnd);
+  input.guidePitchMin = guidePitchMin;
+  input.guidePitchMax = guidePitchMax;
   input.hasActiveNotes = activeMin <= activeMax;
   input.activePitchMin = activeMin;
   input.activePitchMax = activeMax;
@@ -7297,6 +7310,12 @@ void MainComponent::revealMidiGuideInView(Project &project)
   const auto plan = computeMidiGuideRevealPlan(input);
   if (!plan.hasGuide)
     return;
+
+  // "Ver guia" implica verla: si los fantasmas estan ocultos, se muestran. Es
+  // un efecto de ida (no un toggle) y es estado de la vista, no del proyecto.
+  // Se hace despues de calcular el plan, con el span ya leido del modelo.
+  if (!showMidiGuideGhosts)
+    setMidiGuideGhostsVisible(true);
 
   // Solo la vista: zoom horizontal intacto (solo se mueve scrollX), vertical
   // ajustado con el setter publico. Nada del proyecto cambia. El semitono de
@@ -7432,6 +7451,7 @@ void MainComponent::refreshMidiGuideUi()
   midiGuidePanel.setGhostsVisible(showMidiGuideGhosts);
 
   std::vector<PianoRollComponent::MidiGuideGhost> ghosts;
+  hasMidiGuideSpan = false;
   const auto *guide = documentMidiGuides != nullptr
                           ? documentMidiGuides->guideAt(selectedMidiGuide)
                           : nullptr;
@@ -7457,8 +7477,27 @@ void MainComponent::refreshMidiGuideUi()
       details << "\n" << TR("midi.changed_since_apply");
     midiGuidePanel.setGuideDetails(details);
 
+    // V4c-b: the span comes from the guide model, not from the ghost layer,
+    // so the "Show guide" button works with the ghosts tick on or off.
+    const auto guideGhosts = midiGuideGhostsFor(*guide, tempo);
+    if (!guideGhosts.empty())
+    {
+      hasMidiGuideSpan = true;
+      midiGuideHostStart = guideGhosts.front().startHostSeconds;
+      midiGuideHostEnd = guideGhosts.front().endHostSeconds;
+      midiGuidePitchMin = guideGhosts.front().pitch;
+      midiGuidePitchMax = guideGhosts.front().pitch;
+      for (const auto &ghost : guideGhosts)
+      {
+        midiGuideHostStart = std::min(midiGuideHostStart, ghost.startHostSeconds);
+        midiGuideHostEnd = std::max(midiGuideHostEnd, ghost.endHostSeconds);
+        midiGuidePitchMin = std::min(midiGuidePitchMin, ghost.pitch);
+        midiGuidePitchMax = std::max(midiGuidePitchMax, ghost.pitch);
+      }
+    }
+
     if (showMidiGuideGhosts)
-      ghosts = midiGuideGhostsFor(*guide, tempo);
+      ghosts = guideGhosts;
   }
   else
   {
