@@ -18,6 +18,7 @@
 #include "../Utils/TimingRegionUtils.h"
 #include "../Utils/TimingQuantize.h"
 #include "../Undo/TimingAction.h"
+#include "../Undo/ResetNoteEditsAction.h"
 #include "../Undo/NoteMuteAction.h"
 #include "../Undo/NoteDeleteAction.h"
 #include "PianoRoll/PianoRollViewHelpers.h"
@@ -117,57 +118,6 @@ namespace
     return 1.0;
   }
 
-  class ResetNoteEditsAction final : public UndoableAction
-  {
-  public:
-    ResetNoteEditsAction(Project& project, std::vector<Note*> notes,
-                         bool pitch, bool formant, bool amplitude,
-                         juce::String name, std::unique_ptr<UndoableAction> timing = {})
-        : project(project), notes(std::move(notes)), name(std::move(name)),
-          timing(std::move(timing))
-    {
-      before.reserve(this->notes.size());
-      after.reserve(this->notes.size());
-      for (const auto* note : this->notes)
-      {
-        before.push_back(NoteEditState::capture(*note));
-        auto state = pitch ? NoteEditState::defaultsFor(*note) : before.back();
-        state.formantShift = formant ? 0.0f : before.back().formantShift;
-        state.volumeDb = amplitude ? 0.0f : before.back().volumeDb;
-        after.push_back(std::move(state));
-      }
-    }
-
-    void undo() override { if (timing) timing->undo(); apply(before); }
-    void redo() override { apply(after); if (timing) timing->redo(); }
-    juce::String getName() const override { return name; }
-
-  private:
-    void apply(const std::vector<NoteEditState>& states)
-    {
-      int dirtyStart = std::numeric_limits<int>::max();
-      int dirtyEnd = std::numeric_limits<int>::min();
-      for (size_t i = 0; i < notes.size() && i < states.size(); ++i)
-      {
-        if (!notes[i])
-          continue;
-        states[i].applyTo(*notes[i]);
-        dirtyStart = std::min(dirtyStart, notes[i]->getStartFrame());
-        dirtyEnd = std::max(dirtyEnd, notes[i]->getEndFrame());
-      }
-      project.setModified(true);
-      PitchCurveProcessor::rebuildBaseFromNotes(project);
-      // Same range the edit and its undo mark (Project::markNoteEditDirtyRange).
-      project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
-    }
-
-    Project& project;
-    std::vector<Note*> notes;
-    std::vector<NoteEditState> before;
-    std::vector<NoteEditState> after;
-    juce::String name;
-    std::unique_ptr<UndoableAction> timing;
-  };
 }
 
 PianoRollComponent::PianoRollComponent()
