@@ -116,7 +116,7 @@ El resto, por carpeta:
   (`States/`), herramientas (`PitchToolController`), scroll/zoom, overview.
 - `UI/Main/` — piezas de `MainComponent` ya extraídas: `AuditionOutput`,
   `DeferredRenderQueue`, `RenderState`, `SettingsManager`, `MenuHandler`,
-  `ProjectIO`, `ExportHelper`.
+  `ProjectIO`, `ExportHelper`, `ExportController`, `EditorTooltip`.
 - `UI/Components/`, `UI/Workspace/`, `UI/Dialogs/` — widgets, paneles y diálogos.
 - `Plugin/` — además del processor y el documento ARA: `NonAraCaptureController`,
   `ARATempoMapReader`, `RenderControllers.h`, `AraDiagnostics.h`.
