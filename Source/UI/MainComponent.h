@@ -842,6 +842,14 @@ private:
   double midiGuideHostEnd = 0.0;
   float midiGuidePitchMin = 0.0f;
   float midiGuidePitchMax = 0.0f;
+  // V4c-c: last "Show guide" plan, published by guide_debug so a real press can
+  // be told apart from "no change was needed" without guessing.
+  int midiGuideRevealCount = 0;
+  bool midiGuideRevealFromModel = false;
+  bool midiGuideRevealScrollRequested = false;
+  double midiGuideRevealScrollX = 0.0;
+  float midiGuideRevealPitchMin = 0.0f;
+  float midiGuideRevealPitchMax = -1.0f;
   // R10/D-363: content hash of the guide as it was when the user last applied
   // it. Empty = never applied, and then the "changed" warning is not shown.
   juce::String lastAppliedMidiGuideHash;

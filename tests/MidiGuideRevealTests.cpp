@@ -178,6 +178,29 @@ int main()
         std::printf("pure_left           scroll=%.3f\n", plan.scrollX);
     }
 
+    // 3b. La guia solapa la ventana pero su INICIO quedo a la izquierda (el
+    // caso "no hace nada" medido): el plan lleva el inicio al borde.
+    {
+        auto input = baseInput();
+        input.visibleStartSeconds = 25.0;
+        input.visibleEndSeconds = 35.0;
+        const auto plan = computeMidiGuideRevealPlan(input);
+        CHECK(plan.scrollRequested);
+        CHECK(std::abs(plan.scrollX - 20.0 * kPps) < 1.0e-9);
+        std::printf("pure_start_left     scroll=%.3f\n", plan.scrollX);
+    }
+
+    // 3c. Con el inicio dentro de la ventana no se mueve el scroll, aunque la
+    // guia siga hacia la derecha.
+    {
+        auto input = baseInput();
+        input.visibleStartSeconds = 18.0;
+        input.visibleEndSeconds = 28.0;
+        const auto plan = computeMidiGuideRevealPlan(input);
+        CHECK(!plan.scrollRequested);
+        std::printf("pure_start_visible  scroll=%.3f\n", plan.scrollX);
+    }
+
     // 4. Activas dentro si caben. 60-62 cae dentro de 53-74 y no ensancha.
     {
         auto input = baseInput();
@@ -350,6 +373,31 @@ int main()
     CHECK(access.pendingRenderBlocks() == rendersBefore);
     CHECK(project.getDirtyFrameRange() == dirtyBefore);
     CHECK(project.getNotes().size() == notesBefore);
+
+    // V4c-c: la ventana solapa la guia pero su inicio quedo a la izquierda.
+    // Antes el plan no pedia scroll ("no hace nada"); ahora lleva el inicio.
+    roll.setMidiGuideGhosts(makeGhosts());
+    access.setGhostsVisible(true);
+    roll.setPixelsPerSecond(static_cast<float>(kPps));
+    roll.setScrollX(25.0 * kPps); // proyecto 25-51.5; guia 7.886-68.144
+    roll.setPixelsPerSemitone(30.0f);
+    roll.setScrollY(510.0);
+    paintToImage(roll);
+    CHECK(roll.getMidiGuideGhostsInViewCount() > 0);
+    access.reveal(project);
+    paintToImage(roll);
+    const auto afterOverlap = roll.getVisibleProjectRange();
+    std::printf("button_start_left   window=[%.3f,%.3f] in_view=%zu visible=%zu "
+                "painted=%d\n",
+                afterOverlap.first, afterOverlap.second,
+                roll.getMidiGuideGhostsInViewCount(),
+                roll.getMidiGuideGhostsVisibleCount(),
+                roll.getMidiGuideGhostsPaintedLast());
+    CHECK(afterOverlap.first <= kProjectFirst + 1.0e-6);
+    CHECK(roll.getMidiGuideGhostsVisibleCount() ==
+          roll.getMidiGuideGhostsInViewCount());
+    CHECK(roll.getMidiGuideGhostsPaintedLast() ==
+          static_cast<int>(roll.getMidiGuideGhostsInViewCount()));
 
     std::cout << "MidiGuideRevealTests passed (V4c: Show guide, view only)\n";
     return 0;

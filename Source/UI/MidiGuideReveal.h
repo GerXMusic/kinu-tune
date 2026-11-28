@@ -16,8 +16,10 @@
  *   * el rango de pitch devuelto SIEMPRE incluye la guia;
  *   * las notas activas se suman solo si no ensanchan el rango mas de una
  *     octava sobre el de la guia ("si caben"); si no, manda la guia;
- *   * si la guia no solapa el tiempo visible, se pide el scroll horizontal
- *     minimo que lleva su INICIO al borde izquierdo, recortado al timeline;
+ *   * si el INICIO de la guia no esta en el tiempo visible, se pide el scroll
+ *     horizontal minimo que lo lleva al borde izquierdo, recortado al timeline
+ *     (aunque la guia ya solape la ventana por su parte derecha: "Ver guia"
+ *     ensena su comienzo, no una ventana cualquiera dentro de ella);
  *   * no se cambia el zoom horizontal: el plan solo expresa scrollX;
  *   * sin guia, o con la guia fuera del timeline, no hay plan.
  *
@@ -100,10 +102,10 @@ computeMidiGuideRevealPlan(const MidiGuideRevealInput &input)
         input.visibleEndSeconds - input.visibleStartSeconds;
     if (input.pixelsPerSecond > 0.0 && windowSeconds > 0.0)
     {
-        const bool guideInTime =
-            input.guideEndSeconds >= input.visibleStartSeconds &&
+        const bool guideStartVisible =
+            input.guideStartSeconds >= input.visibleStartSeconds &&
             input.guideStartSeconds <= input.visibleEndSeconds;
-        if (!guideInTime)
+        if (!guideStartVisible)
         {
             const double maxTarget = std::max(
                 input.timelineStartSeconds,

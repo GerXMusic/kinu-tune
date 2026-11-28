@@ -2430,6 +2430,16 @@ void MainComponent::pollMcpControl()
         // PianoRollComponent::getVisibleProjectRange).
         writeViewReport(*response);
 
+        // V4c-c: the last "Show guide" plan. reveal_count only moves on a real
+        // press, so "pressed but nothing moved" and "not pressed" differ.
+        response->setProperty("reveal_count", midiGuideRevealCount);
+        response->setProperty("reveal_from_model", midiGuideRevealFromModel);
+        response->setProperty("reveal_scroll_requested",
+                              midiGuideRevealScrollRequested);
+        response->setProperty("reveal_scroll_x", midiGuideRevealScrollX);
+        response->setProperty("reveal_pitch_min", midiGuideRevealPitchMin);
+        response->setProperty("reveal_pitch_max", midiGuideRevealPitchMax);
+
         // V3/D-374: "not in view" versus "not loaded". store_generation and
         // loaded_from_disk describe the document's store even when the canvas
         // has not refreshed yet; guide_origin says where the selected guide
@@ -7310,6 +7320,14 @@ void MainComponent::revealMidiGuideInView(Project &project)
   const auto plan = computeMidiGuideRevealPlan(input);
   if (!plan.hasGuide)
     return;
+
+  // V4c-c: leave the last plan visible to guide_debug before applying it.
+  ++midiGuideRevealCount;
+  midiGuideRevealFromModel = hasMidiGuideSpan;
+  midiGuideRevealScrollRequested = plan.scrollRequested;
+  midiGuideRevealScrollX = plan.scrollX;
+  midiGuideRevealPitchMin = plan.pitchMin;
+  midiGuideRevealPitchMax = plan.pitchMax;
 
   // "Ver guia" implica verla: si los fantasmas estan ocultos, se muestran. Es
   // un efecto de ida (no un toggle) y es estado de la vista, no del proyecto.
