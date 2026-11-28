@@ -10,6 +10,7 @@
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
+#include "Components/UiBrightnessEffect.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/Synthesis/EngineBlocks.h"
 #include "../Audio/IO/MidiExporter.h"
@@ -70,64 +71,6 @@ bool writeMcpJsonAtomically(const juce::File &file, const juce::var &value)
 }
 
 } // namespace
-
-class UiBrightnessEffect final : public juce::ImageEffectFilter
-{
-public:
-  void setBrightnessPercent(double percent)
-  {
-    brightnessFactor = static_cast<float>(
-        juce::jlimit(75.0, 200.0, percent) / 100.0);
-  }
-
-  void applyEffect(juce::Image &sourceImage, juce::Graphics &destContext,
-                   float scaleFactor, float alpha) override
-  {
-    juce::ignoreUnused(scaleFactor);
-    juce::Image::BitmapData pixels(sourceImage,
-                                   juce::Image::BitmapData::readWrite);
-
-    const auto adjustedChannel = [this](juce::uint8 channel,
-                                        int maximum = 255)
-    {
-      return static_cast<juce::uint8>(juce::jlimit(
-          0, maximum,
-          static_cast<int>(std::round(static_cast<float>(channel) *
-                                      brightnessFactor))));
-    };
-
-    for (int y = 0; y < pixels.height; ++y)
-    {
-      auto *line = pixels.getLinePointer(y);
-      for (int x = 0; x < pixels.width; ++x)
-      {
-        auto *pixelData = line + x * pixels.pixelStride;
-        if (pixels.pixelFormat == juce::Image::RGB)
-        {
-          auto &pixel = *reinterpret_cast<juce::PixelRGB *>(pixelData);
-          pixel.setARGB(255, adjustedChannel(pixel.getRed()),
-                        adjustedChannel(pixel.getGreen()),
-                        adjustedChannel(pixel.getBlue()));
-        }
-        else if (pixels.pixelFormat == juce::Image::ARGB)
-        {
-          auto &pixel = *reinterpret_cast<juce::PixelARGB *>(pixelData);
-          const auto pixelAlpha = pixel.getAlpha();
-          pixel.setARGB(pixelAlpha,
-                        adjustedChannel(pixel.getRed(), pixelAlpha),
-                        adjustedChannel(pixel.getGreen(), pixelAlpha),
-                        adjustedChannel(pixel.getBlue(), pixelAlpha));
-        }
-      }
-    }
-
-    destContext.setOpacity(alpha);
-    destContext.drawImageAt(sourceImage, 0, 0, false);
-  }
-
-private:
-  float brightnessFactor = 1.0f;
-};
 
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
@@ -1372,16 +1315,6 @@ void MainComponent::paintOverChildren(juce::Graphics &g)
   const int viewRight = workspace.getX() + workspace.getMainViewRight();
   g.setColour(juce::Colour(0xFF3C3C3Cu));
   g.fillRect(viewLeft, y, juce::jmax(0, viewRight - scrollBarWidth - viewLeft), 1);
-}
-
-void MainComponent::applyUiBrightness(double brightnessPercent)
-{
-  const double normalized = juce::jlimit(75.0, 200.0, brightnessPercent);
-  uiBrightnessEffect->setBrightnessPercent(normalized);
-  setComponentEffect(std::abs(normalized - 100.0) < 0.01
-                         ? nullptr
-                         : uiBrightnessEffect.get());
-  repaint();
 }
 
 void MainComponent::resized()
