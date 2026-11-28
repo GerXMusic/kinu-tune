@@ -9,6 +9,7 @@
 #include "Main/EditorTooltip.h"
 #include "Main/ExportController.h"
 #include "Main/ExportHelper.h"
+#include "Main/FileDropController.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
 #include "Components/UiBrightnessEffect.h"
@@ -178,6 +179,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Initialize new modular components
   fileManager = std::make_unique<AudioFileManager>();
   settingsManager = std::make_unique<SettingsManager>();
+  fileDropController = std::make_unique<FileDropController>(*this);
   uiBrightnessEffect = std::make_unique<UiBrightnessEffect>();
   if (!isPluginMode())
     menuHandler = std::make_unique<MenuHandler>();
@@ -195,7 +197,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   }
 
   LOG("MainComponent: wiring up components...");
-  recentFiles = settingsManager->getRecentFiles();
+  fileDropController->setRecentFiles(settingsManager->getRecentFiles());
   if (menuHandler)
   {
     menuHandler->setUndoManager(undoManager);
@@ -3560,122 +3562,22 @@ void MainComponent::saveProject(bool saveAs)
 
 void MainComponent::openFile()
 {
-  if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
-  {
-    juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::MessageManager::callAsync([safeThis]()
-                                    {
-      if (safeThis != nullptr)
-        safeThis->openFile(); });
-    return;
-  }
-
-  // Prevent re-triggering while dialog is open
-  if (fileChooser != nullptr)
-    return;
-
-  fileChooser = std::make_unique<juce::FileChooser>(
-      TR("dialog.select_audio"), juce::File{},
-      "*.pitchnet;*.wav;*.mp3;*.flac;*.aiff");
-
-  auto chooserFlags = juce::FileBrowserComponent::openMode |
-                      juce::FileBrowserComponent::canSelectFiles;
-
-  juce::Component::SafePointer<MainComponent> safeThis(this);
-  fileChooser->launchAsync(
-      chooserFlags, [safeThis](const juce::FileChooser &fc)
-      {
-        if (safeThis == nullptr)
-          return;
-
-        auto file = fc.getResult();
-        safeThis->fileChooser.reset(); // Allow next dialog to open
-        if (file.existsAsFile()) {
-          safeThis->addRecentFile(file);
-          if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
-            safeThis->openProjectFile(file);
-          else
-            safeThis->loadAudioFile(file);
-        } });
+  fileDropController->openFile();
 }
 
 void MainComponent::refreshRecentFilesMenu()
 {
-  if (menuHandler)
-    menuHandler->setRecentFiles(recentFiles);
-  if (menuHandler)
-    menuHandler->menuItemsChanged();
+  fileDropController->refreshRecentFilesMenu();
 }
 
 void MainComponent::addRecentFile(const juce::File &file)
 {
-  if (!file.existsAsFile())
-    return;
-
-  const auto fullPath = file.getFullPathName();
-  recentFiles.removeString(fullPath);
-  recentFiles.insert(0, fullPath);
-
-  constexpr int kMaxRecentFiles = 10;
-  while (recentFiles.size() > kMaxRecentFiles)
-    recentFiles.remove(recentFiles.size() - 1);
-
-  if (settingsManager)
-  {
-    settingsManager->setLastFilePath(file);
-    settingsManager->setRecentFiles(recentFiles);
-    settingsManager->saveConfig();
-  }
-  refreshRecentFilesMenu();
-}
-
-void MainComponent::refreshLocalisedText()
-{
-  // Command names and categories are read back from the string table every
-  // time JUCE asks for them, so the menus only need to be told to reread.
-  if (commandManager)
-    commandManager->commandStatusChanged();
-
-  if (menuHandler)
-  {
-    menuHandler->menuItemsChanged();
-
-#if JUCE_MAC
-    if (!isPluginMode())
-    {
-      macExtraAppleMenuItems = menuHandler->getMacExtraAppleMenu();
-      juce::MenuBarModel::setMacMainMenu(menuHandler.get(),
-                                         &macExtraAppleMenuItems);
-    }
-#endif
-  }
-
-  resized();
-  repaint();
+  fileDropController->addRecentFile(file);
 }
 
 void MainComponent::openRecentFile(const juce::File &file)
 {
-  if (!file.existsAsFile())
-  {
-    StyledMessageBox::show(this, TR("dialog.recent_missing"),
-                           TR("dialog.file_not_found") + "\n" +
-                               file.getFullPathName(),
-                           StyledMessageBox::WarningIcon);
-    recentFiles.removeString(file.getFullPathName());
-    if (settingsManager)
-    {
-      settingsManager->setRecentFiles(recentFiles);
-      settingsManager->saveConfig();
-    }
-    refreshRecentFilesMenu();
-    return;
-  }
-
-  if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
-    openProjectFile(file);
-  else
-    loadAudioFile(file);
+  fileDropController->openRecentFile(file);
 }
 
 // openProjectFile and loadAudioFile implementations are in Main/MainComponent_ProjectIO.cpp
@@ -5703,51 +5605,18 @@ void MainComponent::showSettings()
 
 bool MainComponent::isInterestedInFileDrag(const juce::StringArray &files)
 {
-  if (isPluginMode())
-    return false;
-
-  for (const auto &file : files)
-  {
-    if (file.endsWithIgnoreCase(".pitchnet") || file.endsWithIgnoreCase(".wav") ||
-        file.endsWithIgnoreCase(".mp3") ||
-        file.endsWithIgnoreCase(".flac") || file.endsWithIgnoreCase(".aiff") ||
-        file.endsWithIgnoreCase(".ogg") || file.endsWithIgnoreCase(".m4a"))
-      return true;
-  }
-  return false;
+  return fileDropController->isInterestedInFileDrag(files);
 }
 
 void MainComponent::filesDropped(const juce::StringArray &files, int /*x*/,
                                  int /*y*/)
 {
-  if (files.isEmpty())
-    return;
-
-  openFileFromPath(juce::File(files[0]));
+  fileDropController->filesDropped(files);
 }
 
 void MainComponent::openFileFromPath(const juce::File &file)
 {
-  if (isPluginMode())
-    return;
-
-  if (!file.existsAsFile())
-    return;
-
-  if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
-  {
-    juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::MessageManager::callAsync([safeThis, file]()
-                                    {
-      if (safeThis != nullptr)
-        safeThis->openFileFromPath(file); });
-    return;
-  }
-
-  if (file.hasFileExtension("pitchnet") || file.hasFileExtension(".pitchnet"))
-    openProjectFile(file);
-  else
-    loadAudioFile(file);
+  fileDropController->openFileFromPath(file);
 }
 
 void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,

@@ -41,6 +41,7 @@
 #include <vector>
 
 class UiBrightnessEffect;
+class FileDropController;
 
 class AnalysisBackdrop : public juce::Component {
 public:
@@ -338,6 +339,8 @@ private:
   friend struct MainComponentTestAccess;
   // Export dialogs live in Main/ExportController.{h,cpp}.
   friend class ExportController;
+  // File opening and the recent-files list live in Main/FileDropController.
+  friend class FileDropController;
   // R9 (D-362): Apply with an explicit scope ("track" = SCOPE=A, the default;
   // "active" = R1). Returns the JSON report the local channel publishes.
   juce::var applyMidiGuideWithScope(const juce::String &scope);
@@ -598,6 +601,7 @@ private:
   std::unique_ptr<AudioFileManager> fileManager;
   std::unique_ptr<MenuHandler> menuHandler;
   std::unique_ptr<SettingsManager> settingsManager;
+  std::unique_ptr<FileDropController> fileDropController;
 
   const bool enableAudioDeviceFlag;
 
@@ -631,7 +635,6 @@ private:
 
   std::unique_ptr<juce::FileChooser> fileChooser;
   std::unique_ptr<juce::FileChooser> midiGuideFileChooser;
-  juce::StringArray recentFiles;
 
   bool isPlaying = false;
   bool hostTransportControlAvailable = true;
