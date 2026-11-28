@@ -6,6 +6,7 @@
 #include "HostTimelineStatePolicy.h"
 #include "../Plugin/AraDiagnostics.h"
 #include "Dialogs/AboutDialog.h"
+#include "Main/EditorTooltip.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
 #include "Components/DarkLookAndFeel.h"
@@ -49,34 +50,6 @@ namespace
 const HostTempoMap &activeTempoMapForGuide(
     const std::shared_ptr<const HostTempoMap> &hostTempoMap,
     const HostTempoMap &fallback);
-
-class EditorTooltipWindow final : public juce::TooltipWindow
-{
-public:
-  juce::String getTipFor(juce::Component &component) override
-  {
-    for (auto *ancestor = &component; ancestor != nullptr;
-         ancestor = ancestor->getParentComponent())
-      if (dynamic_cast<MainComponent *>(ancestor) != nullptr)
-        return juce::TooltipWindow::getTipFor(component);
-
-    return {};
-  }
-};
-
-std::shared_ptr<juce::TooltipWindow> getEditorTooltipWindow()
-{
-  // Share one native window across plugin instances in the host process.
-  static std::weak_ptr<juce::TooltipWindow> sharedWindow;
-  auto window = sharedWindow.lock();
-  if (window == nullptr)
-  {
-    window = std::make_shared<EditorTooltipWindow>();
-    window->setLookAndFeel(&DarkLookAndFeel::getInstance());
-    sharedWindow = window;
-  }
-  return window;
-}
 
 juce::File getMcpControlDirectory()
 {
