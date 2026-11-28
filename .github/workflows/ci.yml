@@ -41,6 +41,11 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # D-379: the editor must not regain a network path (the PitchNet update
+      # check was removed); tools/check-no-network.py guards Source.
+      - name: Check that Source has no network code
+        run: python tools/check-no-network.py
+
       - name: Set up sccache
         uses: Mozilla-Actions/sccache-action@v0.0.11
 

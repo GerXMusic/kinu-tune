@@ -524,10 +524,6 @@ private:
   // chosen in Settings - the list is per-provider, and so is the default.
   void refreshRenderDeviceOptions();
   void applyCachedHostLoopRange();
-  void checkForUpdatesOnLaunch();
-  void showUpdateAvailablePopup(const juce::String &latestVersion,
-                                const juce::String &releaseNotes);
-  void skipUpdateVersion(const juce::String &version);
   void showAboutPopup();
 
   void loadAudioFile(const juce::File &file);
@@ -649,11 +645,6 @@ private:
 
   // Sync flag to prevent infinite loops
   bool isSyncingZoom = false;
-
-  // The update worker must finish before networking shuts down.
-  std::unique_ptr<juce::WebInputStream> updateRequest;
-  std::thread updateCheckThread;
-  std::atomic<bool> stoppingUpdateCheck{false};
 
   // Async load state
   std::atomic<bool> isLoadingAudio{false};
